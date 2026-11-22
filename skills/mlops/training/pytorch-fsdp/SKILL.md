@@ -129,8 +129,8 @@ the actual restored state before retry.
   scraper content preserved for historical context. It includes mixed DDP,
   RPC and distributed primitives that do not by themselves constitute a
   recommended FSDP2 workflow. Load only for a specific legacy API detail.
-- `references/other.md`: legacy extracted documentation; very large
-  and potentially stale. Prefer upstream PyTorch docs for current APIs.
+- `references/other.md`: compact archive index with domain-specific historical
+  references. Prefer upstream PyTorch docs for current APIs.
 
 ## Reporting checklist
 
