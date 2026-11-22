@@ -50,7 +50,7 @@ All arithmetic derives from the seven explicit ordinal inputs above. Small diffe
 
 For every idea, require a specific proof:
 - Run ID replay: two same-key requests, one worker invocation, original `run_id` in both responses, two distinct transport attempt IDs, no duplicated `completed` operation event.
-- Integration scanner: 30 agents/435 pair conflicts, 100 disjoint branches, 101+ explicitly incomplete, renamed-old-path and fork same-branch collision tests; robust current-head PR listing; exact named required CI at final SHA independent of scanner.
+- Integration scanner: 30 agents/435 pair conflicts, 100 disjoint branches, 101+ explicitly incomplete, renamed-old-path and fork same-branch collision tests, Windows casefold and reserved-device/invalid-character path checks; robust current-head PR listing; exact named required CI at final SHA independent of scanner.
 - CDP safe detach: external Chrome/Edge stays alive in all close/error/timeout routes; normal owned session closes; no secrets across logs/output; negative Windows tests.
 - Effect gateway: crash at each reservation/dispatched/receipt boundary; unknown quarantined; stale fence+STOP denied at privileged effect boundary; destination read-back before uncertain retry.
 - Observer: authenticated unknown-producer rejection, per-producer seq gaps, late event counterexample, privacy allowlist/adversarial injected prompt tests; no worker self-verification.
