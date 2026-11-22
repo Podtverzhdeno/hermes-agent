@@ -471,3 +471,36 @@ def test_effects_projection_preserves_unknown_state(ctx):
     assert effects[0]["status"] == "reserved"
     assert effects[0]["digest"] == "digest:send"
     assert effects[0]["result_ref"] is None
+
+
+def test_trusted_failure_cannot_be_overwritten_by_same_source_pass(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, fence = lease(ledger)
+    ledger.begin_verification(task, "A1", fence)
+    ledger.record_evidence(task, "ci", "github-run-1", "git:abc123",
+                           "failed", "run:1-failed", trusted=True)
+    ledger.record_evidence(task, "tests", "pytest", "git:abc123",
+                           "passed", "run:pytest", trusted=True)
+    with pytest.raises(LedgerConflict):
+        ledger.record_evidence(task, "ci", "github-run-1", "git:abc123",
+                               "passed", "run:1-passed", trusted=True)
+    # Even if an independent second run passes, the earlier trusted failure
+    # must remain visible and veto release on the same revision.
+    ledger.record_evidence(task, "ci", "github-run-2", "git:abc123",
+                           "passed", "run:2-passed", trusted=True)
+    assert ledger.finalize(task, "A1", fence) is False
+    assert ledger.get(task)["status"] == "verifying"
+
+
+def test_trusted_evidence_exact_replay_is_idempotent_and_run_identity_stable(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    ledger.record_evidence(task, "ci", "github-run-1", "git:abc123",
+                           "passed", "run:1", trusted=True)
+    ledger.record_evidence(task, "ci", "github-run-1", "git:abc123",
+                           "passed", "run:1", trusted=True)
+    assert sum(e["kind"] == "evidence_replayed" for e in ledger.history(task)) == 1
+    with pytest.raises(LedgerConflict):
+        ledger.record_evidence(task, "ci", "github-run-1", "git:abc123",
+                               "passed", "run:changed", trusted=True)
