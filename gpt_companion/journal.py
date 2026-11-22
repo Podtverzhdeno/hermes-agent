@@ -218,12 +218,16 @@ class EventJournal:
         if not (0 <= moment < 1e14):
             raise ValueError("invalid observation clock")
         with self._db() as db:
-            a = db.execute("SELECT MAX(attempt) AS n FROM events WHERE run_id=?", (run_id,)).fetchone()["n"]
-            if a is None:
-                return {"run_id": run_id, "state": "NOT_OBSERVED", "next_action": "CHECK_INTAKE"}
-            rows = db.execute("""SELECT event_json,received_at,sequence,source
-                FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
-                (run_id, a)).fetchall()
+            # ONE SQL statement observes a consistent WAL snapshot even when
+            # another worker ingests an event between SQLite execution steps.
+            # Separate autocommit MAX(attempt) + SELECT can read torn states.
+            rows = db.execute("""SELECT event_json,received_at,sequence,source,attempt
+                FROM events WHERE run_id=? AND attempt=(
+                    SELECT MAX(attempt) FROM events WHERE run_id=?
+                ) ORDER BY position""", (run_id, run_id)).fetchall()
+        if not rows:
+            return {"run_id": run_id, "state": "NOT_OBSERVED", "next_action": "CHECK_INTAKE"}
+        a = rows[0]["attempt"]
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Server receipt timestamps can jump backward after NTP/time changes.
         # In that case time-based liveness diagnosis is unreliable.
