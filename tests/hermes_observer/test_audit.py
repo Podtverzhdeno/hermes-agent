@@ -217,6 +217,17 @@ class MetadataContractTests(unittest.TestCase):
         self.assertEqual(a["findings"], b["findings"])
         self.assertEqual(a["finding_counts"], b["finding_counts"])
 
+    def test_denied_approval_without_task_identity_is_invalid_not_clean(self):
+        result = audit(ev(kind="approval.denied", task=None,
+                          reason_code="POLICY_DENIED"))
+        self.assertEqual(result["status"], "invalid_snapshot")
+        self.assertGreater(result["counts"]["invalid_events"], 0)
+
+    def test_expired_lease_without_task_identity_is_invalid_not_clean(self):
+        result = audit(ev(kind="worker.lease_expired", task=None,
+                          reason_code="WORKER_LEASE_LOST"))
+        self.assertEqual(result["status"], "invalid_snapshot")
+
     def test_denied_approval_without_reason_cannot_be_silent_stop(self):
         result = audit(ev(kind="approval.denied"))
         self.assertEqual(result["status"], "incomplete_observation")
