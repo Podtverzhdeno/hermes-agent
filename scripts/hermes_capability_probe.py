@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 MAX_BYTES = 512 * 1024
+MIN_CONTROL_RETENTION_SECONDS = 24 * 60 * 60
 PROFILE = re.compile(r"^/p/[A-Za-z0-9_-]{1,64}$")
 ROUTES = {
     "runs": ("POST", "/v1/runs"),
@@ -99,21 +100,35 @@ def evaluate_capabilities(raw):
         retention = int(idem.get("retention_seconds", 0))
     except (ValueError, TypeError, OverflowError):
         retention = 0
-    if type(idem.get("retention_seconds")) is not int or retention <= 0:
-        missing.append("idempotency_retention")
+    if (type(idem.get("retention_seconds")) is not int
+            or retention < MIN_CONTROL_RETENTION_SECONDS):
+        missing.append("idempotency_retention_below_24h")
     missing = sorted(set(missing))
+    # Monitoring existing runs needs fewer privileges than controlling/retrying them.
+    monitor_missing = sorted({
+        name for name in ("run_status", "run_events_sse") if not advertised[name]
+    } | {
+        "route:" + name for name in ("run_status", "run_events") if not route_ok[name]
+    } | ({"auth_required"} if not auth["required"] else set()))
+    monitor_ok = not monitor_missing
+    control_ok = not missing
     return {
         "schema_version": 1,
-        "status": "CAPABILITIES_PRESENT" if not missing else "MIGRATION_OR_AUTH_GAP",
+        "status": "CAPABILITIES_PRESENT" if control_ok else
+                  "MONITOR_ONLY" if monitor_ok else "MIGRATION_OR_AUTH_GAP",
         "target_is_loopback": True,
         "auth_required": auth["required"],
         "advertised": advertised,
         "route_matches": route_ok,
         "idempotency_retention_seconds": retention if retention > 0 else None,
         "missing": missing,
-        "eligible_for_isolated_integration_test": not missing,
+        "monitor_missing": monitor_missing,
+        "eligible_for_readonly_monitoring": monitor_ok,
+        "eligible_for_isolated_integration_test": control_ok,
         "production_ready": False,
-        "next_action": "VERIFY_ACTUAL_AUTH_AND_E2E_BEFORE_ANY_WRITE",
+        "next_action": ("VERIFY_ACTUAL_AUTH_AND_E2E_BEFORE_ANY_WRITE" if control_ok
+                        else "READONLY_OBSERVATION_ONLY" if monitor_ok
+                        else "UPGRADE_OR_AUTHORIZE_BEFORE_OBSERVATION"),
     }
 
 def read_capabilities(base_url, token="", timeout=5):
@@ -154,7 +169,11 @@ def main(argv=None):
         if not 1 <= args.timeout <= 20:
             raise ProbeError("INVALID_TIMEOUT")
         if args.snapshot is not None:
-            data = json.loads(args.snapshot.read_text(encoding="utf-8"))
+            # Untrusted fixture data is bounded like the network response.
+            raw = args.snapshot.read_bytes()
+            if len(raw) > MAX_BYTES:
+                raise ProbeError("SNAPSHOT_TOO_LARGE")
+            data = json.loads(raw)
         else:
             data = read_capabilities(
                 args.base_url, os.getenv("API_SERVER_KEY") or os.getenv("HERMES_API_KEY") or "",

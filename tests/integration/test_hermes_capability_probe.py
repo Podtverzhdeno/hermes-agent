@@ -103,6 +103,39 @@ class ProbeTests(unittest.TestCase):
             self.assertNotIn("secret-invalid-json", json.dumps(saved))
             self.assertFalse(saved["production_ready"])
 
+    def test_monitor_can_remain_available_without_unknown_resolution(self):
+        x = canonical()
+        x["features"]["run_unknown_resolution"] = False
+        x["endpoints"].pop("run_unknown_resolution")
+        report = m.evaluate_capabilities(x)
+        self.assertEqual(report["status"], "MONITOR_ONLY")
+        self.assertTrue(report["eligible_for_readonly_monitoring"])
+        self.assertFalse(report["eligible_for_isolated_integration_test"])
+        self.assertFalse(report["production_ready"])
+
+    def test_auth_disabled_blocks_even_readonly_monitor(self):
+        x = canonical()
+        x["auth"]["required"] = False
+        report = m.evaluate_capabilities(x)
+        self.assertFalse(report["eligible_for_readonly_monitoring"])
+        self.assertIn("auth_required", report["monitor_missing"])
+
+    def test_short_idempotency_retention_blocks_control(self):
+        x = canonical()
+        x["features"]["runs_idempotency"]["retention_seconds"] = 1
+        report = m.evaluate_capabilities(x)
+        self.assertIn("idempotency_retention_below_24h", report["missing"])
+        self.assertEqual(report["status"], "MONITOR_ONLY")
+
+    def test_oversized_snapshot_is_typed_incident(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "huge.json"
+            out = Path(tmp) / "incident.json"
+            source.write_text("x" * (m.MAX_BYTES + 1))
+            rc = m.main(["--snapshot", str(source), "--output-json", str(out)])
+            self.assertEqual(rc, 3)
+            self.assertEqual(json.loads(out.read_text())["reason_code"], "SNAPSHOT_TOO_LARGE")
+
     def test_valid_but_legacy_returns_nonzero_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             x = canonical()
