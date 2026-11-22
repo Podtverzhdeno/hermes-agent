@@ -1,0 +1,65 @@
+name: GPT PR Integration Watch
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Read-only every-six-hour metadata audit; GitHub schedules may be delayed.
+    - cron: '17 */6 * * *'
+  pull_request:
+    paths:
+      - 'scripts/gpt_pr_integration_guard.py'
+      - 'tests/test_gpt_pr_integration_guard.py'
+      - '.github/workflows/gpt-pr-integration-watch.yml'
+      - 'docs/sdd/gpt-bridge/HERMES_GPT_INTEGRATION_GUARD_SDD_2026-11-22.md'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: gpt-pr-watch-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  offline_tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Offline tests (no network and no secrets)
+        run: python -m unittest discover -s tests -p 'test_gpt_pr_integration_guard.py' -v
+
+  analyze:
+    needs: offline_tests
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Collect read-only PR metadata
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/gpt_pr_integration_guard.py \
+            --repo '${{ github.repository }}' \
+            --snapshot-out hermes-pr-snapshot.json \
+            --report-out hermes-pr-report.json \
+            --markdown-out hermes-pr-summary.md
+          cat hermes-pr-summary.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Preserve timestamped snapshot/report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpt-pr-watch-${{ github.run_id }}
+          path: |
+            hermes-pr-snapshot.json
+            hermes-pr-report.json
+            hermes-pr-summary.md
+          if-no-files-found: warn
+          retention-days: 30
