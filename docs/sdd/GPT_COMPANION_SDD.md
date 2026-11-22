@@ -202,7 +202,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **56 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. python -m pytest -q tests/gpt_companion`: **74 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -282,3 +282,65 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 ## 15. Журнал контрольных проверок
 
 Сводка доказательств, известных рисков, устранённых дефектов и оставшихся блокеров — [`GPT_COMPANION_QA_LOG_20261122.md`](./GPT_COMPANION_QA_LOG_20261122.md). При будущих исправлениях агент обязан обновлять запись и указывать exact SHA, а не только количество тестов.
+
+### ADR-024: Two watchers must not reorder the truth (P0 implemented)
+
+В версии перед этим исправлением observer A мог получить snapshot до нового события, затем «зависнуть»; observer B записывал более актуальную диагностику, после чего A перезаписывал её устаревшим состоянием. Дедуп `fingerprint` **не защищал** от этого. Исправление: `EventJournal.assess()` читает attempt+events в одном SQLite read transaction и возвращает `event_position` (монотонный номер receipt-события). Status watcher хранит вместе с fingerprint последний `source_position`/`observed_at` и перед записью делает transactional conditional reject старого снимка; при неизменном fingerprint watermark **всё равно продвигается**. Добавлена миграция `latest` DB v0 → с `source_position`.
+
+Критерии: `test_delayed_older_snapshot_cannot_roll_back_observer_status`, `test_noisy_unchanged_status_advances_causal_watermark`, `test_status_db_older_schema_auto_migrates_position_column`. Ограничение: такой watermark защищает **только локальную диагностику наблюдателя**, не делает external effect exactly-once, не удостоверяет источник события и не заменяет fencing lease в доверенном Autopilot.
+
+## 14. Новые решения после анализа межпопыточных отказов (ADR-025–032)
+
+### ADR-025: старые эффекты сохраняют приоритет над новой попыткой (P0, implemented offline)
+
+Контрпример: attempt 1 зарезервировал публикацию PR, но потерял подтверждение. Attempt 2 запустился и регулярно отправляет heartbeat. Диагностика только `MAX(attempt)` давала ложное ощущение нормальной работы и скрывала риск второй публикации. Исправление: актуальная оценка в **одной SQLite read transaction** читает текущую попытку и effect reservations предыдущих. Неустранённое действие даёт `NEEDS_RECONCILIATION`, `RECONCILE_PRIOR_ATTEMPT_EFFECT`, `historical_unresolved_effects=['1:opaque-action']`. Изменение старой попытки обновляет глобальный `event_position` для watcher CAS. Это только диагностический сигнал: доверенное подтверждение операции остаётся в Autopilot ledger.
+
+Доказательство: `test_earlier_unknown_effect_blocks_unrelated_new_attempt`, `test_delayed_old_attempt_effect_updates_run_position_and_watch_status`, `test_resolved_prior_effect_clears_historical_warning`, `test_duplicate_historical_reservation_must_be_reconciled`.
+
+### ADR-026: нет причинной связи между источниками — нет доверенного закрытия (P0, implemented offline)
+
+События от worker A и worker B нельзя упорядочить по их независимым sequence numbers. Другой emitter не может снять `tool.effect_reserved` или `approval.required` сообщением `acknowledged/resolved`, если нет удостоверенного proof/ref. Дублирующиеся reservations, а также повторные или противоречивые terminal reports, переводят в состояние расследования, а не разрешают повторный write. Источник данных пока недоверенный: даже согласованное telemetry ack **не является** подтверждением выполнения провайдером.
+
+Доказательство: `test_cross_emitter_resolution_cannot_clear_effect`, `test_cross_emitter_prior_resolution_does_not_clear_old_effect`, `test_untrusted_other_emitter_cannot_clear_approval`, `test_duplicate_reservation_is_not_cleared_by_one_ack`, `test_duplicate_completion_reports_require_trace_review`.
+
+### ADR-027: защищённая граница объёма трассы (P0, implemented offline)
+
+Ранний observer загружал **все** события текущего attempt; долгие сессии могли вызвать OOM. В текущем прототипе `assess()` ограничен 10 000 строк текущего attempt и 10 000 effect-событий старых attempts; превышение приводит к `TRACE_WINDOW_LIMIT_EXCEEDED` / `HALT_AND_RECONCILE_WITH_BOUNDED_CHECKPOINT`, **не к частичному успеху**. `StatusWatch.history` читает не более 1000 последних записей по умолчанию. Это ограниченный fail-closed, а **не** production-scale агрегатор. P1: проверяемые инкрементальные сводки per-action, source cursors, обоснованная retention/backup политика, replay equivalence, стресс-тесты на 10^6 событий и измеренные p95 memory/latency.
+
+Доказательство: `test_assessment_explicitly_rejects_truncated_event_windows`, `test_historical_event_window_limit_is_fail_closed`, `test_history_recent_limit`.
+
+### ADR-028: один остановленный worker ≠ весь run остановлен (P0, implemented offline)
+
+`worker.stopped` от одного из нескольких worker sources означает частичную остановку; итоговое состояние `PARTIAL_WORKER_OUTAGE`, а не общее `STOPPED_UNCONFIRMED`. Для вывода о родительском DAG требуются дополнительные worker IDs/dependencies и доверенный task ledger. Доказательство: `test_partial_worker_stop_does_not_stop_whole_run`.
+
+### ADR-029: индексированное `event_id` участвует в hash verification (P0, implemented offline)
+
+Проверять только payload hash и chain недостаточно: ручная правка колонки `events.event_id` меняет дедупликацию при том же JSON. Verifier сравнивает JSON с полями `event_id`, `run_id`, `kind`, `source`, `attempt`, `sequence`. Это выявляет случайное расхождение данных, но **не** является защитой от администратора, способного пересчитать hash chain. Доказательство: `test_event_id_db_column_tampering_breaks_chain`.
+
+### ADR-030: стандартные traces вместо анализа ChatGPT DOM (P1 design)
+
+При поддерживаемом OpenAI API следует отдавать предпочтение документированным Agents API tracing/observability, Agents SDK tracing и OpenTelemetry GenAI span conventions. Нормализовать только разрешённые метаданные (trace/span/turn IDs, timing, status, tool boundary), **без** входных сообщений, model outputs, tool аргументов и секретов. OpenAI SDK трассировка может включать чувствительный input/output, поэтому перед включением обязательно проверить `trace_include_sensitive_data` и политику хранения. В ZDR некоторые tracing capabilities могут быть недоступны; допустимое состояние `UNSUPPORTED`, а не скрытый DOM-fallback.
+
+Источники: [OpenAI Agents API Tracing](https://developers.openai.com/api/docs/guides/agents-api/tracing), [Observability](https://developers.openai.com/api/docs/guides/agents-api/observability), [Agents SDK Python tracing](https://openai.github.io/openai-agents-python/tracing/), [OTel GenAI spans](https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-agent-spans.md).
+
+### ADR-031: MV3 service worker — не надёжный daemon (P1 design)
+
+Chrome Manifest V3 service worker может выгружаться, а открытая side panel не гарантирует постоянного выполнения. Поэтому браузерное расширение не становится единственным источником живости. Требуется opt-in, capability/version handshake, ограниченный durable outbox, replay при восстановлении, отдельный host supervisor и независимая проверка результатов. При отсутствии поддерживаемого API: `UNSUPPORTED`, без обхода прав и ограничений. Источник: [Chrome service worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/).
+
+### ADR-032: durable retry без идемпотентности не безопасен (P0 design; external integration blocked)
+
+Даже Temporal рекомендует идемпотентные Activities: процесс может успеть выполнить действие, но потерять ACK перед записью результата. Autopilot не должен автоматически повторять GitHub/Obsidian/deploy без provider idempotency key, read-back и корректного fencing. Compensating actions допускаются лишь для доказуемо обратимых операций с явным разрешением. Источник: [Temporal activities](https://docs.temporal.io/activities), [Temporal Python error handling](https://docs.temporal.io/develop/python/best-practices/error-handling).
+
+### Решения с измеримыми gates
+
+| Идея | Приоритет | Какую ошибку предотвращает | Требование к приёмке |
+| --- | --- | --- | --- |
+| Authenticated Hermes/API ingress + durable outbox | P0 | потерянный event, подмена источника | auth/nonce, replay после crash, отсутствие секретов в storage |
+| Autopilot effect/lease/fence reconciliation | P0 | двойное внешнее действие | независимый provider read-back, stale-fence reject, kill switch |
+| Incremental per-action snapshots | P1 | перерасход памяти на миллионных трассах | replay equivalence и измеренная p95 memory/latency |
+| OpenTelemetry GenAI spans adapter | P1 | неясно, где остановилось выполнение | provider capability handshake, privacy tests, schema version |
+| Incident timeline + agent handoff ledger | P1 | потери состояния среди десятков agents | revision-bound evidence, owner conflicts, exit/restore tests |
+| ChatGPT browser DOM как основной API | Reject | ложное состояние от UI и privacy risks | не использовать как источник истины |
+| LLM auto-repair / deploy после диагностики | P3 defer | сама диагностика может ошибиться | sandbox + independent verifier + R2/R3 approval |
+
+**Критерий строгости:** `74 passed` означает только прохождение конкретного локального набора offline тестов на Python 3.13.5. Результаты не подтверждают live ChatGPT monitoring, заверенную телеметрию, устойчивость к миллионам событий или production deployment. Для нового агента источником правды является exact SHA + тесты/проверки/инциденты, а не формулировка «завершено».
