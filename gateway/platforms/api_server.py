@@ -43,6 +43,7 @@ from gateway.gpt_bridge_diagnostics import (
     IdempotencyCache as _IdempotencyCache,
     IdempotencyInProgress,
     IdempotencyPayloadMismatch,
+    IdempotencyOutcomeUnknown,
     canonical_fingerprint,
     scoped_idempotency_key,
     log_bridge_event,
@@ -579,6 +580,14 @@ class APIServerAdapter(BasePlatformAdapter):
                 _openai_error("A request with this Idempotency-Key is still running.",
                               code="idempotency_in_progress"),
                 status=409, headers={"Retry-After": "1", "X-Hermes-Run-Id": run_id},
+            )
+        except IdempotencyOutcomeUnknown:
+            log_bridge_event(logger, run_id, "rejected", reason_code="OUTCOME_UNKNOWN",
+                             session_id=session_id)
+            return web.json_response(
+                _openai_error("Earlier execution has an uncertain outcome. Reconcile the external action before retrying.",
+                              code="idempotency_outcome_unknown"),
+                status=409, headers={"X-Hermes-Run-Id": run_id},
             )
         except IdempotencyPayloadMismatch:
             log_bridge_event(logger, run_id, "rejected", reason_code="IDEMPOTENCY_CONFLICT",
