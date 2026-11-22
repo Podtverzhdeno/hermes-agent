@@ -1,6 +1,7 @@
-"""Offline contract tests for multi-agent PR overlap and exact-SHA CI."""
 from __future__ import annotations
+
 import unittest
+
 from scripts.gpt_bridge_pr_collision_audit import check_snapshot, InvalidSnapshot
 
 BASE = "a" * 40
@@ -8,8 +9,8 @@ BASE = "a" * 40
 
 def pr(n, files, *, checks=None, head=None, base=BASE, draft=True):
     head = head or f"{n % 10}" * 40
-    return {"number": n, "head_sha": head, "base_sha": base,
-            "files": files, "draft": draft, "checks": checks or []}
+    return {"number": n, "head_sha": head, "base_sha": base, "files": files,
+            "draft": draft, "checks": checks or []}
 
 
 class TestPRCollision(unittest.TestCase):
@@ -24,8 +25,7 @@ class TestPRCollision(unittest.TestCase):
     def test_distinct_files_do_not_mean_automatic_merge(self):
         head = "f" * 40
         checks = [{"name": "test", "head_sha": head, "status": "completed", "conclusion": "success"}]
-        report = check_snapshot({"base_sha": BASE,
-                                 "pull_requests": [pr(1, ["a.py"], head=head, checks=checks, draft=False)]})
+        report = check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["a.py"], head=head, checks=checks, draft=False)]})
         self.assertEqual(report["pull_requests"]["1"]["merge_gate"], "manual_review_still_required")
         self.assertFalse(report["automerge_allowed"])
 
@@ -49,7 +49,7 @@ class TestPRCollision(unittest.TestCase):
 
     def test_reject_path_traversal(self):
         with self.assertRaises(InvalidSnapshot):
-            check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["docs/../secrets"])]})
+            check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["docs/../secrets"]) ]})
 
     def test_unhashable_status_and_conclusion_fail_closed(self):
         head = "f" * 40
@@ -64,6 +64,24 @@ class TestPRCollision(unittest.TestCase):
                  "status": "completed", "conclusion": "success"}
         with self.assertRaises(InvalidSnapshot):
             check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["a.py"], head="f" * 40, checks=[check])]})
+
+    def test_windows_case_insensitive_alias_between_agents(self):
+        rows = [pr(1, ["docs/Case.md"]), pr(2, ["docs/case.md"])]
+        report = check_snapshot({"base_sha": BASE, "pull_requests": rows})
+        self.assertEqual(report["overlap_edges"], [[1, 2]])
+        self.assertIn("POSSIBLE_WINDOWS_CASE_ALIAS", [x.get("reason") for x in report["collisions"]])
+        self.assertFalse(report["automerge_allowed"])
+
+    def test_directory_file_prefix_conflict(self):
+        rows = [pr(1, ["docs/notes"]), pr(2, ["docs/notes/idea.md"])]
+        report = check_snapshot({"base_sha": BASE, "pull_requests": rows})
+        self.assertEqual(report["overlap_edges"], [[1, 2]])
+        self.assertIn("FILE_DIRECTORY_PREFIX_CONFLICT", [x.get("reason") for x in report["collisions"]])
+
+    def test_different_root_names_no_false_alias(self):
+        rows = [pr(1, ["docs/alpha.md"]), pr(2, ["docs/beta.md"])]
+        report = check_snapshot({"base_sha": BASE, "pull_requests": rows})
+        self.assertEqual(report["collisions"], [])
 
     def test_100_agents_overlapping_10_files(self):
         rows = [pr(n, [f"gateway/file_{n%10}.py"]) for n in range(1, 101)]

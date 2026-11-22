@@ -1,9 +1,10 @@
-"""Read-only collision and CI freshness audit for concurrent Hermes agents.
+"""Offline, read-only merge-collision gate for concurrent Hermes GPT work.
 
-This tool does NOT authorize a merge. Input JSON comes from a separate,
-authenticated GitHub evidence adapter; untrusted snapshots are for planning only.
+Input is an explicit, reviewed JSON snapshot, not live GitHub access. The output
+never instructs an automated merge. A clean file list alone is not integration
+proof; CI evidence must match the exact candidate head SHA.
 
-Run: python scripts/gpt_bridge_pr_collision_audit.py snapshot.json
+    python scripts/gpt_bridge_pr_collision_audit.py prs.json
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ MAX_FILES_PER_PR = 2000
 
 
 class InvalidSnapshot(ValueError):
-    """Snapshot is incomplete, malformed or not suitable as CI evidence."""
+    pass
 
 
 def _check_sha(value: Any) -> None:
@@ -118,10 +119,44 @@ def check_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             for i, a in enumerate(owners):
                 for b in owners[i+1:]:
                     edges.add((a, b))
+    # Git paths are case-sensitive but Windows/NTFS worktrees usually are not.
+    # Report potential aliases separately rather than pretending all Unicode
+    # case folds reflect the exact target filesystem's normalization policy.
+    by_casefold = defaultdict(set)
+    for path, owners in path_owners.items():
+        by_casefold[path.casefold()].add(path)
+    for alias, variants in sorted(by_casefold.items()):
+        if len(variants) < 2:
+            continue
+        all_owners = sorted({n for path in variants for n in path_owners[path]})
+        if len(all_owners) < 2:
+            continue
+        collisions.append({"path": alias, "paths": sorted(variants),
+                           "owners": all_owners, "severity": "high",
+                           "reason": "POSSIBLE_WINDOWS_CASE_ALIAS"})
+        for i, a in enumerate(all_owners):
+            for b in all_owners[i + 1:]:
+                edges.add((a, b))
+    # File/directory prefix conflicts are distinct from exact-file conflicts.
+    for path, owners in sorted(path_owners.items()):
+        parts = path.split("/")
+        for i in range(1, len(parts)):
+            prefix = "/".join(parts[:i])
+            if prefix not in path_owners:
+                continue
+            all_owners = sorted(set(owners + path_owners[prefix]))
+            if len(all_owners) < 2:
+                continue
+            collisions.append({"path": prefix, "paths": [prefix, path],
+                               "owners": all_owners, "severity": "high",
+                               "reason": "FILE_DIRECTORY_PREFIX_CONFLICT"})
+            for j, a in enumerate(all_owners):
+                for b in all_owners[j + 1:]:
+                    edges.add((a, b))
     collided = {n for c in collisions for n in c["owners"]}
     for n, entry in normalized.items():
         entry["collision_count"] = sum(n in c["owners"] for c in collisions)
-        entry["requires_review"] = True
+        entry["requires_review"] = True  # even if every listed check passed
         entry["merge_gate"] = (
             "blocked_overlap" if n in collided else
             "blocked_stale_base" if entry["stale_base"] else

@@ -302,3 +302,16 @@ This audit is a bounded snapshot through authenticated GitHub connector calls. N
 **OBSERVED_CODE:** `main` includes a non-empty `gateway/__init__.py` which imports `hermes_cli.config`, importing `yaml` at module load time. This makes a supposedly pure-stdlib check under `gateway/` dependent on the full application environment, even if the audit code itself only imports Python standard library. The audit module was moved out to root `gpt_bridge_metadata_audit.py` with a matching isolated import in tests. The real gateway remains unchanged. This is deliberately an **offline** tool and cannot be mistaken for a runtime-installed gateway adapter.
 
 **CI scope correction:** the isolated GitHub workflow now checks documentation changes on exact HEAD and uses per-PR `concurrency.cancel-in-progress` to avoid leaving obsolete checks queued as dozens of agents push. Cancelled checks are not success evidence. A future production observer should be added only through an explicit authenticated adapter and separate integration PR.
+
+
+## 13. Additional adversarial hardening — current draft revision
+
+**TESTED_OFFLINE:** 53 normalized-metadata tests plus 12 merge-collision tests passed under isolated `python -S` on Python 3.13 (65/65). Python 3.11/3.12 and the full Hermes repository remain gated by GitHub Actions. Local branch coverage: 94% for the event metadata auditor, 77% for the collision guard; these are **statement/branch composite reports**, not guarantees of completeness.
+
+**New bounded-input invariants:** raw metadata input is capped at 64 MiB total, 100,000 records, 50,000 distinct accepted events and 4 KiB/event. JSON nested recursion, ambiguous duplicate keys and URL-shaped evidence references fail closed; the report never echoes rejected payloads. Even with these caps, a caller-provided iterable is not an authenticated event source.
+
+**Windows agent worktree collisions:** GitHub filenames are case-sensitive, but many Windows workspaces are not. The PR guard now separately flags `POSSIBLE_WINDOWS_CASE_ALIAS` for cross-PR names differing by case, and `FILE_DIRECTORY_PREFIX_CONFLICT` when one branch writes a file at another branch's directory prefix. These are review flags, not proof that a particular NTFS volume rejects the path. No merge is automatically authorized.
+
+**O-25 connector state:** the Local_WorkSpace session subsequently answered `list_workspaces` with only the `shelter` workspace. Therefore the connector was no longer universally down, but its allowed scope still did **not** include the Hermes browser extension, its installation log, or its native host. Do not claim direct runtime monitoring or Obsidian edits to Hermes.
+
+**Risk ranking update:** modern upstream-version parity and authenticated native Runs adapter remain above expanding this offline observer. Any 'self-heal' without an independent effect receipt is rejected. After every PR HEAD change, all check-run conclusions from the previous SHA become stale and must be re-read.

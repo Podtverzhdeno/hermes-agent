@@ -35,6 +35,8 @@ SCHEMA_VERSION = 1
 MAX_EVENTS = 50_000
 MAX_EVENT_BYTES = 4_096
 MAX_INPUT_LINE_BYTES = 4_096
+MAX_INPUT_BYTES = 64 * 1024 * 1024
+MAX_INPUT_RECORDS = 100_000
 MAX_EVIDENCE_REFS = 16
 MAX_IDENTIFIER_LENGTH = 128
 
@@ -184,6 +186,8 @@ def validate_event(raw: Any) -> dict[str, Any]:
         raise InvalidEvent("invalid evidence_refs")
     for ref in refs:
         _identifier(ref, "evidence_ref")
+        if "://" in ref:
+            raise InvalidEvent("URL is not a safe evidence reference")
     if not isinstance(raw["trust_level"], str) or raw["trust_level"] not in TRUST_LEVELS:
         raise InvalidEvent("unsupported trust_level")
     if raw["kind"].startswith("tool.effect.") and raw["effect_key"] is None:
@@ -408,7 +412,15 @@ class CausalAuditor:
 def audit_ndjson(lines: Iterable[bytes], *, max_events: int = MAX_EVENTS) -> AuditReport:
     """Read bounded NDJSON metadata and classify syntactic and causal failures."""
     auditor = CausalAuditor(max_events=max_events)
-    for line in lines:
+    total_bytes = 0
+    for record_index, line in enumerate(lines, start=1):
+        if not isinstance(line, bytes):
+            auditor.reject_counts["INVALID_INPUT_RECORD_TYPE"] += 1
+            continue
+        total_bytes += len(line)
+        if record_index > MAX_INPUT_RECORDS or total_bytes > MAX_INPUT_BYTES:
+            auditor.reject_counts["INPUT_BUDGET_EXCEEDED"] += 1
+            break
         if len(line) > MAX_INPUT_LINE_BYTES:
             auditor.reject_counts["INPUT_LINE_TOO_LARGE"] += 1
             continue
@@ -456,6 +468,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("metadata_ndjson", type=Path, help="Export of metadata-only v1 event envelopes")
     parser.add_argument("--output", type=Path, help="Atomically replace a metadata-only JSON report")
     args = parser.parse_args(argv)
+    if args.metadata_ndjson.stat().st_size > MAX_INPUT_BYTES:
+        parser.error("input exceeds 64 MiB offline budget")
     with args.metadata_ndjson.open("rb") as f:
         report = audit_ndjson(f)
     output = json.dumps(report.as_dict(), indent=2, ensure_ascii=False, sort_keys=True) + "\n"

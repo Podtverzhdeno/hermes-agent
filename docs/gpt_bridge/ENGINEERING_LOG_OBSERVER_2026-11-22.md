@@ -65,3 +65,7 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 
 
 | O-24 | OBSERVED_CODE + FIX | `gateway/__init__.py -> hermes_cli.config -> yaml` causes implicit third-party import for offline tests. Moved observer to root stdlib-only module; CI uses exact-HEAD docs triggers and per-PR concurrency cancellation. | Validate all 3 Python versions through GitHub Actions; HOLD until complete. |
+
+
+| O-25 | TESTED_OFFLINE | Hardened 64 MiB / 100k-record parser budget, URL-bearing evidence refs, and case-insensitive Windows/file-directory PR conflicts. 53+12 = 65 contract tests passed under Python 3.13 `-S`; isolated coverage 94% / 77%. | GitHub CI on exact new HEAD and actual NTFS worktree checks remain required. |
+| O-26 | CONNECTOR_RECOVERED_SCOPED | Local_WorkSpace.list_workspaces became responsive but returned only `shelter`; Hermes extension/native host not within allowed root. | Treat Hermes runtime observability as still BLOCKED; do not inspect unrelated shelter files. |

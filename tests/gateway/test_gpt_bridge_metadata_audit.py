@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from uuid import NAMESPACE_URL, uuid5
+from unittest.mock import patch
 
 from gpt_bridge_metadata_audit import (
     MAX_EVENT_BYTES,
@@ -155,6 +156,10 @@ class ValidationTests(unittest.TestCase):
         for refs in (None, {}, ["a"] * 17, [5]):
             with self.assertRaises(InvalidEvent):
                 validate_event(ev(evidence_refs=refs))
+
+    def test_reject_evidence_url_even_without_query(self):
+        with self.assertRaises(InvalidEvent):
+            validate_event(ev(evidence_refs=["https://example.test/private/path"]))
 
     def test_canonical_uuid_only(self):
         with self.assertRaises(InvalidEvent):
@@ -370,6 +375,21 @@ class NDJSONTests(unittest.TestCase):
     def test_reject_oversized_line(self):
         report = audit_ndjson([b"x" * 4097])
         self.assertIn("INPUT_LINE_TOO_LARGE", [p["code"] for p in report.problems])
+
+    def test_non_bytes_input_fails_closed(self):
+        report = audit_ndjson(["{not bytes}", b"{}\n"])
+        self.assertEqual(report.rejected, 2)
+        self.assertIn("INVALID_INPUT_RECORD_TYPE", [p["code"] for p in report.problems])
+
+    def test_input_byte_budget_does_not_loop_indefinitely(self):
+        with patch("gpt_bridge_metadata_audit.MAX_INPUT_BYTES", 10):
+            report = audit_ndjson([b"{}\n"] * 50)
+        self.assertIn("INPUT_BUDGET_EXCEEDED", [p["code"] for p in report.problems])
+
+    def test_input_record_budget_does_not_loop_indefinitely(self):
+        with patch("gpt_bridge_metadata_audit.MAX_INPUT_RECORDS", 3):
+            report = audit_ndjson([b"{}\n"] * 50)
+        self.assertIn("INPUT_BUDGET_EXCEEDED", [p["code"] for p in report.problems])
 
     def test_valid_ndjson_and_empty_lines(self):
         report = audit_ndjson([b"\n", json.dumps(ev()).encode() + b"\n"])
