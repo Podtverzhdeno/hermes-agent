@@ -43,7 +43,7 @@ from pathlib import Path
 from hermes_constants import get_hermes_home
 from agent.skill_harness import (
     MAX_MANIFEST_BYTES, SkillHarnessError, path_within_root,
-    validate_skill_harness,
+    parse_skill_harness_yaml, validate_skill_harness,
 )
 from typing import Dict, Any, Optional
 
@@ -496,7 +496,7 @@ def _write_harness(
         canonical_name = meta.get("name")
         if not isinstance(canonical_name, str) or not canonical_name:
             return {"success": False, "error": "SKILL.md has no canonical name."}
-        validate_skill_harness(yaml.safe_load(file_content), canonical_name)
+        validate_skill_harness(parse_skill_harness_yaml(file_content), canonical_name)
     except (OSError, UnicodeError, yaml.YAMLError, SkillHarnessError) as exc:
         return {"success": False, "error": f"Invalid harness: {exc}"}
 
