@@ -258,3 +258,92 @@ The 100/100 score for the isolated auditor in Section 10 is a **local prototype 
 - R0 read-only monitoring can fail open **only as a clearly labelled incomplete observation**; R1–R3 mutations must fail closed on lost required audit persistence, unclear identity/authorization, stale lease, uncertain effect or unknown target revision.
 
 **Release blocker today:** no connected Local_WorkSpace/Windows host or trusted extension source; no authenticated native exporter; no production monitor running from this PR; multiple unresolved competing PR contracts. The right action is not to hide these under a synthetic score or silently merge them, but to preserve the exact blocker until a verifiable integration gate passes.
+
+## 14. Browser/CDP/native-extension integration gate: real attachment ownership
+
+**Source audit 2026-11-22:** draft PR #13 edits `tools/browser_tool.py` to redact CDP discovery/log fields and supplies `gpt_extension/cdp_diagnostics.py`. Draft PR #15 independently edits **the same browser tool** so that cleanup of externally attached CDP does not invoke CLI close/terminate and kill a browser shared by another task. Both cite the unavailable local Windows extension. Their changes must be reviewed together in a **single cumulative branch**; a passing isolated CI for either one cannot certify the combined cleanup/redaction behavior. PR #15 explicitly notes that residual CDP proxy daemon ownership is not resolved. Do not automatically apply either to the owner's active browser.
+
+### 14.1 Three different ownership identities
+
+| Boundary | Identity / lifetime | Correct behavior | Blocked or unsafe behavior |
+|---|---|---|---|
+| OS browser process | Browser owner PID + source `externally_attached` or `hermes_spawned`, not inferred solely from a websocket URL | Close/kill **only** a process created and exclusively owned by Hermes; external attach relinquishes its handle without killing the owner | Agent A cleanup terminates a shared Edge browser used by agent B |
+| CDP target/session | Browser incarnation + target ID + attachment generation + provenance | Detach a specific attachment; invalidate stale handles on navigation/disconnect; preserve unrelated target/session | Browser close for task A tears down all targets or leaves a stale tab actor with write rights |
+| Hermes task/action | Immutable task/attempt/fence + approved origin/target + effect digest | One active scoped writer to a given target; read-only observers may fan out | Two role-named workers click/type in the same tab, misattribute content or issue duplicate mutating actions |
+
+Never equate a logical agent display name (`A1`) with a process incarnation. The offline auditor explicitly checks same-name different-producer fence collisions; the **runtime CDP adapter** must enforce target/process fencing at the interaction gateway before each write, not in the browser popup or diagnostic code.
+
+### 14.2 Failure stories to reproduce on real browser only after controlled consent
+
+1. **Shared externally owned Edge:** agents A and B attach to two targets of one manually launched Edge. End A, let its idle cleanup and `atexit` run, observe B and OS process still alive; verify no `close`/SIGTERM was sent to external owner. An independently Hermes-created browser remains safely terminable.
+2. **Same tab with two agents:** two workers both acquire a logically identical role label. The second action must not gain write rights without a distinct current target fence. Navigate the tab between check and click; stale action must be rejected.
+3. **Stale navigation/permission:** target origin changes after approval, or an interstitial/SSO page appears. Previous approval is bound to the prior exact action+origin+target; automatic retry is prohibited, with reason `TARGET_REVISION_CHANGED` or an explicit schema-mapped equivalent.
+4. **MV3 suspend / native-host disconnect:** extension state disappears mid-run while the native Hermes run continues. On reconnect, resume only the read-only cursor and compare authoritative run status; no duplicate job dispatch and no inference that the worker died.
+5. **CDP endpoint diagnostics leak:** websocket/debug endpoint includes a token or private URL in an exception. Logs and SDD exports must contain only connection state and opaque identifiers; no endpoint, full URL, cookies, session ticket, or unsanitized stack text.
+6. **Observer fan-out overload:** 30 extension panels subscribe to one run. A single bounded, authenticated ingest owner polls/streams once and fans out snapshots with a watermark; temporary 429/backpressure becomes `incomplete_observation`, not 30 synchronized retries.
+
+### 14.3 Recommended extension presentation (design only)
+
+The companion status panel should show `task/run/attempt`, actual connected `gateway_version + capability_digest`, the authoritative state and age of that observation, a *separate* progress/heartbeat indicator, last acknowledged causal event and coverage watermark, external effect state (`none/known/unknown`), bounded competing stop hypotheses with evidence level, current Git SHA + CI SHA, and clearly non-authoritative diagnostic findings. Its default control surface is **read only**. Operator-approved recovery actions must go to separately authenticated host endpoints with target/fence/action digest binding; no arbitrary command relay through a content script.
+
+**Kill-switch hierarchy:** operator stops UI observation → native host cancels the observer subscription only → Hermes run remains untouched unless separately authorized to stop the run. Stopping a task is not permission to terminate a shared browser. A hidden automated CDP control loop is not an acceptable substitute for a stable documented API.
+
+### 14.4 Integration block conditions
+
+- Actual extension source/manifest/host version remains unavailable; `web-chatgpt-high-cdp` named in prior agent evidence is not verified installed or compatible here.
+- #13 and #15 overlap on one hot-path file; need common-base review, current branch SHAs, cumulative CI, Windows/Edge E2E, external-attach cleanup, origin/target refencing and redaction tests.
+- No privileged browser action may be enabled by a static skill document or a browser-origin claim; transport identity, owner authorization, task lease and action-effect receipt are independent trust checks.
+- If actual browser targets cannot be safely and stably addressed, only display operator-visible run status from the native Hermes API. `UNKNOWN` is better than a fabricated success or retry.
+
+## 15. Cross-agent incident deduplication and operator-safe monitoring contracts
+
+A concurrent specialist swarm will generate redundant *observations*, not necessarily independent problems. If 30 observers all see a `429`, a failed PR check or an externally owned CDP disconnect, incident creation must not multiply the issue into 30 independent repair campaigns.
+
+### 15.1 Canonical problem identity versus observation identity
+
+- **Incident fingerprint (DESIGN):** `SHA256(canonical(project_id, component_owner, invariant_id, stable_target_resource, root_cause_family))`. Derive only from authenticated, normalized metadata; keep the **investigation identity** stable when different agents report the same causal defect. This is deduplication, not proof the root cause is known.
+- **Observation identity:** include independent reporter incarnation, observed SHA, task/attempt/fence, trace/span, source watermark, provider/version and evidence digest. Store separate observations; never discard conflicting explanations just because they have the same fingerprint.
+- **Patch/review identity:** target branch+exact commit SHA; a new code revision starts a new verification epoch, even for the same incident. When a candidate merges, reconcile old and new hashes before marking anything resolved.
+- **Escalation:** one accountable integration owner per component. Observer-only agents can attach evidence or propose non-mutating fixes; only the explicitly scoped owner may submit code to its lane; only an independent verifier may certify an acceptance gate.
+
+An event's self-declared `trust_level="independent_verified"` is **untrusted metadata** until independently authenticated through the actual authoritative Hermes ledger and an approved verifier. Never trust a receipt-looking string or model-generated CI link to release unknown effects.
+
+### 15.2 Practical high-density operator diagnosis
+
+An incident view should render exactly these four separate sections: (1) **authoritative known state** with timestamp and source, or `unavailable`; (2) **most recent confirmed progression** and coverage/gap watermark; (3) **ranked hypotheses** with evidence vs counterevidence and `confirmed/probable/insufficient`; (4) **only permitted next actions**, including `reconcile_only`, `manual_required` and an explicit prohibition on replay of unknown external writes. Distinguish a provider's successful response from a verifier's acceptance of a task at a specific repository SHA.
+
+The UX must expose which monitor is reporting, its last successful observation and any backward clock jumps. A terminated MV3 service worker, disconnected MCP or unavailable GitHub workflow is not the same as a failed Hermes agent. The global 'Stop observing' control must not alter the underlying run, close an externally owned browser, or revoke another agent's permissions.
+
+### 15.3 Deterministic paging and retention
+
+For each source, keep a producer-incarnation-aware sequence watermark, bounded replay window and explicit `PREFIX_NOT_CAPTURED` versus `INTERNAL_GAP`. Persist ingestion ACK only after durable write. On ingestion truncation, report `incomplete_observation` and a resumable cursor, never a pristine green status. A huge storm of low-severity gaps cannot suppress the highest-severity unknown-effect findings (this offline oracle now has severity-prioritized bounded output, but a production store must implement independent durability and metrics).
+
+## 16. Exact-head CI evidence and release arbitration — checked 2026-11-22
+
+The following are **GitHub Actions observations at these PR heads** (not evidence the owner's running Windows installation is healthy). A cached badge, review-service "success", old commit check or isolated package test does not certify the entire Hermes runtime. Compare actual workflow **conclusion** at **exact SHA**, not a PR's vague mergeability flag.
+
+| PR / SHA prefix | Evidence checked | Honest outcome / action |
+|---|---|---|
+| #25 `c4227c7` | `Hermes GPT Causal Audit (offline)`, GitHub Actions run `45014925014`; Python 3.11/3.12/3.13 matrix | **3/3 SUCCESS**, independently executed 49 stdlib tests per matrix. Full `Tests` run `45014925022` **FAILURE**: 28 failed / 7550 passed / 171 skipped, including many missing OpenAI credentials, unrelated Codex and file-read timeout failures. Do not claim overall green. |
+| #21 `d45194b` | `GPT Causal Observer Offline Contracts` Python 3.11/3.12 jobs | **FAILURE** import path `tests/gateway/test_gpt_causal_observer → gateway/__init__ → gateway.config → hermes_cli.config → yaml`; missing `yaml` defeats claimed dependency-free CI harness. The absence of the dependency does not prove its observer logic defective. A cross-agent review comment was submitted. |
+| #5 `ba535dc` | Full `Tests` workflow | **FAILURE**, including missing OpenAI credentials, legacy error-message assertion and a brittle proxy test; see review. Separate source-level P0 risk remains: failure after a mutating effect may remove in-flight idempotency guard and allow replay, as reported by other reviewers. |
+| #4 `f2373ed` | Full `Tests` workflow | **FAILURE**; several failures are credentials/environment/timeout problems. Do not infer the entire feature caused all of them. |
+| #1 `7077c96` | `Autopilot Offline Contract`; full `Tests` | **Offline success**, broad suite failure. Ledger not activated. No API/extension integration success claim. |
+| #3 `f04bd2c` | `ACP Scoped Approval Regression`; full `Tests` | **Scoped regression success**, broad suite failure. Requires same-session, cross-thread and installed-target E2E. |
+| #8 `bc6bae3` | `Hermes GPT bridge offline contracts`; full `Tests` | **Offline success**, broad suite failure. |
+| #15 `6aea9f2` | `External CDP Browser Ownership QA`; full `Tests` | **Scoped success**, broad suite failure; real Windows/Edge ownership still unverified. |
+
+### 16.1 CI failure investigation protocol
+
+1. Record exact `head_sha`, workflow run ID, matrix job ID, base SHA, test command, Python/OS versions, dependency lock/install mode, and the first error—not only the red badge.
+2. Find the causal import/execution path. E.g. PR #21 is a dependency-isolation failure before its tests execute. Fix either the package import boundary or the CI provisioning claim, then rerun exact-head CI. No blind dependency installation should convert a claimed stdlib-only contract into an unrecorded environment requirement.
+3. Distinguish failures reproduced on `main` under the **same** environment from PR-specific regressions. Missing OpenAI keys is not a justification to inject private credentials into unaudited PR CI. Design deterministic fakes; keep secret-using E2E as separate explicitly authorized jobs.
+4. Review error-redaction vs old assertions as a **security contract change**. Never reintroduce public raw exceptions merely to make a legacy test green. Update expected behavior with trace correlation and negative privacy tests.
+5. A test that verifies internal `urllib` object graph structure (e.g., expecting a retained `ProxyHandler({})` in `opener.handlers`) is not the same as a controlled proof credentials are withheld from hostile proxies. Verify externally observable security behavior.
+6. Require that the **integration branch**, after selecting one implementation per lane, runs the full relevant suite and live controlled host fault-injection. Never equate 3 successful isolated CI matrix jobs with a production-ready extension.
+
+### 16.2 Rollout decision following source review
+
+**Keep PR #25 DRAFT and unmerged.** Offline audit is validated for its stated deterministic test contract at SHA `c4227c7`, but live native Hermes event translation, source authentication, trusted verifier, local Windows version discovery, extension manifest, CDP ownership, durable cross-worker ingress and system-level fault/soak testing are not verified. If the native upstream runs API differs in deployed installation, use capability discovery and mark `manual_required`, not silent fallback to an April fork handler. The observed full-suite CI failure is also unresolved for an end-to-end release gate.
+
+Primary research for this release arbitration: Chrome MV3 lifecycle (`https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/`), Temporal activities and idempotency (`https://docs.temporal.io/activities`, `https://docs.temporal.io/activity-definition`), W3C trace propagation (`https://www.w3.org/TR/trace-context-1/`) and native Hermes API/kanban documentation in current upstream. Their existence is **not** evidence the user's installed Hermes contains matching versions or permissions.
