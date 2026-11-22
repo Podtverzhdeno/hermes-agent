@@ -26,3 +26,11 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 - GitHub PR heads may change at any moment. Recollect exact SHA before considering merge. GitHub Actions cannot make REST retrieval atomic across independent endpoints.
 - Existing failures from environment/credentials require a controlled comparison with unchanged main, with dummy/mocked credentials for no-secret CI.
 - Repo-level integration diff + combined SHA CI, security review, source extension inspection and 30–100-agent fault injection still pending.
+
+
+## Follow-up, exact A0 GitHub CI and API source control-flow audit
+- PR #28 initial commit 02d63cfdddb4001836ca78678517f81aa9dca282: Github Actions offline contract code reported 13 tests OK, then live stage failed at 2026-11-22T10:53:46Z because PRs changed during snapshot. This is a live consistency race under many agents, not an offline unit test failure. Workflow run https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45014514401
+- Remediation on A0 branch: independent CI jobs for unit contracts vs live evidence, maximum three bounded snapshot-race retries, explicit incident report with merge_ready=false and code SNAPSHOT_RACE / EVIDENCE_INCOMPLETE.
+- PR #5 code-level: failed compute removes inflight entry without retaining unknown-outcome tombstone; later same-key retry may repeat effect. Not observed as a production incident. A0 review comment 7078088372.
+- PR #6 code-level: unsupported JSON message type / stream type / blank keyed SSE can bypass intended request validation. A0 review comment 7078088737; stacked #11 contains a preflight pattern.
+- PR #4 CI: 29 failed including changed safe 500-response vs old leaked error test; old test should be revised without raw backend error disclosure. A0 comment 7078089025.

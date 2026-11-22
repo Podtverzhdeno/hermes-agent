@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -207,7 +208,19 @@ def main(argv=None):
     parser.add_argument("--fail-on-collision", action="store_true")
     args = parser.parse_args(argv)
     try:
-        snapshot = live_snapshot(args.repo, os.getenv("GITHUB_TOKEN")) if args.live else json.loads(args.snapshot.read_text(encoding="utf-8"))
+        if args.live:
+            # With dozens of active agents, PR heads can move mid-snapshot.
+            # Retry only a recognized transient race. Never manufacture a green result.
+            for attempt in range(3):
+                try:
+                    snapshot = live_snapshot(args.repo, os.getenv("GITHUB_TOKEN"))
+                    break
+                except EvidenceError as exc:
+                    if "PRs changed during snapshot" not in str(exc) or attempt == 2:
+                        raise
+                    time.sleep(2)
+        else:
+            snapshot = json.loads(args.snapshot.read_text(encoding="utf-8"))
         report = assess(snapshot)
         human = markdown(report)
         if args.output_json:
@@ -220,7 +233,27 @@ def main(argv=None):
             print(human)
         return 2 if args.fail_on_collision and report["collisions"] else 0
     except (EvidenceError, OSError, ValueError) as exc:
-        print("EVIDENCE_UNAVAILABLE: " + str(exc), file=sys.stderr)
+        # Emit a durable incident artifact even when no trustworthy snapshot exists.
+        # Explicitly NOT authorized for a merge; this is a diagnosis, not success.
+        reason = "INPUT_IO_ERROR" if isinstance(exc, OSError) else str(exc)
+        failure = {
+            "schema_version": 1, "repository": args.repo,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "status": "EVIDENCE_UNAVAILABLE", "merge_ready": False,
+            "reason_code": "SNAPSHOT_RACE" if "PRs changed during snapshot" in reason
+                           else "EVIDENCE_INCOMPLETE",
+            "reason": reason,
+        }
+        if args.output_json:
+            args.output_json.parent.mkdir(parents=True, exist_ok=True)
+            args.output_json.write_text(json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
+        if args.output_md:
+            args.output_md.parent.mkdir(parents=True, exist_ok=True)
+            args.output_md.write_text("# Hermes PR evidence unavailable\\n\\n"
+                                     "Status: FAIL CLOSED. No merge authorization.\\n\\n"
+                                     "Reason: " + failure["reason_code"] + " / " + reason + "\\n",
+                                     encoding="utf-8")
+        print("EVIDENCE_UNAVAILABLE: " + reason, file=sys.stderr)
         return 3
 
 if __name__ == "__main__":

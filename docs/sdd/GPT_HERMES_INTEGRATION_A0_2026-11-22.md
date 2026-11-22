@@ -187,3 +187,19 @@ OpenTelemetry GenAI: https://opentelemetry.io/docs/specs/semconv/gen-ai/
 Temporal Activity Idempotency: https://docs.temporal.io/activity-definition
 
 This is a staged verified engineering review, not a claim of examining millions of sources or live user session data. Next gate is authorized Windows/WSL extension inspection and real fault-injection evidence.
+
+
+## 12. Follow-up A0, observed CI race and candidate API source audit
+
+2026-11-22 initial PR #28 head 02d63cfdddb4001836ca78678517f81aa9dca282: independent offline-contract job ran 13/13 tests OK on Python 3.11 but the SAME job then failed a live metadata snapshot because concurrent agents changed PR heads between the first and second GET. This is an honest fail-closed result, NOT a Python contract regression. Fix in follow-up commit: retry known snapshot race at most 3 times, emit JSON+Markdown evidence even on failure with reason_code SNAPSHOT_RACE/EVIDENCE_INCOMPLETE, and split CI offline-contract from live-evidence jobs. A report is not a release approval even when the advisory check passes.
+
+Gateway candidate source comparison:
+
+- #5 gateway/idempotency.py get_or_set: if compute_coro raises after an external effect, finally removes the inflight entry while completed cache is populated only on success. Retrying the same key can re-run the computation after uncertain effects. This is a demonstrated source control flow, NOT a verified duplicate in production. Required fix: an explicit UNKNOWN_EFFECT tombstone and trusted reconciliation, including crash-between-effect-and-ACK fault injection. See A0 review comment on PR #5.
+- #4 gateway/gpt_bridge_diagnostics.py preserves process-local failure tombstones, but expires by TTL and cannot guarantee cross-restart/cross-host safety. Its duplicate-in-flight behavior returns 409 immediately rather than joining. #11 stacked atop #4 adds explicit no-dispatch keyed SSE and message/stream preflight; must rebase to current #4 head before integration.
+- #6 gateway/platforms/api_server.py process-local cache preserves outcome_unknown and shielded task, but its chat preflight at inspected head lacks strict type checks on every message, stream boolean, blank present Idempotency-Key. Port #11-style validation with zero-dispatch regressions if #6 chosen. Preserve safe HTTP 500 error redaction rather than restoring raw provider text.
+- #5 and #6 have different retry semantics. Neither qualifies as distributed exactly-once. The single implementation owner must reconcile existing status codes and client contracts, not mix caches.
+
+Evidence comment IDs: PR #5 comment 7078088372, #6 comment 7078088737, #4 comment 7078089025. No cross-branch source overwrites or autonomous merges by A0.
+
+Acceptance refinement: CI must expose distinct machine states OFFLINE_CONTRACT_FAIL and LIVE_SNAPSHOT_UNAVAILABLE. Failure to obtain a stable snapshot is never normalized to successful evidence, but its cause and event metadata must survive as a downloadable artifact.

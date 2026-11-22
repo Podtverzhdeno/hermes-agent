@@ -1,5 +1,7 @@
 """No-network contract tests for read-only Hermes PR evidence gate."""
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -78,6 +80,20 @@ class GateTests(unittest.TestCase):
                             pr(2,files=["gpt_companion/journal.py"])))
         self.assertEqual(r["collisions"], [])
         self.assertEqual(r["semantic_reviews"][0]["family"],"event-observer")
+
+    def test_unavailable_evidence_emits_reasoned_artifact(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "bad.json"
+            out_json = Path(folder) / "evidence.json"
+            out_md = Path(folder) / "evidence.md"
+            source.write_text(json.dumps({"schema_version": 1, "consistent": False, "prs": []}))
+            rc = m.main(["--snapshot", str(source),
+                         "--output-json", str(out_json), "--output-md", str(out_md)])
+            self.assertEqual(rc, 3)
+            failure = json.loads(out_json.read_text())
+            self.assertEqual(failure["status"], "EVIDENCE_UNAVAILABLE")
+            self.assertFalse(failure["merge_ready"])
+            self.assertIn("FAIL CLOSED", out_md.read_text())
 
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
