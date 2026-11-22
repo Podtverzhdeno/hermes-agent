@@ -15,6 +15,7 @@ from gateway.platforms.api_server import (
     IdempotencyConflictError,
     IdempotencyCapacityError,
     IdempotencyUncertainOutcome,
+    _agent_run_outcome,
 )
 
 
@@ -422,4 +423,141 @@ async def test_responses_prior_unknown_effect_returns_conflict_no_second_call():
         assert retry.status == 409
         assert (await retry.json())["error"]["code"] == "execution_outcome_unknown"
         assert calls == 1
+    adapter._response_store.close()
+
+
+@pytest.mark.parametrize("result,expected", [
+    ({"completed": True, "final_response": "ok"}, "succeeded"),
+    ({"completed": False, "final_response": "partial"}, "incomplete"),
+    ({"interrupted": True, "completed": False, "final_response": "partial"}, "interrupted"),
+    ({"failed": True, "error": "failed"}, "failed"),
+    ({"error": "failed", "final_response": None}, "failed"),
+    ({"final_response": "old runner"}, "succeeded"),
+    (None, "failed"),
+])
+def test_runner_outcome_precedence(result, expected):
+    assert _agent_run_outcome(result) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runner_result,expected_reason", [
+    ({"final_response": "summary", "completed": False}, "incomplete"),
+    ({"final_response": "interrupted", "completed": False, "interrupted": True}, "interrupted"),
+])
+async def test_chat_incomplete_run_does_not_claim_success(runner_result, expected_reason):
+    adapter = _adapter()
+
+    async def fake_run(**kwargs):
+        return runner_result, {}
+
+    adapter._run_agent = fake_run
+    async with TestClient(TestServer(_app(adapter))) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}]},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status == 200
+        assert resp.headers["X-Hermes-Agent-Outcome"] == expected_reason
+        assert (await resp.json())["choices"][0]["finish_reason"] == "length"
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runner_result,expected_reason", [
+    ({"final_response": "partial", "completed": False}, "agent_incomplete"),
+    ({"final_response": "partial", "completed": False, "interrupted": True}, "agent_interrupted"),
+])
+async def test_responses_incomplete_run_is_not_completed(runner_result, expected_reason):
+    adapter = _adapter()
+
+    async def fake_run(**kwargs):
+        return runner_result, {}
+
+    adapter._run_agent = fake_run
+    async with TestClient(TestServer(_app(adapter))) as client:
+        resp = await client.post(
+            "/v1/responses", json={"input": "hi"},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "incomplete"
+        assert data["incomplete_details"]["reason"] == expected_reason
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runner_result,reason", [
+    ({"failed": True, "error": "SECRET_RUNNER_MESSAGE", "completed": False},
+     "agent_reported_failed"),
+    ({"interrupted": True, "completed": False, "final_response": "partial"},
+     "agent_interrupted"),
+])
+async def test_sse_reported_stop_not_false_success(runner_result, reason):
+    adapter = _adapter()
+
+    async def fake_run(**kwargs):
+        return runner_result, {}
+
+    adapter._run_agent = fake_run
+    async with TestClient(TestServer(_app(adapter))) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}], "stream": True},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status == 200
+        wire = await resp.text()
+        assert reason in wire
+        assert '"finish_reason": "stop"' not in wire
+        assert "SECRET_RUNNER_MESSAGE" not in wire
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sse_incomplete_run_marks_length_not_stop():
+    adapter = _adapter()
+
+    async def fake_run(**kwargs):
+        return {"completed": False, "final_response": "partial"}, {}
+
+    adapter._run_agent = fake_run
+    async with TestClient(TestServer(_app(adapter))) as client:
+        resp = await client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "hi"}], "stream": True},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert resp.status == 200
+        wire = await resp.text()
+        assert '"finish_reason": "length"' in wire
+        assert '"finish_reason": "stop"' not in wire
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_http_failed_runner_reports_error_without_leakage():
+    adapter = _adapter()
+
+    async def fake_run(**kwargs):
+        return {
+            "failed": True, "completed": False, "error": "SENSITIVE_RUNNER_CONTENT",
+            "final_response": None,
+        }, {}
+
+    adapter._run_agent = fake_run
+    async with TestClient(TestServer(_app(adapter))) as client:
+        for endpoint, payload in (
+            ("/v1/responses", {"input": "hi"}),
+            ("/v1/chat/completions", {"messages": [{"role": "user", "content": "hi"}]}),
+        ):
+            resp = await client.post(
+                endpoint, json=payload,
+                headers={"Authorization": "Bearer test-key"},
+            )
+            assert resp.status == 500
+            content = await resp.text()
+            assert "SENSITIVE_RUNNER_CONTENT" not in content
+            assert "agent_execution_failed" in content
     adapter._response_store.close()
