@@ -162,6 +162,38 @@ class GateTests(unittest.TestCase):
         self.assertEqual(len(result["prs"]),9)
         self.assertEqual([x["number"] for x in result["prs"]],list(range(1,10)))
 
+    def test_http_failure_is_redacted_and_classified(self):
+        from unittest.mock import patch
+        fake = g.HTTPError("https://secret.example/token=abc", 403,
+                           "Forbidden bearer-secret", None, None)
+        with patch.object(g, "urlopen", side_effect=fake):
+            with self.assertRaises(g.EvidenceError) as caught:
+                g._get_json("https://secret.example/token=abc", "sensitive-key")
+        self.assertEqual(str(caught.exception), "GitHub HTTP 403")
+        self.assertEqual(g.evidence_reason(caught.exception), "GITHUB_HTTP_403")
+
+    def test_failed_scan_writes_redacted_incident_report(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "out.json"
+            code = g.main(["--snapshot", str(Path(temporary)/"absent-secret.json"),
+                           "--output", str(target)])
+            report = json.loads(target.read_text(encoding="utf-8"))
+        self.assertEqual(code, 3)
+        self.assertEqual(report["status"], "evidence_unknown")
+        self.assertEqual(report["reason_code"], "LOCAL_EVIDENCE_READ_FAILED")
+        self.assertNotIn("absent-secret", json.dumps(report))
+
+    def test_error_category_preserves_snapshot_race_vs_http_error(self):
+        self.assertEqual(g.evidence_reason(g.EvidenceError("Base branch moved during scan")),
+                         "SNAPSHOT_RACE")
+        self.assertEqual(g.evidence_reason(g.EvidenceError("GitHub HTTP 429")),
+                         "GITHUB_HTTP_429")
+        self.assertEqual(g.evidence_reason(g.EvidenceError("Pagination limit reached")),
+                         "EVIDENCE_TRUNCATED")
+
     def test_collect_pages_bounds(self):
         with self.assertRaises(g.EvidenceError):
             g.validate(snap(pr(1),complete=False))
