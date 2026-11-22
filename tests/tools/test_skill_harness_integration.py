@@ -107,3 +107,35 @@ def test_external_symlink_is_not_followed(skill_layout, tmp_path):
     out = json.loads(skill_view("link-skill"))
     assert out["success"] is False
     assert "PRIVATE MARKER" not in json.dumps(out)
+
+
+def test_harness_reference_byte_limit_is_enforced(skill_layout):
+    _, target = skill_layout
+    specs = {
+        "schema_version": 1, "skill": "demo-skill",
+        "activation": {"when": ["Read docs"], "not_when": ["No docs"]},
+        "capabilities": {"tools": ["read_file"], "side_effects": "none",
+                         "approval_required": []},
+        "lifecycle": {
+            "preflight": ["Check path"], "execute": ["Read needed chapter"],
+            "verify": ["Validate output"], "recover": ["Split large file"],
+        },
+        "budget": {"max_tool_calls": 8, "max_reference_bytes": 1024},
+        "evidence": {"required": ["Source reference"]},
+        "output": {"format": "Digest", "acceptance": ["No truncated interpretation"]},
+    }
+    (target / "harness.yaml").write_text(yaml.safe_dump(specs), encoding="utf-8")
+    refs = target / "references"
+    refs.mkdir()
+    (refs / "too-long.md").write_text("x" * 1025, encoding="utf-8")
+    (refs / "small.md").write_text("OK", encoding="utf-8")
+
+    oversized = json.loads(skill_view("demo-skill", file_path="references/too-long.md"))
+    assert oversized["success"] is False
+    assert oversized["code"] == "reference_too_large"
+    assert oversized["size_bytes"] == 1025
+    assert "x" * 50 not in json.dumps(oversized)
+
+    small = json.loads(skill_view("demo-skill", file_path="references/small.md"))
+    assert small["success"] is True
+    assert small["content"] == "OK"
