@@ -106,7 +106,7 @@ Examples (read only):
 
 Exit 0 = NO_STACK_ISSUES_NOT_MERGE_APPROVAL; exit 1 = REVIEW_REQUIRED; exit 2 = AUDIT_INCOMPLETE. No output implies it can merge. GitHub has no globally atomic PR snapshot in these separate API calls: rerun against exact candidate refs just before a merge, perform final merged-tree CI, and re-check policies.
 
-Local test evidence: 27 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 45 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
+Local test evidence: 32 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 50 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
 
 ## 7. Multi-agent governance and integration queue
 
@@ -162,7 +162,7 @@ This SDD records the complexity and quality bar for subsequent workers. It does 
 
 ## 11. Additional hardening, exact-SHA evidence and sourced transport notes
 
-The remote branch was updated after the initial review to reject malformed GitHub PR and comparison response shapes before any green result and to detect a cycle in stacked PR base dependencies. Even two branch refs temporarily pointing at identical commits must not make a circular stack appear mergeable. Three new negative tests cover the above; the offline local comparison suite is now 45/45 passing (27 stack guard tests in this PR, 18 generic prototype tests kept local). These are source-level and offline test claims; CI must run on the **latest** commit SHA, not the original PR creation SHA.
+The remote branch was updated after the initial review to reject malformed GitHub PR and comparison response shapes before any green result and to detect a cycle in stacked PR base dependencies. Even two branch refs temporarily pointing at identical commits must not make a circular stack appear mergeable. Three new negative tests cover the above; the offline local comparison suite is now 50/50 passing (32 stack guard tests in this PR, 18 generic prototype tests kept local). These are source-level and offline test claims; CI must run on the **latest** commit SHA, not the original PR creation SHA.
 
 API workers should distinguish:
 - OpenAI Responses background mode provides provider-managed long-running response IDs and retrieval in supported cases. This is different from persisting Hermes tool outcomes and must not silently substitute for an action ledger. See https://developers.openai.com/api/docs/guides/background .
@@ -210,14 +210,14 @@ Priority after PR #29 review: migrate to modern Kanban and canonical API admissi
 
 A final reviewer check found that it is unsafe to interpret behind_by=0 as clean ancestry if GitHub compare status=ahead/behind/diverged/identical and ahead_by/behind_by values are internally contradictory or missing. An incomplete/mock JSON response must not produce an apparently positive ancestry verdict. The read-only stack guard now binds together three fields: exact status, ahead_by and behind_by. Valid pairs are identical=(0,0); ahead=(ahead>0, behind=0); behind=(ahead=0, behind>0); diverged=(ahead>0, behind>0). All other combinations downgrade to INVALID_COMPARE_EVIDENCE, never success. Four extra offline tests cover contradictory diverged, missing ahead_by, invalid identical and legitimate identical.
 
-Latest deterministic local Python 3.13 result: **45/45** tests including 27 published ancestry-guard tests and 18 deliberately unpublished generic comparative tests. Because this SDD edit creates another head SHA, any earlier GitHub CI success is historical and must not be presented as the latest SHA's test status. A final exact-head check after publication is mandatory.
+Latest deterministic local Python 3.13 result: **50/50** tests including 32 published ancestry-guard tests and 18 deliberately unpublished generic comparative tests. Because this SDD edit creates another head SHA, any earlier GitHub CI success is historical and must not be presented as the latest SHA's test status. A final exact-head check after publication is mandatory.
 
 
 ## 15. 100-agent graph regression (offline simulation, not live throughput)
 
 Two additional regression tests synthesize 100 distinct agent-owned PRs arranged into 10 stacks with 90 parent/child edges. Under complete consistent synthetic compare evidence, analyze() must produce the same sorted report regardless of inventory order, while its verdict still says NO_STACK_ISSUES_NOT_MERGE_APPROVAL. A second fixture injects a stale-parent compare result for just one of the 90 edges: even in a 100-agent inventory the finding is exactly PR #52, parent PR #51, PARENT_ADVANCED_REBASE_REQUIRED, with nonzero review status. This is useful for coordination scale but does NOT measure CPU/memory/SLA or any actual Hermes worker concurrency.
 
-Current local Python 3.13 combined offline suite: **45/45** (27 published stack-guard checks, 18 separate generic scanner prototype checks deliberately omitted from this PR to preserve #14 ownership). Exact-head GitHub CI must independently pass after this final revision; do not quote earlier commit checks as current evidence.
+Current local Python 3.13 combined offline suite: **50/50** (32 published stack-guard checks, 18 separate generic scanner prototype checks deliberately omitted from this PR to preserve #14 ownership). Exact-head GitHub CI must independently pass after this final revision; do not quote earlier commit checks as current evidence.
 
 
 ## 16. Second concurrent-agent integration snapshot (32 open PRs)
@@ -235,3 +235,14 @@ A subsequent fresh read-only GitHub snapshot found **32 open PRs** (versus 30 in
 These values may become stale immediately under parallel work: always report both pinned commit hashes and when measured. A review comment records an actionable observation; it does not take ownership of another agent's branch or prove a runtime failure.
 
 **Important coordination lesson:** a code change on a child branch can increase both ahead_by and behind_by over time while the parent's separate owner lands additional changes. Even a child with hundreds of green unit tests may have to rerun on an integrated merge candidate. The release reviewer must never count isolated child check runs as a proxy for integration tests. No auto-fix that force-pushes to another owner's branch is permitted.
+
+
+## 17. Audit failures must be atomic diagnostic artifacts too
+
+The review uncovered a genuine root-cause visibility gap in the ancestry guard: on HTTP 403/429, timeout, unavailable GitHub, malformed JSON or incomplete snapshot, the original CLI exited nonzero but only logged stderr and the workflow's JSON artifact could be missing. A failed observer is not an absent conflict; losing the last observation is exactly where operators need a reason code.
+
+Fix in this Draft branch: get() now emits sanitized categories such as GITHUB_HTTP_429, GITHUB_TRANSPORT_UNAVAILABLE, GITHUB_TIMEOUT or GITHUB_BAD_JSON rather than echoing raw HTTP headers, URLs or tokens. main() emits the same machine-readable JSON contract for green, review and AUDIT_INCOMPLETE outcomes. Audit-incomplete reports carry reason_code, timestamp, checked repo identifier (if safe), verdict, and explicit not_checked=all; output is written to a temporary file, flushed and fsynced, then atomically replaced on the same filesystem. No tool writes or branch merges are made. If the output directory itself is unavailable/unwritable, the process returns exit 2 and writes a redacted OUTPUT_IO_ERROR to stderr — the report cannot be guaranteed on an unwritable disk.
+
+Scope caveat: atomic replace plus file fsync is not a guarantee of power-loss durability on every filesystem; POSIX directory fsync and off-host storage are future deployment concerns. GitHub Actions artifact upload after a failed scan is still best effort and depends on runner availability. A successful error-report write is evidence that monitoring failed, not proof the repo has no conflicting PRs.
+
+Five new negative-path tests assert HTTP 429 redaction, invalid snapshot JSON still creates an AUDIT_INCOMPLETE artifact, reason-code preservation, structured stdout on failure, and fail-closed output-path errors. Latest local Python 3.13 combined offline suite: **50/50** (32 stack-guard tests in this PR, 18 local unpublished comparative collision tests). Full GitHub checks require independent exact SHA confirmation; live Hermes Windows/CDP extension remains unverified.
