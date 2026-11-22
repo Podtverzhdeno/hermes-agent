@@ -2,6 +2,19 @@
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.
 
+## Hermes Autopilot quality directive (owner project context)
+
+For any Autopilot architecture, scheduler, worker, provider, GitHub, Obsidian
+or approval integration work, read
+`docs/autopilot/OWNER_ACCEPTANCE_CONTRACT.md` and
+`docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md` first.
+Treat this as a high-complexity, independently verified project; use modern
+upstream Kanban as the proposed canonical task lifecycle, rather than
+silently adding a duplicate scheduler. The draft coordination kernel is **not
+a deployed worker**. Do not state that unattended operation works without
+actual pinned-revision CI, host E2E, cancellation and recovery evidence.
+
+
 ## Development Environment
 
 ```bash
