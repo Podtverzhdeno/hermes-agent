@@ -41,6 +41,18 @@ _CAPABILITY_RISKS = MappingProxyType({
 })
 
 _GITHUB_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+_GIT_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,180}$")
+
+
+def _safe_ref(value: Any) -> bool:
+    if not isinstance(value, str) or not _GIT_REF.fullmatch(value):
+        return False
+    if ".." in value or "//" in value or value.endswith("."):
+        return False
+    if any(not part or part.startswith(".") or part.endswith(".lock")
+           for part in value.split("/")):
+        return False
+    return True
 _CRITICAL = frozenset(("R3",))
 _EXTERNAL = frozenset(("R2", "R3"))
 
@@ -181,15 +193,12 @@ class ActionPolicy:
                 branch = intent.arguments.get("branch")
                 if not isinstance(branch, str) or not branch.startswith("autopilot/"):
                     raise PolicyDenied("only task-specific autopilot branches may be created")
-                if any(segment in ("", ".", "..") for segment in branch.split("/")):
-                    raise PolicyDenied("unsafe branch name")
+                if not _safe_ref(branch):
+                    raise PolicyDenied("unsafe Git branch ref")
             if intent.capability == "github.pr.create":
-                if not all(
-                    isinstance(intent.arguments.get(key), str)
-                    and intent.arguments[key].strip()
-                    for key in ("head", "base")
-                ):
-                    raise PolicyDenied("PR head/base must be explicit")
+                if not all(_safe_ref(intent.arguments.get(key))
+                           for key in ("head", "base")):
+                    raise PolicyDenied("PR head/base must be explicit safe refs")
         else:
             # No path can be considered trustworthy until a scoped local file
             # service can canonicalize and check it on the destination host.
