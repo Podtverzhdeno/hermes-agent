@@ -25,9 +25,10 @@ _SAFE_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
 # alone is not redaction: a token such as sk-secret can look like a code.
 _EVENT_ALLOWLIST = frozenset((
     "run.queued", "run.running", "run.completed", "run.failed",
-    "run.cancelled", "run.interrupted", "run.steered",
+    "run.cancelled", "run.interrupted", "run.steered", "run.stopping",
     "tool.started", "tool.completed", "reasoning.available",
     "subagent.start", "subagent.complete", "message.delta",
+    "message.interim",
     "approval.request", "approval.responded", "approval.resolved",
     "approval.denied", "approval.cancelled", "replay.truncated",
 ))
@@ -322,7 +323,15 @@ class CausalRunAuditor:
         elif inconsistent:
             stop_reason, action = "CONTRADICTORY_STATUS", "FETCH_STATUS_AND_REPLAY_EVENTS"
         elif self._status in _TERMINAL:
-            if self._status == "completed" and self._tool_errors:
+            if self._status in ("cancelled", "interrupted"):
+                # Native live Bot Chat ownership can continue after the
+                # gateway declares cancellation: run status != remote stop.
+                stop_reason, action = (
+                    self._reason or self._status.upper(),
+                    "VERIFY_EXTERNAL_EFFECTS_BEFORE_RETRY",
+                )
+                reasons.append("CANCELLATION_NOT_EFFECT_PROOF")
+            elif self._status == "completed" and self._tool_errors:
                 stop_reason, action = "COMPLETED_WITH_TOOL_ERRORS", "INSPECT_TOOL_FAILURE_RECOVERY"
             else:
                 stop_reason, action = (
