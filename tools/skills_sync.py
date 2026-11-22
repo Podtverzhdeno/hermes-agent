@@ -158,13 +158,13 @@ def sync_skills(quiet: bool = False) -> dict:
 
     Returns:
         dict with keys: copied (list), updated (list), skipped (int),
-                        user_modified (list), cleaned (list), total_bundled (int)
+                        user_modified (list), cleaned (list), harness_pending (list), total_bundled (int)
     """
     bundled_dir = _get_bundled_dir()
     if not bundled_dir.exists():
         return {
             "copied": [], "updated": [], "skipped": 0,
-            "user_modified": [], "cleaned": [], "total_bundled": 0,
+            "user_modified": [], "cleaned": [], "harness_pending": [], "total_bundled": 0,
         }
 
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -268,6 +268,30 @@ def sync_skills(quiet: bool = False) -> dict:
             except (OSError, IOError) as e:
                 logger.debug("Could not copy %s: %s", desc_md, e)
 
+    # An existing customized skill may legitimately stay untouched even
+    # after a new bundled harness is available. Report that drift
+    # explicitly; never overwrite the user's copy or silently attach a
+    # contract reviewed against different instructions.
+    harness_pending = []
+    for skill_name, skill_src in bundled_skills:
+        source_harness = skill_src / "harness.json"
+        dest = _compute_relative_dest(skill_src, bundled_dir)
+        dest_harness = dest / "harness.json"
+        if not source_harness.is_file() or not dest.is_dir():
+            continue  # The user may have deliberately deleted the skill.
+        try:
+            matched = dest_harness.is_file() and (
+                source_harness.read_bytes() == dest_harness.read_bytes()
+            )
+        except (OSError, IOError):
+            matched = False
+        if not matched:
+            harness_pending.append(skill_name)
+    harness_pending.sort()
+    if harness_pending and not quiet:
+        print("  ! " + str(len(harness_pending)) +
+              " harness contracts not synchronized (customized/unavailable): " +
+              ", ".join(harness_pending))
     _write_manifest(manifest)
 
     return {
@@ -276,6 +300,7 @@ def sync_skills(quiet: bool = False) -> dict:
         "skipped": skipped,
         "user_modified": user_modified,
         "cleaned": cleaned,
+        "harness_pending": harness_pending,
         "total_bundled": len(bundled_skills),
     }
 
@@ -292,4 +317,6 @@ if __name__ == "__main__":
         parts.append(f"{len(result['user_modified'])} user-modified (kept)")
     if result["cleaned"]:
         parts.append(f"{len(result['cleaned'])} cleaned from manifest")
+    if result["harness_pending"]:
+        parts.append(f"{len(result['harness_pending'])} harnesses need manual review")
     print(f"\nDone: {', '.join(parts)}. {result['total_bundled']} total bundled.")
