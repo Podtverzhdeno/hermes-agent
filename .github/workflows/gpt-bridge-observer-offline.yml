@@ -3,17 +3,17 @@ name: GPT Bridge read-only audit contracts
 on:
   pull_request:
     paths:
-      - 'gateway/gpt_bridge_event_audit.py'
+      - 'gateway/gpt_bridge_metadata_audit.py'
       - 'scripts/gpt_bridge_pr_collision_audit.py'
-      - 'tests/gateway/test_gpt_bridge_event_audit.py'
+      - 'tests/gateway/test_gpt_bridge_metadata_audit.py'
       - 'tests/scripts/test_gpt_bridge_pr_collision_audit.py'
       - '.github/workflows/gpt-bridge-observer-offline.yml'
   push:
     branches: [main]
     paths:
-      - 'gateway/gpt_bridge_event_audit.py'
+      - 'gateway/gpt_bridge_metadata_audit.py'
       - 'scripts/gpt_bridge_pr_collision_audit.py'
-      - 'tests/gateway/test_gpt_bridge_event_audit.py'
+      - 'tests/gateway/test_gpt_bridge_metadata_audit.py'
       - 'tests/scripts/test_gpt_bridge_pr_collision_audit.py'
       - '.github/workflows/gpt-bridge-observer-offline.yml'
   workflow_dispatch:
@@ -36,8 +36,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Compile pure-stdlib tools
-        run: python -m compileall -q gateway/gpt_bridge_event_audit.py scripts/gpt_bridge_pr_collision_audit.py
+        run: python -m compileall -q gateway/gpt_bridge_metadata_audit.py scripts/gpt_bridge_pr_collision_audit.py
       - name: Causal and failure contract
-        run: python -m unittest discover -s tests/gateway -p 'test_gpt_bridge_event_audit.py' -v
+        run: python -m unittest discover -s tests/gateway -p 'test_gpt_bridge_metadata_audit.py' -v
       - name: Multi-agent PR ownership contract
         run: python -m unittest discover -s tests/scripts -p 'test_gpt_bridge_pr_collision_audit.py' -v

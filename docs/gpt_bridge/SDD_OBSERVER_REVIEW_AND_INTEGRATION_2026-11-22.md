@@ -268,3 +268,30 @@ Scored candidate \`G. Modern native Runs SSE -> validated internal metadata adap
 ### Fresh observation does not equal continuous monitoring
 
 This audit is a bounded snapshot through authenticated GitHub connector calls. Neither this ChatGPT session nor a draft CI job is a guaranteed continuous monitor. A future source-owned watcher needs durable last-seen IDs, ETag/rate-limit backoff, a supervisor and a user-visible pause/stop control on the Windows host; deployment cannot be claimed while Local_WorkSpace MCP is disconnected.
+
+
+
+## 12. Release-tag correction: what Hermes v0.23.3 already solves (SOURCE VERIFIED)
+
+**OBSERVED_CODE / OBSERVED_DOCS:** inspected \`NousResearch/hermes-agent\` **tag \`v0.23.3\`**, exact \`website/docs/user-guide/features/api-server.md\` blob \`82c591d3afadd1060d870652f7c350b0a53a6253\` and \`gateway/platforms/api_server_runs.py\` blob \`868ed43adf99e0024c9bd31e655a2a1e201cf4d9\`. This disambiguates earlier historical October issue reports from present-release capabilities. Sources: https://github.com/NousResearch/hermes-agent/blob/v0.23.3/website/docs/user-guide/features/api-server.md ; https://github.com/NousResearch/hermes-agent/blob/v0.23.3/gateway/platforms/api_server_runs.py .
+
+**Built in already (do not reimplement blindly):**
+- Canonical gateway session authority with durable admission identity and per-session serialized ownership, including **Chat Completions/Responses** keyed admission; legacy execution still has five-minute process cache and *no streaming dedup*. Idempotency behavior is mode- and endpoint-dependent, not a single global cache.
+- \`POST /v1/runs\` 24-hour keyed replay ledger, same-key/same-payload 202 replay and changed-payload 409; *unkeyed* submissions deliberately remain non-idempotent.
+- \`GET /v1/runs/{id}\` status, \`GET /v1/runs/{id}/events\` replay with \`Last-Event-ID\` / \`last_seq\`, redaction requirements and \`replay.truncated\` when truncated.
+- Terminal \`interrupted\` on graceful gateway shutdown; canonical session authority additionally reports **nonterminal \`unknown\`** after owner restart, holding follower tasks rather than pretending success.
+- \`POST /v1/runs/{id}/resolve-unknown\` uses exact \`admission_id\` and \`execution_generation\` with owner checks; successful repeat yields the same receipt, stale generation rejects 409. **Important:** this operator acknowledgement unblocks the FIFO; it does *not* prove that an earlier external tool side effect never occurred.
+- Authenticated profile-scoped run status/control and exact \`request_id\` + \`execution_generation\` for live approval/clarification; a foreign-surface session is not adopted through ordinary API routes.
+
+**Critical implications:**
+1. The old fork \`main\` is April 2026. Patch sets #4/#5/#6/#11 built on that version must be **compared against v0.23.3 semantics before any merge**, or their new cache/SSE logic can regress durable admission, session ownership, typed failure and recovery.
+2. Canonical streaming Chat Completions can emit \`finish_reason:"error"\` within HTTP 200 with \`[DONE]\`; a client must inspect the final chunk/error code, not infer success from DONE. Legacy mode and canonical mode must be tested separately.
+3. The GPT Companion / Chrome MV3 view is an **optional read-only observer**, not the canonical session authority. Each browser restart reattaches by run ID and replay sequence; if \`replay.truncated\`, query authenticated run status and show an evidence gap.
+4. Never log \`message.delta\`, \`reasoning.available\`, tool previews, raw errors or \`run.completed.output\`. Trust elevation requires a separately authenticated source adapter, not a self-claimed \`trust_level\` field.
+5. Modern official docs specify \`API_SERVER_KEY\` required even on loopback for deployments with terminal-capable tools; do not deploy a browser bridge with wildcard CORS or a shared unscoped token.
+6. Do not present \`resolve-unknown\` as a fully automatic safe fix; require evidence about remote effects before intentionally unblocking and reissuing follow-up work.
+
+### ADR-GPT-018 (decision)
+**ACCEPT for integration planning:** upstream v0.23.3 parity + native Runs API observer + trust-boundary adapter. **REJECT:** building a new authoritative queue or independent recovery engine first. This is higher priority than growing the offline parser, but deployment remains blocked until the real Windows extension and user-approved credentials are inspected.
+
+**Conflict-resolution executed in this draft:** this PR's metadata schema parser moved from \`gateway/gpt_bridge_event_audit.py\` to \`gateway/gpt_bridge_metadata_audit.py\`, with matching test move. This is NOT a claim that native SSE parser PR #4 and our metadata parser are integrated; it simply removes an unnecessary same-path write collision while preserving the review boundary. Both still require an explicit adapter and unified regression review.

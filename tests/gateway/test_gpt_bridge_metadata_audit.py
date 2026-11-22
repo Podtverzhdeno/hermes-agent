@@ -10,7 +10,7 @@ import tempfile
 import unittest
 from uuid import NAMESPACE_URL, uuid5
 
-from gateway.gpt_bridge_event_audit import (
+from gateway.gpt_bridge_metadata_audit import (
     MAX_EVENT_BYTES,
     CausalAuditor,
     InvalidEvent,

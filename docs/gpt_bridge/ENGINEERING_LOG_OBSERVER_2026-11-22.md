@@ -55,3 +55,10 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 | O-21 | DESIGN_DECISION | MV3 shutdown must not imply run failure and must never trigger a second POST; observe native seq gaps, then reconcile from trusted status. | Include SSE replay and operator STOP in E2E tests |
 
 **Not done:** no Windows extension implementation; no MCP/Obsidian inspection after \`Session terminated\`; no live Hermes process monitor, no auto-fix deployment, no merge into main. These are intentional release HOLDs, not hidden achievements.
+
+
+
+| O-22 | OBSERVED_RELEASE_TAG | Verified upstream tag v0.23.3 docs and \`api_server_runs.py\`: canonical durable admissions, scope-bound approvals, replay-truncated SSE and \`unknown\` recovery with generation fencing exist. | Align migration with current upstream behavior; do not reintroduce April legacy races. |
+| O-23 | CHANGE_ISOLATION | Renamed this PR's metadata v1 parser to \`gateway/gpt_bridge_metadata_audit.py\` and its test to \`test_gpt_bridge_metadata_audit.py\` in one expected-HEAD Git tree update. | Exact-path overlap with #4 removed; semantic integration/adapter still OPEN. |
+
+**O-22/O-23 verification:** only release-tag source inspection and atomic Git source-change provenance; new PR CI and Windows integration require separate evidence.

@@ -8,8 +8,8 @@ Contract source: docs/gpt_bridge/SDD.md (draft PR #7, 2026-11-22).
 
 Usage::
 
-    python -m gateway.gpt_bridge_event_audit metadata.ndjson
-    python -m gateway.gpt_bridge_event_audit metadata.ndjson --output report.json
+    python -m gateway.gpt_bridge_metadata_audit metadata.ndjson
+    python -m gateway.gpt_bridge_metadata_audit metadata.ndjson --output report.json
 
 The CLI emits *only* allowlisted identifiers, reason codes and counts. Never
 supply raw model messages, credentials or tool arguments as input.
