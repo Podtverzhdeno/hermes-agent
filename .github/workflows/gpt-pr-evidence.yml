@@ -1,0 +1,65 @@
+name: GPT PR integration evidence (read only)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/hermes_pr_gate.py'
+      - 'scripts/hermes_capability_probe.py'
+      - 'tests/integration/test_hermes_pr_gate.py'
+      - 'tests/integration/test_hermes_capability_probe.py'
+      - 'tests/integration/test_hermes_workstream_registry.py'
+      - 'docs/sdd/GPT_WORKSTREAM_REGISTRY_A0_2026-11-22.json'
+      - 'docs/sdd/GPT_HERMES_INTEGRATION_A0_2026-11-22.md'
+      - '.github/workflows/gpt-pr-evidence.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '23 */6 * * *'
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  offline-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python PR integration contracts
+        run: python -m unittest discover -s tests/integration -p test_hermes_pr_gate.py -v
+      - name: Python local capability probe contracts (offline)
+        run: python -m unittest discover -s tests/integration -p test_hermes_capability_probe.py -v
+      - name: Advisory agent ownership registry invariants
+        run: python -m unittest discover -s tests/integration -p test_hermes_workstream_registry.py -v
+
+  live-evidence:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    concurrency:
+      group: hermes-gpt-evidence-${{ github.repository }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Collect exact-SHA GitHub evidence (advisory)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/hermes_pr_gate.py --live \
+            --repo "${{ github.repository }}" \
+            --output-json build/pr-evidence.json \
+            --output-md build/pr-evidence.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hermes-gpt-pr-evidence
+          path: build/pr-evidence.*
+          retention-days: 14
