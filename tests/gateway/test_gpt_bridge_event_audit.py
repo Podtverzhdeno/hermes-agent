@@ -329,3 +329,29 @@ def test_cancelled_run_status_not_proof_remote_effect_stopped(final_status):
     assert out["stop_reason"] == final_status.upper()
     assert out["next_action"] == "VERIFY_EXTERNAL_EFFECTS_BEFORE_RETRY"
     assert "CANCELLATION_NOT_EFFECT_PROOF" in out["evidence"]
+
+
+@pytest.mark.parametrize("reason", [
+    "empty_response_exhausted", "all_retries_exhausted_no_response",
+    "partial_stream_recovery", "budget_exhausted", "pending_tool_result",
+    "context_compression_timeout", "text_response(stop)",
+])
+def test_official_exact_exit_reasons_are_categorized_without_raw_error(reason):
+    out = explain_sse(sse(event("run.queued", 0), event("run.failed", 1)), RID,
+        {"run_id": RID, "status": "failed", "updated_at": 1795344001,
+         "turn_exit_reason": reason})
+    assert out["stop_reason"] == reason
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("max_iterations_reached(3/3)", "max_iterations_reached"),
+    ("interrupted_during_api_call(watchdog)", "interrupted_during_api_call"),
+    ("repeated_outer_errors(4)", "repeated_outer_errors"),
+    ("max_iterations_reached(sk-proj-SECRET)", "UNCLASSIFIED"),
+])
+def test_parameterized_turn_exit_reason_does_not_leak_suffix(reason, expected):
+    out = explain_sse(sse(event("run.queued", 0), event("run.failed", 1)), RID,
+        {"run_id": RID, "status": "failed", "updated_at": 1795344001,
+         "turn_exit_reason": reason})
+    assert out["stop_reason"] == expected
+    assert reason not in json.dumps(out) or reason == expected
