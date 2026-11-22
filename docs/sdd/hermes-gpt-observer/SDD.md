@@ -158,3 +158,6 @@ Primary sources (official/spec):
 - Temporal activities https://docs.temporal.io/activities
 
 See parallel drafts #1–#7 and exact baseline at https://github.com/Podtverzhdeno/hermes-agent/pulls.
+
+
+**Local connector recheck (2026-11-22, later in the same review):** `Local_WorkSpace.list_workspaces` subsequently succeeded and exposed only workspace alias `shelter` (the separately scoped Obsidian project), with read/write permission inside that root. **It did not expose the Windows Hermes/Tunnel extension directory or the projects/tools roots.** Earlier `Session terminated` errors were transient or profile-dependent; they should not be interpreted as persistent total MCP failure. Local Hermes extension code/hash, browser runtime and native host remain **unverified / outside granted scope**. No attempts to traverse outside the allowed root were made.
