@@ -139,3 +139,29 @@ def test_harness_reference_byte_limit_is_enforced(skill_layout):
     small = json.loads(skill_view("demo-skill", file_path="references/small.md"))
     assert small["success"] is True
     assert small["content"] == "OK"
+
+def test_skills_list_exposes_short_activation_hints(skill_layout):
+    from tools.skills_tool import skills_list
+
+    _, target = skill_layout
+    spec = {
+        "schema_version": 1, "skill": "demo-skill",
+        "activation": {"when": ["Build a typed API"], "not_when": ["Only view a mockup"]},
+        "capabilities": {"tools": ["read_file"], "side_effects": "none",
+                         "approval_required": []},
+        "lifecycle": {
+            "preflight": ["Check version"], "execute": ["Inspect"],
+            "verify": ["Run tests"], "recover": ["Report errors"],
+        },
+        "budget": {"max_tool_calls": 12, "max_reference_bytes": 16384},
+        "evidence": {"required": ["API contract"]},
+        "output": {"format": "Result", "acceptance": ["Matches spec"]},
+    }
+    (target / "harness.yaml").write_text(yaml.safe_dump(spec), encoding="utf-8")
+    out = json.loads(skills_list())
+    assert out["success"] is True
+    skill = next(x for x in out["skills"] if x["name"] == "demo-skill")
+    assert skill["harness_status"] == "declared"
+    assert skill["activation_hint"] == "Build a typed API"
+    assert skill["avoid_when"] == "Only view a mockup"
+    assert "lifecycle" not in skill, "Tier-1 metadata should stay compact"
