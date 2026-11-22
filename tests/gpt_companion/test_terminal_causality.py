@@ -260,3 +260,53 @@ def test_thirty_producers_have_independent_local_sequence_cursors(journal):
     assert result["unverified_prefix_sources"] == []
     assert result["next_action"] == "FETCH_MISSING_EVENTS"
     assert journal.verify_chain() is True
+
+
+def test_repeated_worker_start_does_not_reset_progress_timeout(tmp_path):
+    seen = [1000.0]
+    j = EventJournal(tmp_path / "repeat-start.sqlite3", clock=lambda: seen[0])
+    emit(j, 1, "worker.started")
+    seen[0] = 1301.0
+    emit(j, 2, "worker.started")
+    result = j.assess("run-causal")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["next_action"] == "INSPECT_STAGE_AND_BUDGET"
+    assert result["live_age_seconds"] == 0
+    assert result["progress_age_seconds"] >= 300
+
+
+def test_repeated_llm_start_does_not_prove_forward_progress(tmp_path):
+    seen = [1000.0]
+    j = EventJournal(tmp_path / "repeat-llm.sqlite3", clock=lambda: seen[0])
+    emit(j, 1, "worker.started")
+    seen[0] = 1301.0
+    emit(j, 2, "llm.request_started")
+    result = j.assess("run-causal")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["next_action"] == "INSPECT_STAGE_AND_BUDGET"
+
+
+def test_completed_stage_refreshes_progress_clock_without_claiming_success(tmp_path):
+    seen = [1000.0]
+    j = EventJournal(tmp_path / "completed-stage.sqlite3", clock=lambda: seen[0])
+    emit(j, 1, "worker.started")
+    seen[0] = 1301.0
+    emit(j, 2, "worker.progress")
+    result = j.assess("run-causal")
+    assert result["state"] == "RECENT_TELEMETRY"
+    assert result["progress_age_seconds"] == 0.0
+    # Progress is not independent proof of task completion or external writes.
+    assert result["state"] != "SUCCEEDED"
+
+
+def test_heartbeat_liveness_without_progress_is_stalled(tmp_path):
+    seen = [1000.0]
+    j = EventJournal(tmp_path / "heartbeats.sqlite3", clock=lambda: seen[0])
+    emit(j, 1, "worker.started")
+    for i, stamp in enumerate((1100.0, 1200.0, 1301.0), start=2):
+        seen[0] = stamp
+        emit(j, i, "worker.heartbeat")
+    result = j.assess("run-causal")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["live_age_seconds"] == 0
+    assert result["progress_age_seconds"] >= 300
