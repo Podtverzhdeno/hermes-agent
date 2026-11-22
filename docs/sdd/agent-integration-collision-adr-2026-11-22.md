@@ -45,7 +45,7 @@ At review time the same GitHub repository carried these **draft** PRs:
 
 ## 3. Verified extension *history* vs live unknowns
 
-PR #4 documents historical local extension root `C:\Users\Vadim\Tunnel\chat-launch-smoke-desktop-test\web-extension` and files `manifest.json`, `background.js`, `background_content.js`, `content.js`, `core.js`, `popup.js`, `same_chat_bg.js`, `same_chat_loop.js`. Its own source explicitly cautions that this is historical owner context, **not a current file-list or verified installation**. Historical bridge port `18763` and stale extension v0.6.6 are also unverified today. The unavailable local MCP cannot be used as a browser status oracle.
+PR #4 documents historical local extension root `%USERPROFILE%\Tunnel\chat-launch-smoke-desktop-test\web-extension` and files `manifest.json`, `background.js`, `background_content.js`, `content.js`, `core.js`, `popup.js`, `same_chat_bg.js`, `same_chat_loop.js`. Its own source explicitly cautions that this is historical owner context, **not a current file-list or verified installation**. Historical bridge port `18763` and stale extension v0.6.6 are also unverified today. The unavailable local MCP cannot be used as a browser status oracle.
 
 **Pre-implementation checks:** exact `manifest_version`, extension `version`, JS file sha256, declared `permissions` and `host_permissions`, externally_connectable policy, CSP, service worker type/lifetime, content-script match patterns, native messaging host registration, bridge bind address, auth and TLS, runtime log location, restart policy, process owner, allowed Chrome versions, and explicit interaction permissions. Compare source/config against deployed extension before patching.
 
@@ -155,3 +155,14 @@ Code and test corrections for the first two failure classes are committed after 
 - [Autopilot durable effect ledger in PR #1](https://github.com/Podtverzhdeno/hermes-agent/pull/1)
 
 This ADR is a coordination proposal; it does not assign permissions or merge authority automatically.
+
+
+## 8. Upstream browser extension discovery and compatibility decision
+
+Public Hermes Browser Extension v0.4.1 already supports scoped browser control on Chromium, seven observational context/journal tools, an authenticated optional companion plugin with 20 `tab_*` tools, and MV3 lifecycle handling. Versions after Hermes 0.22.5 require external plugin registration instead of former built-in control; group-bot page context may be unreliable. **This is reference research, not evidence that the owner's locally installed extension is the same project.**
+
+See [reuse-vs-rebuild SDD](gpt-browser-upstream-reuse-2026-11-22.md), based on primary docs https://github.com/abundantbeing/hermes-browser-extension/blob/main/README.md and https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md.
+
+**Proposed acceptance decision:** single owner for browser control, reuse upstream `tab_*` / read-only journal where available, thin event adapter only, and authoritative multi-agent task/effect state in #1 ledger. Do not duplicate browser permissions, per-tab leases, dynamic content script workers or plugin routes. Require exact extension SHA/manifest and authorized local runtime before claiming browser fix.
+
+**Privacy:** avoid putting owner-identifying absolute Windows paths in future public SDD. Prefer `%USERPROFILE%` placeholders.
