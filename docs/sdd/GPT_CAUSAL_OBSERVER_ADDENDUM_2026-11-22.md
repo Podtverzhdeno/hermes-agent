@@ -32,7 +32,7 @@ An event records `schema_version=1`, canonical `event_id`, `producer_id`, positi
 
 **Trust comes from an independently authenticated adapter**, never a model-supplied event flag. Correlation IDs are not authorization; SHA256 hashes alone are not evidence of correctness. Use one producer incarnation ID per process boot; its sequence is global across runs. Event ordering across producers is partial, not chronological. Durable event ingest must be atomic, deduplicating by `event_id` and `(producer_id, source_event_seq)`. Conflicting redelivery is an error, never an overwrite or trust upgrade. SQLite WAL is a **single-host** prototype, not a distributed consensus service or shared-network filesystem database.
 
-The isolated candidate implementation + 29 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. `authoritative_task_state` remains null by design.
+The isolated candidate implementation + 33 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. `authoritative_task_state` remains null by design.
 
 ## ADR-04: deterministic reason precedence and recovery
 
@@ -82,7 +82,7 @@ Weights: expected impact 35%, security 25%, upstream compatibility 20%, testabil
 
 ## QA gates and fault matrix
 
-Offline prototype checks: duplicate concurrent events (30 threads + two SQLite connections), sequence redelivery conflict and trust-upgrade rejection, reordered events/gap healing, producer reboot, cross-run sequence correctness, heartbeat-active repeated-intent loop, fake verifier and fake task completion, missing/mismatched external-effect ack and fence, strict metadata rejection, 50 producers x 20 events (1,000 events). **Isolated Python 3.13.5: 29/29 tests PASS**; no claim of integration, continuous monitoring or production reliability.
+Offline prototype checks: duplicate concurrent events (30 threads + two SQLite connections), sequence redelivery conflict and trust-upgrade rejection, reordered events/gap healing, producer reboot, cross-run sequence correctness, heartbeat-active repeated-intent loop, fake verifier and fake task completion, missing/mismatched external-effect ack and fence, strict metadata rejection, 50 producers x 20 events (1,000 events). **Isolated Python 3.13.5: 33/33 tests PASS**; no claim of integration, continuous monitoring or production reliability.
 
 Unverified and REQUIRED for promotion: Python 3.11/3.12 package imports in actual Hermes; true authenticated adapter; server crash/disk-full failure gate; 100 simultaneous request/retry load, 429 storm, old CI SHA mismatch, suspended MV3 service worker, browser navigation after click, lost Native Messaging ack, wrong ChatGPT conversation, local Obsidian optimistic-hash collision, 24–72-hour synthetic soak, reboot/backup restoration and user Stop. No secrets or sensitive browser data may appear in telemetry.
 
@@ -123,3 +123,11 @@ Categorize `CI_SUPERSEDED_BY_NEW_SHA` (cancellation correlated with newer commit
 PR #4's general workflow had 7,513 passed, 29 failed, 171 skipped; many errors report missing OpenAI credentials, and `test_agent_error_returns_500` expects provider error text now deliberately redacted by the API. Do not restore sensitive error output simply to pass the outdated assertion. PR #6's targeted GPT Gateway Regression passed but its general run cancelled, with no full-suite green conclusion.
 
 The dedicated observer offline CI uses `cancel-in-progress: true` to coalesce obsolete same-PR checks and avoid a 50-agent runner stampede. Distinct PR refs retain distinct concurrency groups. The latest exact-SHA successful test is the only eligible test evidence. This is a verified workflow setting and a **possible**, not universally confirmed, explanation of the cancelled runs.
+
+## ADD-009: Durable wall-clock audit and bounded read-only timeline
+
+The initial journal only stored monotonic receive time and observer process incarnation. That cannot reconstruct the wall-clock timeline after a workstation reboot. The hardened module now writes **server-observed UTC ISO8601** per new event, while retaining monotonic age checks solely within the active observer incarnation. A transactional SQLite schema migration adds `received_at_utc`; legacy rows are marked `unknown` (not backfilled from guesswork). A bounded `timeline(run_id, limit<=500, after_producer, after_seq)` provides metadata-only read pagination and explicit per-producer ordering; it NEVER asserts cross-producer causal order or authoritative task completion. The timeline is **not a network endpoint**; future adapters must authenticate read access and enforce privacy/retention quotas.
+
+Four additional negative/positive tests validate timestamp presence, 2-producer cursor pagination, invalid cursor/limit input and schema migration without fabricated historic timestamps. Offline suite total: **33/33 PASS on Python 3.13.5**. GitHub CI at current exact PR SHA remains a separate independent gate; do not equate this with deployment. No production observer or browser host is active.
+
+Important remaining privacy caveat: event string identifiers are syntactically bounded, not cryptographically pseudonymized by this module. The authenticated adapter MUST map user/session identities to opaque random identifiers before ingestion. Content-derived hashes may be dictionary-guessable; do not hash raw private prompts into event fingerprints. Prefer keyed HMAC over canonical allowlisted operation metadata when sensitive; keys must not be held in extension content scripts.
