@@ -79,8 +79,8 @@ Provisional *architectural judgement* (not measured benchmark): safety 35%, caus
 | Candidate | Safety | Causal | Multi | Migration | Rollback | Weighted /100 | Decision |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Upstream Kanban + durable trusted effect gateway + authenticated observer | 5 | 5 | 5 | 3 | 4 | 94 | Target after canary/parity |
-| This isolated read-only PR evidence gate | 5 | 4 | 4 | 5 | 5 | 89 | Implement and review now |
-| Multiple independent process-local caches | 2 | 3 | 2 | 3 | 4 | 52 | Temporary only |
+| This isolated read-only PR evidence gate | 5 | 4 | 4 | 5 | 5 | 91 | Implement and review now |
+| Multiple independent process-local caches | 2 | 3 | 2 | 3 | 4 | 51 | Temporary only |
 | Browser DOM as task authority | 1 | 1 | 1 | 2 | 2 | 24 | Reject |
 
 Hard veto: unknown irreversible-effect blind retry, stale fencing acceptance, cross-session approval reuse, fake SSE terminal success, token/secret leakage, hidden privilege bypass, multiple active task schedulers. Test controlled crash after effect before receipt; duplicate request across restart; out-of-order producers; 429; stream disconnect; stale lease; delayed heartbeat; multi-worker conflicting writes; exact SHA CI after rebase; MV3 suspend/resume; privacy/redaction and Windows/WSL host integration. Measure on 10/30/50 simulated workers: duplicate writes (target zero in controlled fixture), missed stops, queue latency, p95 recovery, owner conflicts, stale CI and data-loss incidence. Do not assert production SLO without measurements.
