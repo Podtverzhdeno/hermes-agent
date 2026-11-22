@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "skill": "chroma",
+  "purpose": "Build reproducible Chroma indexes with isolated persistence and query tests.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Create a local Chroma collection for the RAG experiment",
+      "Query an existing Chroma vector database",
+      "Migrate embeddings into a separate test Chroma index"
+    ],
+    "do_not_trigger": [
+      "Send a GitHub PR review",
+      "Delete all hosted vector collections",
+      "Summarize a paper without data indexing"
+    ]
+  },
+  "preflight": [
+    "Pin collection, embedding model/version, distance metric and source licenses.",
+    "Use isolated test data and an explicit database persistence directory."
+  ],
+  "workflow": [
+    "Inspect collection metadata and expected dimension.",
+    "Upsert only authorized documents with stable IDs and idempotency.",
+    "Run retrieval checks on known queries and inspect scores.",
+    "Read back collection count and persistence snapshot."
+  ],
+  "actions": [
+    {
+      "operation": "chroma.query",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "collection-snapshot",
+        "retrieval-result"
+      ]
+    },
+    {
+      "operation": "chroma.index",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "collection-snapshot",
+        "index-result",
+        "retrieval-result"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "collection-snapshot",
+      "source": "artifact",
+      "how_to_verify": "Capture source data, embedding dimension, collection ID and version."
+    },
+    {
+      "id": "index-result",
+      "source": "file_hash",
+      "how_to_verify": "Read back index/collection state and stable document ID coverage."
+    },
+    {
+      "id": "retrieval-result",
+      "source": "local_test",
+      "how_to_verify": "Verify query hits and distance/scoring behavior on labeled fixtures."
+    }
+  ],
+  "failure_modes": [
+    "Never replace an existing collection after a dimension mismatch.",
+    "If persistence is uncertain, inspect IDs before retrying inserts."
+  ]
+}
