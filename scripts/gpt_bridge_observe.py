@@ -19,6 +19,16 @@ MAX_LINE = 4096
 MAX_RECORDS = 100_000
 
 
+def _strict_json_object(pairs):
+    """Reject duplicate JSON keys; JSON last-key-wins would mask an ingress attack."""
+    out = {}
+    for key, value in pairs:
+        if key in out:
+            raise ValueError("duplicate_json_key")
+        out[key] = value
+    return out
+
+
 def main() -> int:
     observer = ReadOnlyEventObserver()
     counts: Counter[str] = Counter()
@@ -38,7 +48,7 @@ def main() -> int:
                         break
             continue
         try:
-            raw = json.loads(line)
+            raw = json.loads(line, object_pairs_hook=_strict_json_object)
         except (ValueError, UnicodeDecodeError):
             counts["invalid_json"] += 1
             continue
