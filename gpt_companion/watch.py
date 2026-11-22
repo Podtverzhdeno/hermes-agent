@@ -22,7 +22,8 @@ from .journal import EventJournal, JournalConflict
 def _fingerprint(assessment: dict) -> str:
     # Never use continuously changing ages as a deduplication key.
     fields = ("attempt", "state", "next_action", "unresolved_effects",
-              "pending_approvals", "missing_sequences", "reported_reason_code",
+              "pending_approvals", "unresolved_effects_prior_attempts",
+              "missing_sequences", "reported_reason_code",
               "stale_worker_sources")
     value = {k: assessment.get(k) for k in fields}
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
