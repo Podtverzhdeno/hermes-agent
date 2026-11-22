@@ -7,12 +7,12 @@
 | Module | Fork main blob | NousResearch main blob | Why it matters |
 |---|---|---|---|
 | `gateway/platforms/api_server.py` | `2059a1aa6bcc5b88dd7bfaef269bc841281e029d` (~1,356 lines) | `8e4213ac727d87ec1094f7b59b01bb1dcec133d2` (~4,080 lines) | Upstream delegates Chat/Responses, adds `/v1/runs` status/events/approvals/stop/unknown resolution; monolithic old fork handlers not equivalent |
-| `gateway/platforms/api_server_run_idempotency.py` | not found during fork audit | `423437733abb3e434f2990935899c9db6a05aaba` | SQLite `RunIdempotencyStore` with atomic scoped reservation |
-| `gateway/platforms/api_server_openai_routes.py` | not found during fork audit | `ea8a9d18bc759bbf3724c7977ce78bf60b57b799` | OpenAI-compatible routes and SSE semantics |
-| `gateway/platforms/api_server_runs.py` | not found during fork audit | `868ed43adf99e0024c9bd31e655a2a1e201cf4d9` | Run status/event publication, subscriber limits, approval and unknown resolution |
-| `website/docs/user-guide/features/browser.md` | fork version may lag | `27c7631900eba834f15d1f5ad8c69637723475a9` | Hermes `/browser connect` and CDP already exist upstream |
+| `gateway/platforms/api_server_run_idempotency.py` | confirmed absent from reviewed fork main (404) | `423437733abb3e434f2990935899c9db6a05aaba` | SQLite `RunIdempotencyStore` with atomic scoped reservation |
+| `gateway/platforms/api_server_openai_routes.py` | confirmed absent from reviewed fork main (404) | `ea8a9d18bc759bbf3724c7977ce78bf60b57b799` | OpenAI-compatible routes and SSE semantics |
+| `gateway/platforms/api_server_runs.py` | confirmed absent from reviewed fork main (404) | `868ed43adf99e0024c9bd31e655a2a1e201cf4d9` | Run status/event publication, subscriber limits, approval and unknown resolution |
+| `website/docs/user-guide/features/browser.md` | `10a6ccee8c8d0b501ae32a7dfef612d4e2f3b32e` (~327 lines) | `27c7631900eba834f15d1f5ad8c69637723475a9` (~673 lines) | Browser/CDP docs have diverged; local capabilities cannot be inferred from upstream docs |
 
-Note: the old fork path absences above are review limitations, not a comprehensive tree assertion. The file-size delta is source divergence, NOT proof that `git merge` fails.
+Three newly listed upstream API modules were separately queried on fork `main` and each returned GitHub 404; this confirms absence **at this exact snapshot only**. The file-size delta is source divergence, NOT proof that `git merge` fails.
 
 ## P0 integration choice
 
