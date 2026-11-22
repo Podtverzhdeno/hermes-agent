@@ -73,6 +73,19 @@ class AutopilotLedger:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
             db.executescript("""
+                CREATE TABLE IF NOT EXISTS project_controls (
+                    project TEXT PRIMARY KEY,
+                    stopped INTEGER NOT NULL DEFAULT 0,
+                    generation INTEGER NOT NULL DEFAULT 0,
+                    updated_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS project_events (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project TEXT NOT NULL,
+                    generation INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
                     request_key TEXT UNIQUE NOT NULL,
@@ -88,6 +101,7 @@ class AutopilotLedger:
                     available_at REAL NOT NULL,
                     owner TEXT,
                     fence INTEGER NOT NULL DEFAULT 0,
+                    project_generation INTEGER NOT NULL DEFAULT 0,
                     lease_until REAL,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
                     created_at REAL NOT NULL,
@@ -146,6 +160,83 @@ class AutopilotLedger:
         if row is None:
             raise KeyError(task_id)
         return row
+
+    def project_control(self, project: str) -> dict:
+        """Project control generation is a revocation token for a future gateway."""
+        if not project:
+            raise ValueError("project is required")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT * FROM project_controls WHERE project=?", (project,)
+            ).fetchone()
+            return dict(row) if row else {
+                "project": project, "stopped": 0, "generation": 0,
+                "updated_at": None,
+            }
+
+    def stop_project(self, project: str) -> int:
+        """TRUSTED OWNER PLANE ONLY. Block claims and revoke ALL active leases.
+
+        This does not terminate OS processes or cron/kanban outside this
+        ledger. The actual tool gateway must check this generation at call
+        time; connector writes remain ambiguous until separately reconciled.
+        """
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("project is required")
+        now = self.clock()
+        with self._db(write=True) as db:
+            db.execute("""
+                INSERT INTO project_controls(project,stopped,generation,updated_at)
+                VALUES(?,1,1,?)
+                ON CONFLICT(project) DO UPDATE SET
+                    stopped=1,
+                    generation=CASE WHEN stopped=0 THEN generation+1 ELSE generation END,
+                    updated_at=excluded.updated_at
+            """, (project, now))
+            ctrl = db.execute(
+                "SELECT generation FROM project_controls WHERE project=?", (project,)
+            ).fetchone()
+            pending = db.execute("""
+                SELECT id,status FROM tasks WHERE project=? AND status NOT IN
+                    ('succeeded','failed','cancelled','blocked')
+            """, (project,)).fetchall()
+            for task in pending:
+                terminal = task["status"] in ("queued", "retry_wait", "waiting_approval")
+                new_status = "cancelled" if terminal else task["status"]
+                db.execute("""
+                    UPDATE tasks SET cancel_requested=1, status=?, updated_at=? WHERE id=?
+                """, (new_status, now, task["id"]))
+                self._event(db, task["id"], "project_stopped",
+                            {"generation": ctrl["generation"], "terminal": terminal})
+            db.execute("""
+                INSERT INTO project_events(project,generation,kind,created_at)
+                VALUES(?,?,'stopped',?)
+            """, (project, ctrl["generation"], now))
+            return int(ctrl["generation"])
+
+    def resume_project(self, project: str) -> int:
+        """TRUSTED OWNER PLANE ONLY; never revive cancelled or failed work."""
+        if not isinstance(project, str) or not project.strip():
+            raise ValueError("project is required")
+        now = self.clock()
+        with self._db(write=True) as db:
+            ctrl = db.execute(
+                "SELECT * FROM project_controls WHERE project=?", (project,)
+            ).fetchone()
+            if ctrl is None:
+                return 0  # Uncontrolled projects already accept new work.
+            if not ctrl["stopped"]:
+                return int(ctrl["generation"])
+            db.execute("""
+                UPDATE project_controls
+                SET stopped=0,generation=generation+1,updated_at=? WHERE project=?
+            """, (now, project))
+            generation = int(ctrl["generation"]) + 1
+            db.execute("""
+                INSERT INTO project_events(project,generation,kind,created_at)
+                VALUES(?,?,'resumed',?)
+            """, (project, generation, now))
+            return generation
 
     def get(self, task_id: str) -> dict:
         with self._db() as db:
@@ -232,6 +323,11 @@ class AutopilotLedger:
                 if fingerprint != old:
                     raise LedgerConflict("request_key reused with different task content")
                 return existing["id"]
+            ctrl = db.execute(
+                "SELECT stopped FROM project_controls WHERE project=?", (project,)
+            ).fetchone()
+            if ctrl and ctrl["stopped"]:
+                raise LedgerConflict("project is stopped; explicit owner resume required")
             task_id = uuid.uuid4().hex
             db.execute("""
                 INSERT INTO tasks
@@ -296,10 +392,11 @@ class AutopilotLedger:
             self._expire_approvals(db, now)
             self._recover_expired(db, now)
             row = db.execute("""
-                SELECT id FROM tasks
-                WHERE status IN ('queued','retry_wait') AND available_at <= ?
-                  AND cancel_requested=0
-                ORDER BY priority DESC, created_at, id LIMIT 1
+                SELECT tasks.id FROM tasks
+                LEFT JOIN project_controls AS p ON tasks.project=p.project
+                WHERE tasks.status IN ('queued','retry_wait') AND tasks.available_at <= ?
+                  AND tasks.cancel_requested=0 AND COALESCE(p.stopped,0)=0
+                ORDER BY tasks.priority DESC, tasks.created_at, tasks.id LIMIT 1
             """, (now,)).fetchone()
             if row is None:
                 return None
@@ -307,7 +404,11 @@ class AutopilotLedger:
             db.execute("""
                 UPDATE tasks SET status='running', owner=?, fence=fence+1,
                     attempts=attempts+CASE WHEN resume_without_attempt=1 THEN 0 ELSE 1 END,
-                    resume_without_attempt=0, lease_until=?, updated_at=? WHERE id=?
+                    resume_without_attempt=0,
+                    project_generation=COALESCE(
+                        (SELECT generation FROM project_controls
+                         WHERE project=tasks.project), 0),
+                    lease_until=?, updated_at=? WHERE id=?
             """, (worker, now + lease_seconds, now, task_id))
             task = dict(self._task(db, task_id))
             self._event(db, task_id, "claimed", {"worker": worker, "fence": task["fence"]})
@@ -316,10 +417,16 @@ class AutopilotLedger:
 
     def _assert_worker(self, db, task_id: str, worker: str, fence: int):
         row = self._task(db, task_id)
+        ctrl = db.execute(
+            "SELECT stopped,generation FROM project_controls WHERE project=?",
+            (row["project"],),
+        ).fetchone()
+        revoked = bool(ctrl and (ctrl["stopped"] or
+                                  ctrl["generation"] != row["project_generation"]))
         if (row["status"] not in ACTIVE or row["owner"] != worker
                 or row["fence"] != fence or row["lease_until"] <= self.clock()
-                or row["cancel_requested"]):
-            raise LedgerConflict("stale/expired lease, cancelled task, or invalid state")
+                or row["cancel_requested"] or revoked):
+            raise LedgerConflict("stale/expired lease, revoked project or invalid task state")
         return row
 
     def heartbeat(self, task_id: str, worker: str, fence: int, lease_seconds: int = 120):
