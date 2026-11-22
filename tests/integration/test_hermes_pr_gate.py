@@ -177,6 +177,20 @@ class GateTests(unittest.TestCase):
         self.assertEqual(report["collision_pairs_at_least"], 4950)
         self.assertFalse(report["collisions_truncated"])
 
+    def test_renamed_file_counts_both_paths_for_conflicts(self):
+        paths = m._changed_paths([
+            {"filename": "new.py", "previous_filename": "old.py",
+             "status": "renamed"}])
+        self.assertEqual(paths, ["new.py", "old.py"])
+        report = m.assess(snapshot(pr(1, files=paths), pr(2, files=["old.py"]),
+                                    pr(3, files=["new.py"])))
+        self.assertEqual(len(report["collisions"]), 2)
+        self.assertEqual({x["file"] for x in report["collisions"]}, {"old.py", "new.py"})
+
+    def test_missing_old_filename_on_rename_fails_closed(self):
+        with self.assertRaises(m.EvidenceError):
+            m._changed_paths([{"filename": "new.py", "status": "renamed"}])
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))

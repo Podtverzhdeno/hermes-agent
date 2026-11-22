@@ -76,3 +76,6 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Bounded collision fan-out, overflow test
 - Discovered A0 bug: 150 PRs each editing up to 1000 common files could emit 11,175,000 collision dict entries (150 choose 2 × 1000), risking memory exhaustion and self-inflicted auditor failure. Source fix limits detailed independent pairs to 5000, reports collisions_truncated true and collision_pairs_at_least (lower bound), never greenlights. Added 150-PR and 100-PR explicit regressions. This is a metadata stress test, not simultaneous real workers.
+
+## Rename-vs-edit collision negative tests
+- Audit discovered its own false-negative: GitHub /pulls/{n}/files reports a renamed file with status=renamed, filename=new path and previous_filename=old path. Earlier collector only inspected filename, so a rename A->B and another PR editing A appeared disjoint. Fix: record BOTH names for every rename and fail closed if previous_filename absent, with two adversarial contract tests. This is source/metadata test, not a real merge integration test.

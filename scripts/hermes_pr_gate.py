@@ -84,6 +84,22 @@ def _incident_code(reason):
     return "EVIDENCE_INCOMPLETE"
 
 
+def _changed_paths(changes):
+    """A rename conflicts with edits to either its old or its new path."""
+    paths = set()
+    for f in changes:
+        name = f.get("filename")
+        if not isinstance(name, str) or not name:
+            raise EvidenceError("malformed changed-file name")
+        paths.add(name)
+        if f.get("status") == "renamed":
+            previous = f.get("previous_filename")
+            if not isinstance(previous, str) or not previous:
+                raise EvidenceError("rename missing previous_filename")
+            paths.add(previous)
+    return sorted(paths)
+
+
 def live_snapshot(repository, token=None):
     if not REPO.fullmatch(repository) or ".." in repository:
         raise EvidenceError("invalid repository")
@@ -111,7 +127,7 @@ def live_snapshot(repository, token=None):
             "base_sha": (pr.get("base") or {}).get("sha"),
             "base_repo": ((pr.get("base") or {}).get("repo") or {}).get("full_name"),
             "draft": pr.get("draft", True),
-            "files": [f["filename"] for f in files],
+            "files": _changed_paths(files),
             "checks": [{"name": c.get("name"), "head_sha": c.get("head_sha"),
                         "status": c.get("status"), "conclusion": c.get("conclusion")}
                        for c in checks["check_runs"]],
