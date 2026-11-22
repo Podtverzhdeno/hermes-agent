@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: arxiv
+activation:
+  when: ["Discover and compare scientific preprints and their claims","Verify arXiv identifiers, dates, versions and authors"]
+  not_when: undefined
+capabilities:
+  tools: ["web_search","web_extract","terminal (read-only retrieval)"]
+  side_effects: none
+  approval_required: []
+lifecycle:
+  preflight: ["Translate the question to search terms, date scope and evidence criteria","Identify source authority and versions"]
+  execute: ["Retrieve primary abstracts and full text where available","Separate preprint claims from replication, criticism and peer-reviewed support"]
+  verify: ["Cross-check title, authors, publication date and version","Inspect methods, datasets, metrics and stated limitations before summarizing"]
+  recover: ["If full text is inaccessible, mark abstract-only findings","If paper identity is ambiguous, list alternatives instead of guessing"]
+budget:
+  max_tool_calls: 32
+  max_reference_bytes: 524288
+evidence:
+  required: ["Canonical arXiv ID, version and source URL","Quoted or paraphrased methodological support"]
+output:
+  format: "Evidence table with papers, methods, results and caveats"
+  acceptance: ["No fabricated citations or performance improvements","Preprint status and uncertainty explicit"]
