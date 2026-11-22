@@ -1,10 +1,43 @@
 # SDD — Hermes GPT integration, observability and multi-agent recovery
 
-**Version:** 0.2 (2026-11-22)  
+**Version:** 0.3 (2026-11-22)  
 **Status:** review proposal + isolated read-only monitor and control-plane fixes; not a production activation.  
 **Parent:** docs/autopilot/ARCHITECTURE.md, PR #1, base snapshot 7e9100901819ee44c16b4ddcb79a6bcb7909f591.  
 **Ownership:** this SDD and observability code are in a stacked feature branch; concurrent skill-harness branch is not modified.  
 **Core objective:** answer, with persisted evidence rather than model opinion, *which task was doing what, at which revision, why it stopped, what did/did not happen externally, who may safely recover it, and which evidence closes the work*.
+
+
+## Architecture correction — modern Hermes Kanban is the single task owner (ADR-002)
+
+**Supersedes any reading below that treats the prototype AutopilotLedger as a second production scheduler.**
+A same-day competing-agent audit verified that the fork main at 7e910090 is substantially older than NousResearch/hermes-agent v0.23.3, published **2026-11-20**. Modern upstream has SQLite-backed Kanban boards, worker lanes, persisted tasks, dispatcher, heartbeats, task reviews and worktrees. See `docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md` and `docs/autopilot/OWNER_ACCEPTANCE_CONTRACT.md` for source evidence, Windows caveats, and user's persistent quality requirements.
+
+**Decision:** Kanban owns the canonical task lifecycle. This isolated prototype ledger is a research/test **effect + approval + verifier** kernel, with a read-only observer for the prototype database only. It is **not** running inside upstream Kanban, its `claim()` is **not** approved for parallel production task dispatch, and `scripts/autopilot_watch.py` **does not monitor actual Kanban boards**. A separate, version-pinned Kanban projection adapter must be added and validated before the operator may see live task states.
+
+For v0.23.3 deployment, map task identifiers from upstream Kanban into a narrowly scoped extension action journal; defer new orchestration infrastructure unless validated upstream gaps remain. Never allow both the prototype claim loop and upstream Kanban dispatcher to execute the same owner task. The safe migration is a separately isolated canary install and revertible readiness gates; no in-place pull over the local Windows working copy.
+
+Highest-priority real-world failure investigations from current upstream issue tracker:
+- Windows workers may be assigned but receive no prompt, making a task appear busy without progress;
+- cancellation and global STOP can fail to propagate to child workers/watchers;
+- a worker heartbeat may be mistaken for meaningful task progress;
+- non-Hermes external/GPT worker lanes need a supported, typed protocol and trust model.
+
+These are **reported upstream issues**, not demonstrated defects on this machine. Acceptance: pin upstream release, reproduce on a canary, trace assignment->prompt receipt->model call->tool action->evidence->terminal state, and verify cancellation propagation. A heartbeat and a green CI badge without executed required checks do not prove work.
+
+**Design updates to sections C/J/L below:** reinterpret 'intake/dispatcher/worker leases' as *Kanban adapters*, never independent production authority; keep the diagnostic proof-of-concept isolated until a Kanban event feed and authenticated policy gateway are implemented. Promote the Kanban adapter and independent worker-prompt-delivery acknowledgment to P0. A native GPT integration must use documented API/SDK worker interfaces and scoped authentication, not automation of ChatGPT UI.
+
+### GPT worker delivery handshake
+
+To prevent 'claimed but not actually started':
+1. Kanban dispatcher issues `dispatch_intent` with canonical task_id, attempt_id, lease_fence, workspace_ref and contract_version.
+2. Worker replies with `worker_accepted` after validating ownership, permissions and local workspace availability.
+3. Worker emits `prompt_delivered` only when the model/API/ACP adapter has accepted the actual task prompt; no dispatcher may infer delivery from process spawn.
+4. Worker emits `first_model_response` and `first_effect_proposal` as independent span events, followed by receipt/evidence.
+5. Watchdog classifies `DISPATCH_NOT_ACKNOWLEDGED`, `PROMPT_NOT_DELIVERED`, `MODEL_RESPONSE_TIMEOUT`, `NO_MEANINGFUL_PROGRESS`, or `EXTERNAL_EFFECT_UNCERTAIN`. Do not auto-requeue an unknown tool effect.
+6. A cancellation/revocation token must be checked at every gateway call and an explicit `stopped` acknowledgment or uncertain-effect reconciliation produced. Escalate missing acknowledgment, never silently report STOP as complete.
+
+Do not implement this handshake inside the prototype observer; wire it to Kanban worker lanes on an isolated upstream canary, with Windows/WSL regression tests.
+
 
 ## A. Confirmed facts versus hypotheses
 
@@ -197,7 +230,7 @@ Shipping gate: zero unauthorized writes, zero blind retries of unknown effects, 
 
 ## L. Immediate priorities and ownership
 
-1. **P0:** land reviewed ledger bug fixes and observer tests as separate stacked PR (this branch). Validate Python tests externally before merging; do not mark passing without a run.
+1. **P0:** verify current upstream Kanban worker lanes and pin versioned canary, then land reviewed prototype ledger bug fixes / observer tests as a separate stacked PR (this branch); validate Python tests externally before merging. Do not activate the prototype scheduler alongside upstream Kanban.
 2. **P0:** develop typed event/trace schema with schema versioning, explicit terminal reasons and transactionally persisted outbox.
 3. **P0:** implement authenticated, fenced tool gateway and denial tests; ledger methods not exposed to GPT workers.
 4. **P1:** integrate one native GPT adapter + one read-only GitHub observer on an isolated demo task. Capture model, tool, verifier and resource spans end-to-end.
