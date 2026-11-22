@@ -252,3 +252,95 @@ async def test_idempotency_is_endpoint_scoped_and_stream_is_rejected():
         assert stream.status == 400
         assert calls == 2
     adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sse_agent_exception_reports_failure_instead_of_success():
+    adapter = _adapter()
+
+    async def fails(**kwargs):
+        raise RuntimeError("DO_NOT_DISCLOSE_EXCEPTION_TEXT")
+
+    adapter._run_agent = fails
+    headers = {"Authorization": "Bearer test-key"}
+    async with TestClient(TestServer(_app(adapter))) as client:
+        response = await client.post("/v1/chat/completions", json={
+            "messages": [{"role": "user", "content": "hi"}], "stream": True,
+        }, headers=headers)
+        assert response.status == 200
+        text = await response.text()
+        assert "agent_execution_failed" in text
+        assert "finish_reason" not in text or '"finish_reason": "stop"' not in text
+        assert "DO_NOT_DISCLOSE_EXCEPTION_TEXT" not in text
+        assert text.endswith("data: [DONE]\\n\\n")
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_non_object_json_rejected_before_agent_run():
+    adapter = _adapter()
+    count = 0
+
+    async def fake_run(**kwargs):
+        nonlocal count
+        count += 1
+        return {"final_response": "unexpected"}, {}
+
+    adapter._run_agent = fake_run
+    headers = {"Authorization": "Bearer test-key"}
+    async with TestClient(TestServer(_app(adapter))) as client:
+        for endpoint in ("/v1/chat/completions", "/v1/responses"):
+            for invalid in ([], "a-string", 17, None):
+                result = await client.post(endpoint, json=invalid, headers=headers)
+                assert result.status == 400
+                assert (await result.json())["error"]["code"] == "invalid_body"
+        assert count == 0
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_request_id_correlates_response_and_metadata_only_events(caplog):
+    import logging
+    from gateway.platforms.api_server import request_trace_middleware
+
+    adapter = _adapter()
+    async def fake_run(**kwargs):
+        return {"final_response": "ok"}, {}
+
+    adapter._run_agent = fake_run
+    app = web.Application(middlewares=[request_trace_middleware])
+    app["api_server_adapter"] = adapter
+    app.router.add_post("/v1/chat/completions", adapter._handle_chat_completions)
+    caplog.set_level(logging.INFO, logger="gateway.platforms.api_server")
+    async with TestClient(TestServer(app)) as client:
+        result = await client.post(
+            "/v1/chat/completions",
+            json={"messages": [{"role": "user", "content": "SENSITIVE_CANARY_CONTENT"}]},
+            headers={"Authorization": "Bearer test-key"},
+        )
+        assert result.status == 200
+        request_id = result.headers["X-Hermes-Request-Id"]
+        assert request_id.startswith("hrq_")
+        text = caplog.text
+        assert request_id in text
+        assert '"event":"request_accepted"' in text
+        assert '"event":"request_finished"' in text
+        assert "SENSITIVE_CANARY_CONTENT" not in text
+        assert "test-key" not in text
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_non_loopback_without_auth_key_rejected_at_bind_time():
+    config = PlatformConfig(enabled=True, extra={"host": "0.0.0.0", "port": 0, "key": ""})
+    adapter = APIServerAdapter(config)
+    assert await adapter.connect() is False
+    assert adapter._runner is None
+    adapter._response_store.close()
+
+
+def test_cors_exposes_tracing_and_session_headers():
+    from gateway.platforms.api_server import _CORS_HEADERS
+    assert "X-Hermes-Session-Id" in _CORS_HEADERS["Access-Control-Allow-Headers"]
+    assert "X-Hermes-Session-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
+    assert "X-Hermes-Request-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
