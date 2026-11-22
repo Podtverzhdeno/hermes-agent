@@ -22,6 +22,7 @@ PILOT_NAMES = frozenset((
     "evaluating-llms-harness", "writing-plans", "hermes-agent",
     "github-issues", "mcporter", "ocr-and-documents", "fastmcp", "notion",
     "huggingface-hub", "xitter", "inference-sh-cli", "parallel-cli",
+    "1password", "himalaya", "webhook-subscriptions",
 ))
 
 

@@ -244,10 +244,10 @@ can prove local logic but never prove an external account's real state.
 classification, redacted audit receipts and zero-authority dry-run
 decisions. Compare with existing session behavior and collect bypass cases.
 
-**Phase B — protected nine:** enable per-call enforcement only for the
-nine newly hardened high-impact Skills (Github Issues, mcporter,
+**Phase B — protected twelve:** enable per-call enforcement first for
+twelve newly hardened high-impact Skills (Github Issues, mcporter,
 OCR/Documents, FastMCP, Notion, Hugging Face Hub, Xitter, inference.sh,
-Parallel). Require manual review for ambiguous effects, no broad "allow all"
+Parallel, 1Password, Himalaya and Webhook Subscriptions). Require manual review for ambiguous effects, no broad "allow all"
 fallback.
 
 **Phase C — remaining pilot 22:** add compatible effect adapters; verify
@@ -291,3 +291,19 @@ tests and actual baseline-to-candidate model task evaluations.
   https://developers.openai.com/api/docs/guides/agents/guardrails-approvals
 - Hermes fork: \`agent/skill_harness.py\`, \`tools/registry.py\`,
   \`tools/approval.py\`, \`agent/prompt_builder.py\`, \`tools/skills_tool.py\`
+
+## 11. Additional verified gateway and secrets risks
+
+The 2026-11-22 code inspection identified a second implementation boundary:
+`gateway/platforms/webhook.py` uses `DEFAULT_HOST = '0.0.0.0'` and
+supports a special `INSECURE_NO_AUTH` configuration for testing.
+Although the Skill guide now recommends loopback and signed events,
+nothing in `harness.yaml` overrides the gateway process's actual defaults.
+Before enabling webhooks under protected scopes, require explicit user
+confirmation of bind interface, validate public exposure, block insecure
+test mode in production and verify anti-replay retention after restart.
+
+Likewise `optional-skills/security/1password/SKILL.md` cannot by itself
+prevent `op read` from printing secrets. OS/process isolation and host
+tool-result redaction are required; suppressing a sample in Markdown
+is procedure improvement rather than enforced confidentiality.

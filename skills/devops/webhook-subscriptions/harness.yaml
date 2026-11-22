@@ -1,0 +1,23 @@
+# Advisory only: this file requests no real tool permission.
+schema_version: 1
+skill: webhook-subscriptions
+activation:
+  when: ["Inspect, create, update or delete a Hermes webhook subscription for a specified service","Verify a signed webhook endpoint and a bounded event-to-agent activation route"]
+  not_when: ["Handle a one-off manually supplied JSON event without enabling webhooks","Create a scheduled local cron task rather than an externally reachable webhook"]
+capabilities:
+  tools: ["hermes webhook","gateway","terminal"]
+  side_effects: external_write
+  approval_required: ["Enable a public network listener or create/modify/remove an event-triggered agent run","Set delivery destinations, reveal signing secrets or configure automated external writes"]
+lifecycle:
+  preflight: ["Pin source service, exact event types, delivery destination and signed payload authentication","Determine exposure, replay window, tenant scope, rate limits and maximum agent/tool authority"]
+  execute: ["Prefer loopback-only configuration until reviewed behind an authenticated reverse proxy","Use a generated secret in protected storage and do not pass it visibly as a CLI argument"]
+  verify: ["Send signed harmless test events and confirm authentication failures, duplicate-ID replay and scope","Read back subscription URL, event filters, destination and permissions without exposing secrets"]
+  recover: ["Disable compromised routes and rotate signing secrets after exposure","Stop downstream work on invalid signature, unknown tenant, duplicate event or rate exhaustion"]
+budget:
+  max_tool_calls: 40
+  max_reference_bytes: 196608
+evidence:
+  required: ["Canonical subscription ID, service, destination and event filter","Signed test receipt, negative authentication cases and observed agent/tool scope"]
+output:
+  format: "Webhook subscription policy and delivery receipt"
+  acceptance: ["No automatic public listener or secret echo","No unsigned/replayed event causing privileged agent actions"]

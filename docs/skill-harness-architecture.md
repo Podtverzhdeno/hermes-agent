@@ -368,3 +368,30 @@ Remaining engineering priorities:
   a regex risk scan is triage, not a complete threat model.
 - Add adversarial filesystem tests for concurrent symlink replacement
   and deploy sensitive file tools only in an OS-level sandbox.
+
+### Privileged-workflow deep review — 2026-11-22
+
+Three additional individual advisory harnesses now cover 1Password,
+Himalaya IMAP/SMTP and persistent webhook subscriptions. The 1Password
+procedure previously encouraged tmux capture of a pane containing an
+`op read` secret and used a sample literal service-account token; these
+were replaced with metadata-first, no-secret-echo and scoped injection.
+Himalaya previously piped unreviewed reply/forward templates directly
+into SMTP send and suggested a moving-branch shell installer. Its revised
+procedure separates draft from send, pins account/folder/UID, and treats
+ambiguous send results as possibly delivered.
+Webhook instructions previously published default `0.0.0.0` exposure
+and encouraged plaintext secrets, unrestricted payload interpolation
+and automatic external delivery. The revised procedure defaults to
+127.0.0.1, mandates per-provider validation, replay defense, allowlisted
+event data and independent permissions for downstream tools.
+
+Important: the **gateway runtime still defines DEFAULT_HOST=0.0.0.0**
+and supports `INSECURE_NO_AUTH` for testing. This review changes Skill
+instructions, NOT the running gateway's defaults. Secure defaults and
+defense-in-depth must be tackled separately, with compatibility tests
+and explicit migration controls.
+
+Coverage: 34 individual contracts, 83 legacy Skills. The eval fixtures
+are now 34 positives, 34 contrastive negatives and 15 adversarial = 83
+hand-authored cases, NOT measured LLM task results.
