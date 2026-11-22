@@ -210,9 +210,13 @@ async def test_http_parallel_same_key_409_different_body_422_and_replay():
             first = await pending
             assert first.status == 200
             assert first.headers.get("X-Hermes-Run-Id")
+            first_payload = await first.json()
+            first_session = first.headers.get("X-Hermes-Session-Id")
             same = await client.post("/v1/chat/completions", json=_chat_body(),
                                      headers={"Idempotency-Key": idem})
             assert same.status == 200
+            assert same.headers.get("X-Hermes-Session-Id") == first_session
+            assert (await same.json())["id"] == first_payload["id"]
             assert calls == 1
 
 
