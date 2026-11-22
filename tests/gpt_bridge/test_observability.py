@@ -395,3 +395,23 @@ def test_collector_clock_rollback_is_not_interpreted_as_activity(pair):
     assert observed["status"] == "observation_inconsistent"
     assert observed["reason"] == "COLLECTOR_CLOCK_ROLLBACK"
     assert observed["confidence"] == "none"
+
+
+def test_cross_run_task_id_reuse_rejected_without_poisoning_effects(pair):
+    s, _ = pair
+    add(s, kind="effect.uncertain", details={"action_id": "effectX"})
+    with pytest.raises(EventConflict, match="task_id reused across runs"):
+        s.append(event_id="other-run", run_id="run2", task_id="task1", agent_id="agentB",
+                 producer_id="agentB", fence=1, source_seq=1, kind="task.completed", source="worker")
+    assert s.diagnose_task(task_id="task1")["status"] == "needs_reconciliation"
+    assert s.verify_chain()
+
+
+def test_producer_id_cannot_change_owners_without_new_fence(pair):
+    s, _ = pair
+    add(s, producer_id="processX")
+    with pytest.raises(EventConflict, match="producer_id reused across agents"):
+        s.append(event_id="rogue", run_id="run1", task_id="task1", agent_id="agentB",
+                 producer_id="processX", fence=1, source_seq=2, kind="task.completed", source="worker")
+    assert len(s.timeline(task_id="task1")) == 1
+    assert s.verify_chain()
