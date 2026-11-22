@@ -106,7 +106,7 @@ Examples (read only):
 
 Exit 0 = NO_STACK_ISSUES_NOT_MERGE_APPROVAL; exit 1 = REVIEW_REQUIRED; exit 2 = AUDIT_INCOMPLETE. No output implies it can merge. GitHub has no globally atomic PR snapshot in these separate API calls: rerun against exact candidate refs just before a merge, perform final merged-tree CI, and re-check policies.
 
-Local test evidence: 21 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 39 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
+Local test evidence: 25 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 43 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
 
 ## 7. Multi-agent governance and integration queue
 
@@ -162,7 +162,7 @@ This SDD records the complexity and quality bar for subsequent workers. It does 
 
 ## 11. Additional hardening, exact-SHA evidence and sourced transport notes
 
-The remote branch was updated after the initial review to reject malformed GitHub PR and comparison response shapes before any green result and to detect a cycle in stacked PR base dependencies. Even two branch refs temporarily pointing at identical commits must not make a circular stack appear mergeable. Three new negative tests cover the above; the offline local comparison suite is now 39/39 passing (21 stack guard tests in this PR, 18 generic prototype tests kept local). These are source-level and offline test claims; CI must run on the **latest** commit SHA, not the original PR creation SHA.
+The remote branch was updated after the initial review to reject malformed GitHub PR and comparison response shapes before any green result and to detect a cycle in stacked PR base dependencies. Even two branch refs temporarily pointing at identical commits must not make a circular stack appear mergeable. Three new negative tests cover the above; the offline local comparison suite is now 43/43 passing (25 stack guard tests in this PR, 18 generic prototype tests kept local). These are source-level and offline test claims; CI must run on the **latest** commit SHA, not the original PR creation SHA.
 
 API workers should distinguish:
 - OpenAI Responses background mode provides provider-managed long-running response IDs and retrieval in supported cases. This is different from persisting Hermes tool outcomes and must not silently substitute for an action ledger. See https://developers.openai.com/api/docs/guides/background .
@@ -204,3 +204,10 @@ Added .github/workflows/gpt-stack-guard.yml on this isolated Draft PR:
 - Scheduled GitHub Actions only run from the default branch after an owner-reviewed merge; this workflow is **not yet running periodically from the draft branch**. Four-hour checks are a recency/cost compromise, not continuous per-second detection.
 
 Priority after PR #29 review: migrate to modern Kanban and canonical API admission where compatible; then instrument exact authorized tool effects and independent verification. The extra scheduled scanner does not replace an always-running local Hermes/GPT runtime watcher; this was not deployed because the local Workspace connection terminated.
+
+
+## 14. Cross-field GitHub compare evidence consistency hardening
+
+A final reviewer check found that it is unsafe to interpret behind_by=0 as clean ancestry if GitHub compare status=ahead/behind/diverged/identical and ahead_by/behind_by values are internally contradictory or missing. An incomplete/mock JSON response must not produce an apparently positive ancestry verdict. The read-only stack guard now binds together three fields: exact status, ahead_by and behind_by. Valid pairs are identical=(0,0); ahead=(ahead>0, behind=0); behind=(ahead=0, behind>0); diverged=(ahead>0, behind>0). All other combinations downgrade to INVALID_COMPARE_EVIDENCE, never success. Four extra offline tests cover contradictory diverged, missing ahead_by, invalid identical and legitimate identical.
+
+Latest deterministic local Python 3.13 result: **43/43** tests including 25 published ancestry-guard tests and 18 deliberately unpublished generic comparative tests. Because this SDD edit creates another head SHA, any earlier GitHub CI success is historical and must not be presented as the latest SHA's test status. A final exact-head check after publication is mandatory.
