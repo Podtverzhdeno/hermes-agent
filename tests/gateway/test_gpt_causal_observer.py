@@ -93,6 +93,43 @@ class ObserverTests(unittest.TestCase):
         self.db.ingest(event(4, "verifier.completed", target_revision="a"*40, evidence_refs=[digest]), trusted_origin=True)
         self.assertEqual("UNKNOWN", self.db.diagnose("run-a")["diagnostic"])
 
+    def test_other_task_verification_cannot_hide_loop(self):
+        for seq in (1, 2, 3):
+            self.db.ingest(event(seq, "tool.intent", operation_fingerprint="sha256:" + "c"*64))
+        other = event(4, "verifier.completed", target_revision="a"*40,
+                      evidence_refs=["sha256:" + "b"*64])
+        other["task_id"] = "task-other"
+        self.db.ingest(other, trusted_origin=True)
+        self.assertEqual("NO_VERIFIED_PROGRESS", self.db.diagnose("run-a")["diagnostic"])
+
+    def test_previous_verification_does_not_hide_new_loop(self):
+        for seq in (1, 2, 3):
+            self.db.ingest(event(seq, "tool.intent", operation_fingerprint="sha256:" + "c"*64))
+        self.db.ingest(event(4, "verifier.completed", target_revision="a"*40,
+                             evidence_refs=["sha256:" + "b"*64]), trusted_origin=True)
+        for seq in (5, 6, 7):
+            self.db.ingest(event(seq, "tool.intent", operation_fingerprint="sha256:" + "c"*64))
+        result = self.db.diagnose("run-a")
+        self.assertEqual("NO_VERIFIED_PROGRESS", result["diagnostic"])
+        self.assertEqual(3, result["repeated_intents"][0]["repetition_count"])
+
+    def test_wrong_revision_verifier_does_not_hide_loop(self):
+        for seq in (1, 2, 3):
+            self.db.ingest(event(seq, "tool.intent", target_revision="a"*40,
+                                 operation_fingerprint="sha256:" + "c"*64))
+        self.db.ingest(event(4, "verifier.completed", target_revision="b"*40,
+                             evidence_refs=["sha256:" + "b"*64]), trusted_origin=True)
+        self.assertEqual("NO_VERIFIED_PROGRESS", self.db.diagnose("run-a")["diagnostic"])
+
+    def test_other_attempt_verification_cannot_hide_loop(self):
+        for seq in (1, 2, 3):
+            self.db.ingest(event(seq, "tool.intent", operation_fingerprint="sha256:" + "c"*64))
+        other = event(4, "verifier.completed", target_revision="a"*40,
+                      evidence_refs=["sha256:" + "b"*64])
+        other["attempt_id"] = "attempt-new"
+        self.db.ingest(other, trusted_origin=True)
+        self.assertEqual("NO_VERIFIED_PROGRESS", self.db.diagnose("run-a")["diagnostic"])
+
     def test_untrusted_verifier_cannot_clear_loop(self):
         for seq in (1, 2, 3):
             self.db.ingest(event(seq, "tool.intent", operation_fingerprint="sha256:"+"c"*64))
