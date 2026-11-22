@@ -102,9 +102,18 @@ def collect(repo: str, base: str = "main", prs_only: bool = False,
         origin = (head.get("repo") or {}).get("full_name")
         if not isinstance(number, int) or not name or not origin:
             raise AuditError("Malformed PR head")
+        if not isinstance(sha, str) or not SHA40.fullmatch(sha):
+            raise AuditError("Invalid PR head SHA")
         files = _pages(api + "/pulls/%d/files" % number, token, limit=30)
         if len(files) >= 3000:
             raise AuditError("PR file listing at GitHub's 3000-file limit")
+        # The PR files endpoint addresses a moving PR number, not an immutable
+        # commit. Re-read the PR after pagination; if HEAD or base moved,
+        # discard this inventory instead of attributing mixed files to a SHA.
+        latest = _get(api + "/pulls/%d" % number, token)
+        if (latest.get("head", {}).get("sha") != sha or
+                latest.get("base", {}).get("ref") != base):
+            raise AuditError("PR moved during inventory: %d" % number)
         paths = [f.get("filename") for f in files]
         entries.append({"id": "PR-%d" % number, "head": sha, "files": paths,
                         "title": "", "origin": origin, "draft": bool(pr.get("draft"))})
@@ -117,12 +126,27 @@ def collect(repo: str, base: str = "main", prs_only: bool = False,
             if not isinstance(name, str) or name == base or name in represented:
                 continue
             sha = (branch.get("commit") or {}).get("sha")
-            comparison = _get(api + "/compare/" + quote(base, safe="") +
-                              "..." + quote(name, safe=""), token)
+            if not isinstance(sha, str) or not SHA40.fullmatch(sha):
+                raise AuditError("Invalid branch HEAD: " + name)
+            # Compare recorded immutable SHAs; do not silently compare a
+            # branch name that may have advanced since the branch listing.
+            comparison = _get(api + "/compare/" + base_sha +
+                              "..." + sha, token)
             paths = [f.get("filename") for f in comparison.get("files", [])]
+            cmp_base = (comparison.get("base_commit") or {}).get("sha")
+            cmp_head = (comparison.get("commits") or [{}])[-1].get("sha")
+            if cmp_base and cmp_base != base_sha:
+                raise AuditError("Comparison base changed unexpectedly: " + name)
+            if cmp_head and cmp_head != sha:
+                raise AuditError("Comparison head does not match branch SHA: " + name)
             if len(paths) >= 300 or comparison.get("status") not in (
                     "ahead", "diverged", "identical", "behind"):
                 raise AuditError("Branch comparison missing or truncated: " + name)
+            # If this branch advanced during the scan, a historical compare
+            # must never be passed off as its *current* patch series.
+            latest_branch = _get(api + "/branches/" + quote(name, safe=""), token)
+            if (latest_branch.get("commit") or {}).get("sha") != sha:
+                raise AuditError("Branch moved during inventory: " + name)
             if comparison.get("ahead_by", 0) == 0:
                 continue
             entries.append({"id": "BRANCH:" + name, "head": sha, "files": paths,
