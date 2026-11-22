@@ -225,3 +225,7 @@ Additional scalability decisions:
 ## 14. Отбор дублирующих реализаций, проверенные upstream контракты
 
 См. [A0 dossier](GPT_PR_CANDIDATE_SELECTION_A0_2026-11-22.md). Документ сопоставляет восемь PR-аудиторов, native Hermes Kanban, Chrome Native Messaging и GitHub API rate-limit при 30 параллельных PR. Статус: DRAFT, не release acceptance.
+
+## 15. Аудитор: ветки разных форков и внедрение в отчет
+
+Имя Git-ветки не глобально уникально; вывод о stack/ancestry допускается только при совпадении origin repository + head_ref и base repository + base_ref. Если происхождение неизвестно, консервативно показывать unresolved dependency и запрещать merge. Содержимое полей статуса внешнего reviewer и observed_at offline snapshot — также недоверенные данные: экранировать Markdown/HTML, не интерпретировать как команды.

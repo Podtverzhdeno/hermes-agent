@@ -48,3 +48,8 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 ## Source-pinned arbitration and 100-PR metadata fixtures
 - Added the A0 selection dossier: 8 competing PR audit tools (#14, #18, #22, #24, #26, #27, #28, #29), native upstream Kanban, Chrome native host and GitHub API rate limits. No implementation choice or merge has been authorized.
 - Added two metadata-only unit cases for 100 independent PRs (zero collisions) and 100 PRs writing one same path (4,950 expected independent pairs). This does not simulate real worker orchestration or establish 24-hour reliability; await exact-SHA offline CI.
+
+## Hardening A0's own evidence boundary
+- Observed source audit discovered a false-stack risk: git branch names are not globally unique across forks. A0 now identifies branch owner by origin repository + head branch, and refuses ambiguous identical origins. Missing fork identity becomes conservative unknown rather than a fabricated causal dependency. Adds regression fixtures.
+- GitHub legacy status-context strings, file paths and offline snapshot observed_at are untrusted data; Markdown escaping now covers the complete presentation, not only file paths. Adds injection fixture.
+- These are source-level fixes; review exact new commit CI before claiming tested.

@@ -82,8 +82,10 @@ def live_snapshot(repository, token=None):
         result.append({
             "number": number, "title": pr.get("title", ""),
             "head_sha": head, "head_branch": pr["head"].get("ref"),
+            "head_repo": (pr["head"].get("repo") or {}).get("full_name"),
             "base_branch": (pr.get("base") or {}).get("ref"),
             "base_sha": (pr.get("base") or {}).get("sha"),
+            "base_repo": ((pr.get("base") or {}).get("repo") or {}).get("full_name"),
             "draft": pr.get("draft", True),
             "files": [f["filename"] for f in files],
             "checks": [{"name": c.get("name"), "head_sha": c.get("head_sha"),
@@ -121,8 +123,21 @@ def assess(snapshot):
                 raise EvidenceError("check-run not tied to exact PR SHA")
         if not isinstance(p.get("head_branch"), str) or not isinstance(p.get("base_branch"), str):
             raise EvidenceError("missing PR branch")
-    branch_owner = {p["head_branch"]: p["number"] for p in prs}
-    parents = {p["number"]: branch_owner.get(p["base_branch"]) for p in prs}
+    # Branch names collide across forks. Parent is valid only for the SAME origin repo.
+    repo = snapshot.get("repository")
+    branch_owner = {}
+    for p in prs:
+        origin = p.get("head_repo", repo)
+        if origin is None:
+            continue  # Unknown/deleted fork; cannot prove a dependency.
+        key = (origin, p["head_branch"])
+        if key in branch_owner:
+            raise EvidenceError("ambiguous PR head branch identity")
+        branch_owner[key] = p["number"]
+    parents = {
+        p["number"]: branch_owner.get((p.get("base_repo", repo), p["base_branch"]))
+        for p in prs
+    }
     def ancestry(n):
         visited = set()
         while parents.get(n) is not None:
@@ -189,14 +204,14 @@ def _safe_markdown(value):
 
 def markdown(report):
     out = ["# Hermes GPT integration evidence", "",
-           "Snapshot: " + str(report["observed_at"]),
+           "Snapshot: " + _safe_markdown(report["observed_at"]),
            "Merge authorization: **NO** (read-only evidence)", "",
            "| PR | Exact head SHA | Required test | Review skipped |",
            "|---|---|---|---|"]
     for c in report["checks"]:
         out.append("| #{pr} | {sha} | {test} | {review} |".format(
-            pr=c["pr"], sha=c["head_sha"][:12], test=c["test"],
-            review=", ".join(str(x) for x in c["review_skipped"]) or "—"))
+            pr=c["pr"], sha=c["head_sha"][:12], test=_safe_markdown(c["test"]),
+            review=", ".join(_safe_markdown(x) for x in c["review_skipped"]) or "—"))
     out += ["", "## Independent file overlap"]
     out += ["- PR {} × PR {}: {}".format(*c["prs"], _safe_markdown(c["file"])) for c in report["collisions"]] or ["None observed"]
     out += ["", "## Stacked dependencies"]

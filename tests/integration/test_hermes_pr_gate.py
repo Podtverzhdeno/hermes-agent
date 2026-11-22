@@ -120,6 +120,30 @@ class GateTests(unittest.TestCase):
         self.assertEqual(report["collisions"][-1]["prs"], [99, 100])
         self.assertFalse(report["merge_ready"])
 
+    def test_fork_branch_names_do_not_create_fake_parentage(self):
+        first = pr(1, name="work", files=["x.py"])
+        second = pr(2, base="work", files=["x.py"])
+        first["head_repo"] = "fork-a/x"
+        second["base_repo"] = "fork-b/x"
+        report = m.assess(snapshot(first, second))
+        self.assertEqual(report["stacked_dependencies"], [])
+        self.assertEqual(report["collisions"], [{"file": "x.py", "prs": [1, 2]}])
+
+    def test_duplicate_same_repo_head_identity_fails_closed(self):
+        first = pr(1, name="same")
+        second = pr(2, name="same")
+        with self.assertRaises(m.EvidenceError):
+            m.assess(snapshot(first, second))
+
+    def test_legacy_status_and_timestamp_are_escaped_in_markdown(self):
+        first = pr(1, review="skipped|x" + chr(10) + "# poisoned report")
+        item = snapshot(first)
+        item["observed_at"] = "time|spoof" + chr(10) + "# fake"
+        md = m.markdown(m.assess(item))
+        self.assertNotIn(chr(10) + "# poisoned report", md)
+        self.assertNotIn(chr(10) + "# fake", md)
+        self.assertIn("skipped", md)
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))
