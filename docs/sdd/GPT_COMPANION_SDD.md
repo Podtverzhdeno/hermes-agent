@@ -202,7 +202,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **54 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **56 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -274,3 +274,11 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 ### ADR-022: Противоречивые terminal reports одного источника (P0 implemented)
 
 Нельзя выбирать последний красивый статус: если один source сообщает `run.reported_failed`, затем `run.reported_completed` в том же attempt, либо присылает `worker.progress` **после** terminal report, состояние признаётся `TRACE_INCOMPLETE`, запрашиваются согласование/сопоставление source-локальных событий и причины нарушения жизненного цикла. Событие `worker.stopped` после terminal допускается как нормальное завершение процесса. Никакого автоматического восстановления на основании последнего сообщения.
+
+### ADR-023: Crash-before-commit и конкурентные процессы (P0 synthetic regression)
+
+Добавлены `tests/gpt_companion/test_process_recovery.py`: дочерний процесс в реальной отдельной ОС-процедуре изменяет SQLite row внутри `BEGIN IMMEDIATE`, затем аварийно завершает себя через `os._exit(73)` до commit; повторное открытие БД сохраняет исходную chain-интегральность. Отдельная проверка запускает 8 независимых Python процессов для безопасной одновременной записи разных source. Это **не** тест реального выключения компьютера, дискового контроллера/FS flush, 100-процессной нагрузки или распределённой работы.
+
+## 15. Журнал контрольных проверок
+
+Сводка доказательств, известных рисков, устранённых дефектов и оставшихся блокеров — [`GPT_COMPANION_QA_LOG_20261122.md`](./GPT_COMPANION_QA_LOG_20261122.md). При будущих исправлениях агент обязан обновлять запись и указывать exact SHA, а не только количество тестов.
