@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "skill": "github-issues",
+  "purpose": "Triage and modify GitHub issues without duplicate or unauthorized writes.",
+  "risk": "external_write",
+  "routing": {
+    "trigger": [
+      "Create a bug issue with reproduction steps",
+      "Triage this open issue and propose labels",
+      "Comment on issue 125 with the verified findings"
+    ],
+    "do_not_trigger": [
+      "Merge the code associated with the issue",
+      "Refactor a function in my local repository",
+      "Review a PDF document unrelated to GitHub"
+    ]
+  },
+  "preflight": [
+    "Resolve repository and exact issue number; search for duplicate issues first.",
+    "Do not scrape GitHub authentication tokens from local credential files.",
+    "Classify operations as read-only or remote writes before using tools."
+  ],
+  "workflow": [
+    "Gather reproducer and relevant evidence before drafting.",
+    "Use narrow change sets for labels, comments and issue states.",
+    "For writes, request approval bound to exact issue and content.",
+    "Read back server state before reporting a successful update."
+  ],
+  "actions": [
+    {
+      "operation": "issues.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "issue-state"
+      ]
+    },
+    {
+      "operation": "issues.create",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "issue-state",
+        "issue-created"
+      ]
+    },
+    {
+      "operation": "issues.modify",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "issue-state",
+        "issue-updated"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "issue-state",
+      "source": "remote_api",
+      "how_to_verify": "Read exact repository, issue number, current state and labels."
+    },
+    {
+      "id": "issue-created",
+      "source": "remote_api",
+      "how_to_verify": "Read new issue ID and title to confirm no duplicate publication."
+    },
+    {
+      "id": "issue-updated",
+      "source": "remote_api",
+      "how_to_verify": "Confirm the exact updated labels, comment or state on GitHub."
+    }
+  ],
+  "failure_modes": [
+    "On duplicate or conflicting issue, stop and show the existing reference.",
+    "On API timeout, reconcile the issue state; do not repost blindly."
+  ]
+}
