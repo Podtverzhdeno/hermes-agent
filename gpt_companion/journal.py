@@ -373,9 +373,11 @@ class EventJournal:
                     and e["kind"] not in ("worker.stopped", "run.reported_completed",
                                            "run.reported_failed")):
                 contradictory = True
-        # Terminal cause and terminal state must refer to the SAME event,
-        # not to different events ordered by network delivery time.
-        terminal = max(terminal_events, key=lambda e: e["sequence"]) if terminal_events else None
+        # A routine worker.stopped after a run report does not supersede
+        # reported task outcome. Treat it as process lifecycle metadata;
+        # contradictory run reports still require trace reconciliation.
+        report_events = [e for e in terminal_events if e["kind"].startswith("run.reported_")]
+        terminal = max(report_events or terminal_events, key=lambda e: e["sequence"]) if terminal_events else None
         last_terminal = terminal["kind"] if terminal else None
         reason = terminal.get("reason_code", "UNKNOWN") if terminal else "UNKNOWN"
         if (prior_unresolved or cross_source_effects or effect_conflicts
