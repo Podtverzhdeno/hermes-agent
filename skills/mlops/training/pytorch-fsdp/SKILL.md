@@ -7,7 +7,7 @@ license: MIT
 metadata:
   hermes:
     tags: [PyTorch, FSDP2, fully_shard, DTensor, distributed-training, checkpoints]
-    related_skills: [pytorch-fsdp, pytorch-lightning, accelerate]
+    related_skills: [pytorch-lightning, accelerate]
 ---
 
 # PyTorch FSDP: verified training, not copied API dumps
@@ -65,6 +65,7 @@ group/device setup, dataloader and training loop must be supplied and checked
 against the installed PyTorch version.
 
 ```python
+import torch
 from torch.distributed.fsdp import fully_shard
 
 # Apply bottom-up so per-layer communication groups can overlap with compute.
