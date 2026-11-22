@@ -170,6 +170,16 @@ class PRWatchTests(unittest.TestCase):
                 with self.assertRaises(guard.IncompleteSnapshot):
                     guard.collect(repo)
 
+    def test_metadata_collection_green_never_means_runtime_green(self):
+        r = guard.analyze(snapshot(pr(1, ['x.py']), pr(2, ['x.py'])))
+        self.assertEqual(r['collection_status'], 'COMPLETE_METADATA_SNAPSHOT')
+        self.assertEqual(r['integration_verdict'], 'HOLD_FOR_REVIEW')
+        self.assertEqual(r['runtime_verdict'], 'UNOBSERVED')
+        self.assertEqual(r['ci_verdict'], 'UNVERIFIED')
+        summary = guard.markdown(r)
+        self.assertIn('HOLD_FOR_REVIEW', summary)
+        self.assertIn('UNOBSERVED', summary)
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
