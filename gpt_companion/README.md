@@ -46,14 +46,15 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | State | Action |
 | --- | --- |
 | `NOT_OBSERVED` | Inspect authenticated intake and observer connection |
-| `TRACE_INCOMPLETE` | Replay missing source-local sequences from durable outbox |
+| `TRACE_INCOMPLETE` | Check diagnostic_flags: sequence gaps need outbox replay; contradictory reports need event/receipt reconciliation |
 | `RECENT_TELEMETRY` | Observe; do not infer task success |
 | `ALIVE_NO_PROGRESS` | Check tool stage, budget, provider response and true process state |
 | `WORKER_UNRESPONSIVE` | Inspect supervisor and lease before replacing worker |
 | `EFFECT_IN_FLIGHT` | Wait for authenticated receipt; never blind-retry writes |
 | `NEEDS_RECONCILIATION` | Read back provider action by stable ID, reconcile in task ledger |
 | `WAITING_APPROVAL` | Request exact human approval bound to action digest and expiry |
-| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision |
+| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision; a later worker stop does not replace this report |
+| `CLOCK_ANOMALY` | Observer wall clock regressed; check time source and supervisor before trusting liveness |
 | `REPORTED_FAILED` | Use normalized reason and inspect provider/CI evidence |
 
 ### No persistent process by default
@@ -61,3 +62,14 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 The CLI inspects a snapshot. A continuous monitor requires a separately deployed worker with startup supervision, heartbeat/outbox adapter, lock ownership and an operator kill switch. None is activated by this PR.
 
 The checkout-only compatibility wrapper `python -m scripts.gpt_event_inspect` imports the same packaged entrypoint. Source-only import is not sufficient for installed-wheel usability; use `python -m gpt_companion`.
+
+### Causal diagnosis hardening (stacked change, awaiting CI)
+
+- A worker stop after a failure or completion report cannot hide the reported outcome. A reported completion still requires independent verification.
+- Conflicting completion/failure claims in one attempt are flagged rather than accepting the newest text.
+- A backwards wall-clock jump yields CLOCK_ANOMALY (except when an unresolved effect already demands a more conservative state). This does not prove process death.
+- diagnostic_flags is an additive, untrusted diagnostic hint; it may contain MISSING_SEQUENCES, CLOCK_REGRESSION, EVENT_CAUSALITY_CONFLICT, CROSS_SOURCE_TERMINALS and CONFLICTING_OUTCOME_REPORTS.
+- Do not interpret tool.effect_acknowledged or tool.effect_not_executed from an unauthenticated emitter as proof that an external write is safely resolved. Only the trusted ledger/verifier may authorize retry or certify success.
+- Direct Python consumers should call verify_chain before assess and handle SQLite failures without treating corruption as a worker failure. The packaged CLI already performs integrity checking. No authenticated ingress, live session monitor, scheduler or production repair is added here.
+
+Integration owner note: this patch is stacked on PR #12 and is not a separate replacement for the PR #9 gpt_bridge observer. Consult the SDD collision map before merging.
