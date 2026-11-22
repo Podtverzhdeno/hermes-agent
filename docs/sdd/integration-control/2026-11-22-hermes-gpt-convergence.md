@@ -74,6 +74,10 @@ Safety invariants:
 
 **Cross-check rule:** A review finding names both *file revision* and *candidate branch*. Do not assume any of these flaws are already present on `main` unless separately observed there. A new candidate is eligible for acceptance only when the relevant regression fails before its fix and passes at its exact reviewed HEAD.
 
+### 2.3 Upstream parity overrides legacy API merge assumptions
+
+**Additional source audit:** Current official NousResearch `main` already contains an expanded API server (about 4,080 lines vs fork's ~1,356), `/v1/runs` with status/events/approvals/unknown resolution, a SQLite run reservation store, and native CDP browser control. Important residual risks remain in upstream's *legacy* in-memory cache: same-key/different-fingerprint concurrent calls are indexed as separate tasks, and failed tasks lose their in-flight reservation; the durable run store can downgrade to memory on DB open errors. **Before integrating PR #4/#5/#6/#11, review [ADR GPT-UPSTREAM-001](2026-11-22-upstream-parity.md)** and explicitly select whether to port upstream run primitives rather than overwrite them. These are source observations requiring targeted tests, not live incident claims.
+
 ## 3. Source-of-truth and causality model
 
 ```text
@@ -287,7 +291,7 @@ Review/proposed remedies are **patch candidates**, not production fixes. Gate on
 - **2026-11-22 / GITHUB_AUDIT:** 14 related branches, 16 shared paths, 16 overlapping pairs. PR #1–#13 inspected; #10 and #11 identified as stacked. Branch/PR heads may move after this snapshot.
 - **2026-11-22 / CONNECTOR_FAILURE_AND_PARTIAL_RECOVERY:** First Local_WorkSpace call returned `Session terminated`. A later `list_workspaces` call succeeded but exposed only `shelter` (a scoped Obsidian workspace), not the Hermes extension directory; separate read-only `temp-folder` was unrelated. Therefore live Chrome extension/companion source, process health and logs remain **NOT VERIFIED**. The transient connector failure alone is not evidence that Hermes execution stopped.
 - **2026-11-22 / WRITE_LIMITATION:** GitHub Issues creation returned HTTP 410 (disabled); use draft PR review and SDD for coordination.
-- **2026-11-22 / DECISION:** no unverified runtime changes to `main`; write this isolated SDD proposal and seek integration checks. No code execution/CI success asserted by this document.
+- **2026-11-22 / UPSTREAM_PARITY_AUDIT:** Compared fork and official NousResearch API source; found newer run/idempotency architecture, additional legacy cache risk, and documented parity findings in GPT-UPSTREAM-001.\n- **2026-11-22 / DECISION:** no unverified runtime changes to `main`; write this isolated SDD proposal and seek integration checks. No code execution/CI success asserted by this document.
 
 ## 12. High-authority design references
 
