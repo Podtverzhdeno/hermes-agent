@@ -236,3 +236,95 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 ### ADR-015: Повреждённая БД — не `NOT_OBSERVED` и не сбой модели (P0, implemented)
 
 Ошибки `sqlite3.DatabaseError` в CLI теперь преобразуются в `JOURNAL_INTEGRITY_FAILED` (exit code 3) без вывода payload или сырых traceback; такой инцидент нельзя смешивать с отвалившимся GPT. БД нельзя «исправлять» автоматическим пересозданием поверх повреждённого файла: сначала сохранить форензик-копию, восстановить последнюю backup + outbox replay, подтвердить `verify_chain`.
+
+
+---
+
+## 14. Causal safety hardening — review 2026-11-22 (stacked on PR #12)
+
+**Статус:** реализовано в изолированной ветке `audit/gpt-companion-causal-failclosed-20261122-a13`; тесты добавлены, результаты CI на точном HEAD должны быть проверены отдельно. Это **не** утверждение о production-интеграции. Базовая ветка: PR #12, head на момент ветвления `586a3e5436289f9c56ad69eefb53893ed11eff67`. В main реализации GPT Companion по-прежнему нет до одобренного merge.
+
+### 14.1 Обнаруженные причинные ошибки
+
+**C-01 / P0 / confirmed by source:** `EventJournal.assess` выбирал `MAX(attempt)` и анализировал внешние эффекты только последней попытки. Сценарий: A#1 зарезервировал GitHub write, потерял ответ, A#2 начал новую попытку; диагностический ответ A#2 мог стать `RECENT_TELEMETRY` при незакрытой операции A#1. Это не обязательно означает реальный повтор записи (модуль read-only), но создаёт опасную операционную иллюзию. **Fix:** сканирование неразрешённых резервирований *предыдущих* попыток, ключ `(run_id, attempt, action_id)`, результат `unresolved_effects_prior_attempts`, приоритет `NEEDS_RECONCILIATION` над видимой активностью новой попытки. Подтверждение новой попытки **не** закрывает старую.
+
+**C-02 / P0 / confirmed by source:** `tool.effect_acknowledged` от другого `source` снимал pending effect, хотя `sequence` двух эмиттеров несопоставим. В отсутствие доверенной причинной связи нельзя доказать, что подтверждение относится к зарезервированному эффекту, даже при совпадении `action_id`. **Fix:** cross-source acknowledgement остаётся `NEEDS_RECONCILIATION`; `approval.resolved` от другого эмиттера не снимает `pending_approvals` и помечает trace неполной. Это консервативная мера V1: будущая доверенная связь будет валидироваться у Autopilot ledger, а не угадываться по metadata.
+
+**C-03 / P1 / confirmed by source:** при запоздавшей доставке двух terminal-событий одного источника `last_terminal` выбирался по sequence, но `reason_code` — по обратному *порядку получения*. Причина могла относиться к **другому** отказу. **Fix:** причина и тип терминального события берутся из одной записи с максимальным source-local sequence.
+
+**C-04 / P1 / confirmed by source:** `live_age = max(0, now - last_seen)` скрывал отрицательный возраст, если системные часы наблюдателя откатились. **Fix:** `CLOCK_ANOMALY` и `CHECK_OBSERVER_CLOCK_AND_TIMESTAMPS`; не выдавать отрицательное наблюдение за свежее. Вычисляемый age остаётся 0 в старом поле ради совместимости, но диагноз явно сигнализирует, что таймер недостоверен.
+
+**Критические ограничения fixes:** диагностические ack/cross-source события остаются **неаутентифицированными**. Даже ack того же источника не равен подтверждённому receipt провайдера. `assess` не вызывает внешние инструменты. Untrusted telemetry не даёт права менять status в task ledger. Неподписанный hash-chain журнала не защищает от удаления всей базы или хвоста цепочки. Прямой вызов `assess()` не выполняет автоматическую глобальную `verify_chain()`; требование к потребителю — сначала integrity gate (как в CLI), либо будущий API возвращает explicit integrity state.
+
+### 14.2 Инварианты, обязательные для всех десятков агентов
+
+| Инвариант | Триггер сбоя | Запрещённое действие | Правильный выход |
+| --- | --- | --- | --- |
+| I-01: неизвестный эффект переживает смену attempt | process crash после reservation | blind retry, другой agent пишет повторно | read-back provider, ledger reconcile |
+| I-02: actor identity ≠ строка `source` | spoofed source / несколько вкладок | доверять approval по event metadata | authenticated emitter principal + scoped grant |
+| I-03: cross-source события не имеют локального total-order | ack из второго потока | считать `sequence=20` «после» seq другого агента | связать через доверенный `action_id` + provider receipt |
+| I-04: событие task terminal ≠ verified final outcome | GPT отвечает «готово» | закрыть DAG / merge | exact SHA + независимые CI/artifact checks |
+| I-05: поздний ack не обновляет живость worker | queued outbox replay | выдавать worker свежий lease | проверка supervisor, актуальный fence |
+| I-06: часы наблюдателя могут ошибаться | NTP rollback/suspend | сбросить таймер до нуля без алерта | CLOCK_ANOMALY + monotonic runtime probes |
+| I-07: lease/fence проверяют перед *каждым* write | lease expired / duplicate owner | cherry-pick/commit старого worker | re-authorize на current resource token |
+| I-08: неразрешённый эффект блокирует повтор во всех дочерних задачах | retry fan-out | независимый повтор операции детьми | блокировка на provider action/resource id |
+| I-09: телеметрия не должна включать содержимое переписки | browser/plugin ingress | хранить prompts/cookies/tool payloads | allowlisted metadata + redaction before ingress |
+| I-10: нет репорта без версии доказательств | CI от старого HEAD | заявить green | exact SHA+run id+commit+timestamp |
+
+### 14.3 Слои причинности / внедрение event contract v2 (не реализовано)
+
+Для интеграционного v2 proposal (не расширять v1 без миграции): `project_id,task_id,run_id,attempt,agent_instance_id,lease_id,fence,resource_key,stage,action_id,provider_request_id,provider_response_id,trace_id,span_id,parent_span_id,source_seq,emitter_principal,observed_at,received_at,evidence_ref,schema_version`. Каждое поле классифицируется по privacy/security, происхождению и доверенности. Следует отделить **наблюдаемые**, **подписанные провайдером** и **утверждённые control-plane** значения; избегать «универсального» dict, который позволяет агентовским полям переопределять системные. В v1 сохранять metadata-only schema.
+
+Допустимые переходы для *внешних эффектов* в доверенном ledger: `PROPOSED → APPROVED → RESERVED → DISPATCHED → CONFIRMED`, либо `UNKNOWN_OUTCOME → RECONCILING → {CONFIRMED,NOT_EXECUTED,REQUIRES_HUMAN}`. Переход `DISPATCHED → NOT_EXECUTED` запрещён только на основании timeout или отсутствия SSE final. Точки commit должны соответствовать **долговечным** транзакциям; `event.received` обозначает лишь фиксацию факта наблюдения.
+
+Для GPT API stream: `stream.connected`, `response.created`, `response.in_progress`, `response.completed/failed`, `stream.disconnected` не эквивалентны `tool.effect.confirmed`. При наличии provider ID сначала retrieval/reconciliation; 429/5xx политики и Retry-After относятся к **новым безопасным** calls, а не к автоматически повторяемому write.
+
+### 14.4 Единоличная зона владения при 12 конкурирующих PR
+
+**GitHub-проверка на 2026-11-22 10:39 UTC:** в форке были открыты PR #1–#12. Перекрытия из `compare main...head` подтверждают, что `gateway/platforms/api_server.py` меняют по меньшей мере PR #4/#5/#6; PR #11 является дочерним к ветке API bridge. PR #9 реализует отдельный `gpt_bridge`, PR #12 — отдельный `gpt_companion`. На этом этапе нельзя автоматически выбирать одного из них как canonical bridge.
+
+| Контракт / файл | Кандидаты | Владелец решения до merge | Merge gate |
+| --- | --- | --- | --- |
+| `gateway/platforms/api_server.py` | #4, #5, #6, #11 (наследует #4) | один назначенный API интегратор | consolidated diff + request/stream backward compatibility |
+| `autopilot/*` | #1, #10 (наследует #1) | Autopilot owner | ledger invariants and fence tests |
+| `gpt_bridge/*` | #9, API bridge PRs | GPT Bridge integrator | выбрать один contract path, проверить trace + SSE preflight |
+| `gpt_companion/*` | #12, этот stacked audit | GPT Companion owner + независимый reviewer | 100% safety regressions + wheel integration |
+| `pyproject.toml` | #1, #2, #9, #12 | packaging integrator | preserve all necessary package includes without duplicate imports |
+| `docs/sdd/*` | #5–#9, #10, #12, audit | documentation owner | сохранить ADR и incident findings, не брать чужой документ целиком |
+| `acp_adapter/*` | #3 | ACP owner | no permission/cache leakage across sessions |
+
+Интеграция должна использовать **один** manifest с immutable candidate SHA, base SHA, author, file ownership, dependencies, verification status, approved changes, conflict decisions, rollback refs. Никакой агент не изменяет чужой PR head ради «быстрого исправления» без explicit handoff. Автоматическое объединение всех 12 PR запрещено.
+
+### 14.5 Экспертная оценка следующих вложений (не эмпирический benchmark)
+
+Шкала по критериям 1–5: безопасность 35%, предотвращение неясных остановок 30%, реализуемость 15%, операционная стоимость 10%, интеграционная совместимость 10%; итог = 20× взвешенная сумма. `N/A` в метриках означает «не измерялось», а не нулевую деградацию.
+
+| Идея | Безоп. | Диагност. | Реализ. | Цена | Совм. | Оценка /100 | Решение |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Cross-attempt unknown-effect fence | 5 | 5 | 5 | 4 | 5 | 98 | P0; implemented in stacked audit |
+| Authenticated receipts + single effect ledger | 5 | 5 | 3 | 3 | 4 | 89 | P0; blocked on adapter & owner contract |
+| Causal trace graph + stage-specific stop codes | 5 | 5 | 3 | 3 | 4 | 89 | P1; design first, no silent retry |
+| Durable outbox + at-least-once dedup | 5 | 5 | 3 | 2 | 4 | 87 | P1; implement before 30-agent scale |
+| Global quotas + fair admission + circuit breakers | 4 | 4 | 4 | 3 | 4 | 79 | P1 |
+| Full browser DOM autopilot | 1 | 2 | 2 | 1 | 1 | 28 | Reject |
+
+Обязательное сравнение после реализации: p50/p95/p99 ingest latency, WAL SQLITE_BUSY rate, unknown effects per 1000 attempts, stale-fence write attempts blocked, mean time to explain stop, time to reconcile ack-loss, false-success incidents, redaction leaks (zero tolerated). Отчёт с реальными samples по нагрузкам 1/10/30/100 workers и repeatable fixtures. Нельзя делать вывод о производительности по unit tests.
+
+### 14.6 Fault injection / независимая проверка
+
+Тестовый контракт в `tests/gpt_companion/test_causal_safety_regressions.py` включает (a) prior attempt outstanding write, (b) same action id reused by newer attempt, (c) late but causally ordered ack on original attempt, (d) cross-emitter effect ack on active attempt, (e) cross-emitter effect ack on old attempt, (f) cross-emitter approval reply, (g) late terminal reason mix-up, (h) NTP wall clock rollback, (i) latest failure with clean history. **Факт наличия теста не равен прохождению теста.**
+
+Предстоят независимые сценарии: kill после отправки GitHub POST до ответа; webhook duplicate/tamper; replay старого worker после потерянного lease; backlog > local quota; полный диск; SIGKILL на SQLite COMMIT и restart; беспорядок трёх источников; bounded memory при 100k events; corrupted/tail-truncated journal; восстановление резервной копии; обновление upstream Hermes; wheel на Python 3.11; Windows supervisor/suspend; safe cancellation. Для каждого сценария обязателен observed state, expected state, evidence, pass/fail, verifier identity.
+
+**Release blocking:** пока нет signed provider receipts, работающего локального MCP, exact-SHA CI и независимого ревью, разрешены только документация и offline read-only diagnostics. Ниже стоящий monitor не вправе переводить задачу в `SUCCEEDED`, делать повторный external write, либо переключать на auto-repair.
+
+### 14.7 ADR registry
+
+- **ADR-016 Accepted (in branch):** Сохранять нерешённые эффекты предыдущих attempts в run assessment; нельзя скрывать их «здоровой» следующей попыткой.
+- **ADR-017 Accepted (in branch):** Cross-emitter ack/approval без доверенной цепи причинности не закрывает операцию или approval; консервативная reconciliation.
+- **ADR-018 Accepted (in branch):** Terminal `reason_code` привязан к самому source-local latest terminal, а не к порядку доставки.
+- **ADR-019 Accepted (in branch):** Clock rewind выдаёт отдельный диагностический state, а не fake heartbeat.
+- **ADR-020 Proposed:** central integration manifest и owner-file lock для параллельных PR; merge только после cut-over/canary и exact-SHA проверки.
+- **ADR-021 Proposed:** для производственного трассирования использовать W3C Trace Context и version-pinned OpenTelemetry GenAI semconv без секретов в baggage; semantic version binding проверять в CI.
+
+**Первичные источники для решений:** [W3C Trace Context](https://www.w3.org/TR/trace-context/); [OpenTelemetry GenAI SemConv](https://opentelemetry.io/docs/specs/semconv/); [OTel baggage security](https://opentelemetry.io/docs/concepts/signals/baggage/); [SQLite WAL](https://www.sqlite.org/wal.html); [OpenAI sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions); [OpenAI webhooks](https://developers.openai.com/api/docs/guides/webhooks). Их рекомендации не подменяют проверки реально установленного Hermes/ChatGPT-клиента.
