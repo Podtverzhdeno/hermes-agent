@@ -1,6 +1,6 @@
 # SDD — Hermes GPT integration, observability and multi-agent recovery
 
-**Version:** 0.3 (2026-11-22)  
+**Version:** 0.4 (2026-11-22)  
 **Status:** review proposal + isolated read-only monitor and control-plane fixes; not a production activation.  
 **Parent:** docs/autopilot/ARCHITECTURE.md, PR #1, base snapshot 7e9100901819ee44c16b4ddcb79a6bcb7909f591.  
 **Ownership:** this SDD and observability code are in a stacked feature branch; concurrent skill-harness branch is not modified.  
@@ -50,13 +50,46 @@ Confirmed by repository inspection:
 
 Hypotheses requiring tests: dropped gateway stream can leave an uncertain in-flight tool; provider retry can duplicate an external write; many workers may starve lower-priority tasks; session/context compression may hide a previous failure; unmanaged observer may silently die; a prompt-injected issue could try to forge completion evidence. Treat every hypothesis as a fault-injection case, not an already observed outage.
 
-## B. Scope and meaning of “GPT extension”
+## B. GPT extension scope: two transports, one trusted execution contract
 
-This SDD covers an **official GPT API/SDK adapter** for Hermes plus an optional local user-visible status extension. It does not assume ChatGPT's website is an authorized remote-execution API. The GPT-specific adapter must support documented API capabilities and map provider response identifiers, model usage, tool call IDs, errors, cancellation and streaming completion into the same durable event schema as Hermes tools.
+Earlier project state included a **user-authorized Hermes <-> ChatGPT Web Companion / CDP bridge**, with model marker `web-chatgpt-high-cdp`, plus a separate proposed native GPT API/SDK path. Do not silently replace the CDP project with an API-only implementation. The locally installed Web Companion/extension version previously reported as **0.6.6**, experimental bridge on port **18763**, and chains Chain2/Chain3 are **historical context only**; their state on the current host is unknown because Local Workspace MCP is disconnected. A prior connectivity canary does not prove full agent lifecycle/authoritative recovery.
 
-A browser extension, if later built, is allowed to display **previously authenticated local control-plane facts**, user-initiated prompts and links to traces. It must not scrape private conversation DOM as a durable result channel, spoof human interaction, bypass usage limits, discover tokens/cookies or infer authorization from rendered text. Missing supported platform automation = manual gate, not hidden automation.
+### B1. Web Companion/CDP transport — current project requirement
 
-The selected integration order is: (1) SDK/API adapter; (2) read-only diagnostic interface; (3) notification UI; (4) optional user-consented browser extension. A UI extension is **not** in the runtime's trusted computing base.
+The accepted Hermes-to-GPT bridge contract was a JSON-only response envelope containing exactly `request_id`, `content`, and `tool_calls` (with a versioned schema and explicit permitted extension fields only after negotiation). A response is valid only when `request_id` exactly matches the pending request. Hermes itself interprets/executes offered tool calls through its **own** authenticated tool gateway. The model or extension never receives permission to perform external writes merely by describing a tool.
+
+Use a user-authorized, supported browser session or explicit connector. Never bypass authentication, anti-bot checks, rate limits or platform controls; never harvest cookies or session tokens; do not treat hidden DOM scraping as an authorized unattended execution API. The extension may relay prompts/results through a consented channel, but the **cross-agent orchestration must not rely on reading ChatGPT DOM or declaring text as proof of work**. GitHub commit SHA, scoped Obsidian file hash/read-back, CI run, action receipt and explicit owner decision are the authoritative evidence layers.
+
+A CDP transport is inherently ephemeral. If browser target or service worker disappears, mark `TRANSPORT_DISCONNECTED` and the in-flight response `UNKNOWN`. Do **not** fabricate an empty success response, auto-replay an action with unknown effects, steal another tab's lease or silently create a replacement authenticated session.
+
+### B2. Native official GPT API adapter — optional parallel backend
+
+A native API/SDK adapter can provide documented streaming, usage, provider response IDs and tool-call structures; it must expose the same **task/trace/effect** envelope and be evaluated separately. It is not automatically interchangeable with a browser ChatGPT model: model capabilities, billing, tool authorization, rate limits, session persistence and compliance differ. Do not assume an API credential is present or that a product ChatGPT subscription grants API access.
+
+### B3. CDP request and result handshake
+
+1. Hermes allocates `task_id` and immutable `request_id`, `attempt_id`, `bridge_session_id`, per-channel `lease_fence`, schema version, deadline, and accepted tool vocabulary.
+2. Trusted local controller checks the preexisting user-authorized session and attaches to one explicit target only. Record target presence, extension version/manifest hash, session ownership and transport readiness; no cookie/token values in logs.
+3. Persist `bridge.request_reserved` and send `bridge.prompt_dispatched` with exact request_id; wait for an explicit delivery acknowledgment. Process launch or WebSocket open is **not** prompt delivery.
+4. The adapter validates JSON envelope: exact required keys, matching request_id, bounded UTF-8 length, allowed tool schema, safe tool-call identifiers, explicit error type for malformed response. Never infer a missing field.
+5. Persist `bridge.response_received`, then classify each `tool_call` as `proposed`; Hermes performs tool policy check and approval. Prior to any external write, reserve a durable effect ID bound to tool name, canonical arguments, resource ID, fence and approval digest.
+6. Persist the trusted tool receipt and independent downstream read-back before a retry, finalization or a new model turn. Unknown outcome is quarantined, not treated as denial/success.
+7. Emit `bridge.reply_delivered` only for the matching request; end the run with explicit `completed`, `cancelled`, `failed` or `blocked_unknown` and evidence pointers.
+8. If the browser disappears after dispatch but before result, never assume request did not execute. Reattach only under owner/session policy, query an explicit trusted completion receipt or require manual decision; do not double-send mutated calls.
+
+**Transport statuses:** `NOT_CONFIGURED`, `AUTH_REQUIRED`, `TARGET_ABSENT`, `EXTENSION_STALE`, `CDP_ATTACH_FAILED`, `SESSION_MISMATCH`, `PROMPT_NOT_ACKNOWLEDGED`, `JSON_SCHEMA_INVALID`, `REQUEST_ID_MISMATCH`, `TOOL_CALL_REJECTED`, `TOOL_EFFECT_UNKNOWN`, `CONNECTION_LOST`, `RATE_LIMITED`, `COMPLETED_WITH_EVIDENCE`. Every status has an observed timestamp, step ID and retry classification; connection readiness cannot override a missing response receipt.
+
+### B4. Browser lifecycle and 30-agent isolation tests
+
+- One browser target/session may carry **one in-flight turn per lane** unless the bridge explicitly supports concurrent correlation. 30 agents must use a bounded dispatch queue, not 30 uncontrolled tabs probing the same ChatGPT DOM.
+- Extension worker suspension, tab navigation, stale extension version, target ID reuse, CDP detach/reattach, JSON partial/truncated response, wrong request_id, duplicated tool_call_id, 429, login expiration, active owner STOP, browser crash and host shutdown are **separate** injected failures.
+- A response from an old attempt/fence must never complete the new attempt, even if its text looks correct. Verify target ownership and the exact task mapping.
+- Per-target semaphore, global request budget, backpressure, stream size cap, explicit user action for required reauthentication, and OS-private transport event logs are mandatory.
+- The orchestrator consumes only strictly validated, authenticated structured transport events. It never reads page text to infer agent success, and cannot issue its own approval.
+- Test at least 1/5/10/30 active agents using fake CDP sessions (no real accounts required), then a single owner-authorized canary with known safe no-op prompt. Record loss, duplication, false completion, p95 queue wait, task-recovery ratio and real consented prompt receipts.
+
+**Implementation boundary now:** this repository's inspected main tree does not contain the owner's Web Companion browser extension sources; local workspace tunnel is unreachable. Therefore **no claim is made that the CDP extension or port 18763 was modified or monitored live**. This SDD documents the accepted contract and a future version-pinned adapter, not a fabricated integration.
+
 
 ## C. Architectural decomposition
 
