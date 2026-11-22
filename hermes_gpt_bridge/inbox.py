@@ -18,9 +18,10 @@ import os
 from pathlib import Path
 import re
 import sqlite3
+import tempfile
 from typing import Callable, Mapping
 
-from .diagnostics import Event, TraceError, MAX_LINE_BYTES, _STABLE_ID
+from .diagnostics import Event, TraceError, MAX_LINE_BYTES, MAX_EVENTS, _STABLE_ID
 
 _SIG = re.compile(r"^[0-9a-fA-F]{64}$")
 
@@ -39,6 +40,20 @@ class IngestReceipt:
 class StoredEvent:
     offset: int
     event: Event
+
+
+@dataclass(frozen=True)
+class InboxHealth:
+    quick_check_ok: bool
+    journal_mode: str
+    row_count: int
+    last_offset: int
+    last_observed_at: str | None
+    db_bytes: int
+    wal_bytes: int
+
+    def as_dict(self) -> dict:
+        return dict(self.__dict__)
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -66,7 +81,15 @@ class EventInbox:
     """
 
     def __init__(self, db_path: str | Path, emitter_keys: Mapping[str, bytes],
-                 *, clock: Callable[[], datetime] | None = None) -> None:
+                 *, clock: Callable[[], datetime] | None = None,
+                 max_records: int = MAX_EVENTS,
+                 max_storage_bytes: int = 128 * 1024 * 1024) -> None:
+        if type(max_records) is not int or not 1 <= max_records <= MAX_EVENTS:
+            raise InboxError("invalid inbox event capacity")
+        if type(max_storage_bytes) is not int or max_storage_bytes < 4096:
+            raise InboxError("invalid inbox storage capacity")
+        self._max_records = max_records
+        self._max_storage_bytes = max_storage_bytes
         if not emitter_keys:
             raise InboxError("at least one authenticated emitter is required")
         self._keys: dict[str, bytes] = {}
@@ -163,6 +186,17 @@ class EventInbox:
                     (event.run_id, event.attempt_id, event.emitter_id, event.seq)).fetchone()
                 if seq_used:
                     raise InboxError("emitter sequence collision")
+                # Capacity checks occur *after* checking exact duplicate replay:
+                # a lost receipt can still be deduplicated when the queue is full.
+                current_offset = db.execute(
+                    "SELECT seq FROM sqlite_sequence WHERE name='ingress_event'").fetchone()
+                if current_offset and current_offset[0] >= self._max_records:
+                    raise InboxError("inbox capacity exhausted; archive and rotate under operator control")
+                wal = Path(str(self._path) + "-wal")
+                disk_used = self._path.stat().st_size + (
+                    wal.stat().st_size if wal.exists() else 0)
+                if disk_used >= self._max_storage_bytes:
+                    raise InboxError("inbox storage capacity exhausted; pause emitters")
                 observed = self._clock()
                 if (not isinstance(observed, datetime) or observed.tzinfo is None
                         or observed.utcoffset() != timezone.utc.utcoffset(observed)):
@@ -197,3 +231,64 @@ class EventInbox:
                 "SELECT offset, payload FROM ingress_event WHERE run_id=? AND offset>? "
                 "ORDER BY offset LIMIT ?", (run_id, after_offset, limit)).fetchall()
         return [StoredEvent(offset, Event.parse(json.loads(raw))) for offset, raw in rows]
+
+    def health(self) -> InboxHealth:
+        """Operator-only storage-health snapshot; never reports agent success.
+
+        A healthy database does not imply a healthy collector input channel.
+        Silence can mean no configured emitters, a host outage, or a failed
+        upstream transport; compare with explicit source heartbeats.
+        """
+        with closing(self._connect()) as db:
+            quick = db.execute("PRAGMA quick_check(1)").fetchone()
+            mode = str(db.execute("PRAGMA journal_mode").fetchone()[0])
+            rows, highest = db.execute(
+                "SELECT COUNT(*), MAX(offset) FROM ingress_event").fetchone()
+            last = db.execute(
+                "SELECT payload FROM ingress_event ORDER BY offset DESC LIMIT 1").fetchone()
+        observed = Event.parse(json.loads(last[0])).observed_at.isoformat() if last else None
+        wal_path = Path(str(self._path) + "-wal")
+        return InboxHealth(
+            quick_check_ok=bool(quick and quick[0] == "ok"), journal_mode=mode,
+            row_count=int(rows), last_offset=int(highest or 0),
+            last_observed_at=observed,
+            db_bytes=self._path.stat().st_size,
+            wal_bytes=wal_path.stat().st_size if wal_path.exists() else 0,
+        )
+
+    def backup_to(self, destination: str | Path) -> int:
+        """Create a point-in-time SQLite backup without overwriting any target.
+
+        Backup is an explicit operator action, never an autonomous effect.
+        The SQLite Online Backup API is required for WAL consistency; a raw
+        filesystem copy of the live *.db is not a trustworthy backup. The
+        temporary file is unpublished until verified, then hard-linked to a
+        non-existing target atomically on a local filesystem.
+        """
+        dest = Path(destination)
+        if not dest.parent.is_dir():
+            raise InboxError("backup parent folder does not exist")
+        if dest.exists():
+            raise InboxError("backup destination already exists")
+        fd, staging = tempfile.mkstemp(prefix=".hermes-inbox-backup-", suffix=".db",
+                                       dir=str(dest.parent))
+        os.close(fd)
+        stage = Path(staging)
+        try:
+            with closing(self._connect()) as source, closing(sqlite3.connect(staging)) as out:
+                source.backup(out)
+                quick = out.execute("PRAGMA quick_check(1)").fetchone()
+                if not quick or quick[0] != "ok":
+                    raise InboxError("backup verification failed")
+                count = int(out.execute("SELECT COUNT(*) FROM ingress_event").fetchone()[0])
+            # The original target must not be clobbered by a racing creator.
+            # An atomic same-filesystem hard link fails when the name exists.
+            try:
+                os.link(staging, dest)
+            except FileExistsError as exc:
+                raise InboxError("backup destination already exists") from exc
+            except OSError as exc:
+                raise InboxError("backup could not be published atomically") from exc
+            return count
+        finally:
+            stage.unlink(missing_ok=True)
