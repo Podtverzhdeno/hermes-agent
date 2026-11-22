@@ -105,10 +105,14 @@ def test_cdp_subprocess_empty_stdout_does_not_log_cmd_prefix_with_cdp_url(tmp_pa
 def test_cdp_subprocess_structured_error_return_does_not_echo_credentials(tmp_path, caplog):
     import json
     raw = json.dumps({"success": False, "error": f"CDP failure: {SECRET}",
-                      "data": {"stderr": f"ws://{SECRET}"}})
+                      "message": f"untrusted diagnostic {SECRET}",
+                      "url": f"wss://{SECRET}@example.test",
+                      "data": {"stderr": f"ws://{SECRET}"},
+                      "code": "tab_gone"})
     result = _exercise_cdp_child(tmp_path, caplog, stdout_text=raw,
                                  stderr_text=f"failed: {SECRET}", rc=1)
     assert not result["success"]
+    assert result["code"] == "tab_gone"
     assert SECRET not in caplog.text
     assert SECRET not in str(result)
 
@@ -165,3 +169,15 @@ def test_cdp_timeout_removes_raw_child_capture_files(tmp_path, caplog):
     capture_dir = tmp_path / "agent-browser-cdp_test"
     assert not (capture_dir / "_stdout_click").exists()
     assert not (capture_dir / "_stderr_click").exists()
+
+
+def test_cdp_subprocess_unrecognized_structured_code_is_not_echoed(tmp_path, caplog):
+    import json
+    raw = json.dumps({"success": False, "error": SECRET, "code": SECRET,
+                      "details": {"private_url": f"wss://{SECRET}"}})
+    result = _exercise_cdp_child(tmp_path, caplog, stdout_text=raw,
+                                 stderr_text=f"failed: {SECRET}", rc=1)
+    assert not result["success"]
+    assert result["code"] == "cdp_command_failed"
+    assert SECRET not in str(result)
+    assert SECRET not in caplog.text
