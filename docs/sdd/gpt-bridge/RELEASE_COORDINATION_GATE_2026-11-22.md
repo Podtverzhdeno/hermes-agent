@@ -218,3 +218,20 @@ Latest deterministic local Python 3.13 result: **45/45** tests including 27 publ
 Two additional regression tests synthesize 100 distinct agent-owned PRs arranged into 10 stacks with 90 parent/child edges. Under complete consistent synthetic compare evidence, analyze() must produce the same sorted report regardless of inventory order, while its verdict still says NO_STACK_ISSUES_NOT_MERGE_APPROVAL. A second fixture injects a stale-parent compare result for just one of the 90 edges: even in a 100-agent inventory the finding is exactly PR #52, parent PR #51, PARENT_ADVANCED_REBASE_REQUIRED, with nonzero review status. This is useful for coordination scale but does NOT measure CPU/memory/SLA or any actual Hermes worker concurrency.
 
 Current local Python 3.13 combined offline suite: **45/45** (27 published stack-guard checks, 18 separate generic scanner prototype checks deliberately omitted from this PR to preserve #14 ownership). Exact-head GitHub CI must independently pass after this final revision; do not quote earlier commit checks as current evidence.
+
+
+## 16. Second concurrent-agent integration snapshot (32 open PRs)
+
+A subsequent fresh read-only GitHub snapshot found **32 open PRs** (versus 30 in the earlier sampling) and four open PRs targeting other open PRs' feature branch plus one intentionally isolated snapshot target. Exact pinned compare results:
+
+| Child -> parent | Parent SHA | Child SHA | GitHub compare | Outcome |
+|---|---|---|---|---|
+| #32 -> #2 | 73fa315b1d8b8158c884bbed0c7291136ef30f3f | 1b3224dc3bcdd6246ca7e6b57684af0b1cbf8872 | diverged; behind=5; ahead=3 | PARENT_ADVANCED_REBASE_REQUIRED; GitHub comment 7078294357 |
+| #23 -> #12 | 89f56daeb2dc0d790e1e27c08a4453fb923a42ca | 36d5c236f99f3b4043ec5a8b2efa6153ca2b760b | diverged; behind=7; ahead=28 | PARENT_ADVANCED_REBASE_REQUIRED; GitHub comment 7078294033 |
+| #17 -> #12 | 89f56daeb2dc0d790e1e27c08a4453fb923a42ca | b3bd8ce2c64e22694bbd008986e0c6857b2b73cc | diverged; behind=15; ahead=34 | Previously warned on #17; still behind after further commits |
+| #11 -> #4 | f2373ed5551fe47168b014b08d63560a6bb0d68a | 6c529778fb69107986f47310612b02fe7aab74bc | ahead; behind=0; ahead=9 | No ancestry deficit at pinned SHA, NOT merge approval |
+| #10 -> snapshot branch | intentionally separate | exact history to be reconciled later | parent PR not in open-parent inventory | No automatic main-target integration |
+
+These values may become stale immediately under parallel work: always report both pinned commit hashes and when measured. A review comment records an actionable observation; it does not take ownership of another agent's branch or prove a runtime failure.
+
+**Important coordination lesson:** a code change on a child branch can increase both ahead_by and behind_by over time while the parent's separate owner lands additional changes. Even a child with hundreds of green unit tests may have to rerun on an integrated merge candidate. The release reviewer must never count isolated child check runs as a proxy for integration tests. No auto-fix that force-pushes to another owner's branch is permitted.
