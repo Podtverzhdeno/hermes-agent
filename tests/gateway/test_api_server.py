@@ -622,7 +622,8 @@ class TestChatCompletionsEndpoint:
 
             assert resp.status == 500
             data = await resp.json()
-            assert "Provider failed" in data["error"]["message"]
+            assert data["error"]["code"] == "agent_execution_failed"
+            assert "Provider failed" not in data["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
