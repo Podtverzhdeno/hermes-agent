@@ -177,7 +177,7 @@ Safety precedence:
 4. Connector down, progress silence, queue eligibility and pending verification.
 5. No observed blocker never asserts running health or successful completion.
 
-A local isolated run of python -m unittest discover -s tests/gpt_extension -q passed **43/43** synthetic tests (27 task + 16 CDP), including empty required-evidence contract, wrong SHA, uncertain/unknown effect state, missing effect receipt, conflicting trusted pass/fail results, Autopilot `passed` evidence label, lease expiry, connector outage and UI canary false-success. This does **not** prove Hermes integration, real-model execution or GitHub CI success. A future trusted snapshot reader and permission service are required; this module cannot enforce external authorizations.
+A local isolated run of python -m unittest discover -s tests/gpt_extension -q passed **46/46** tests (27 task + 16 CDP + 3 multi-agent synthetic stress), including empty required-evidence contract, wrong SHA, uncertain/unknown effect state, missing effect receipt, conflicting trusted pass/fail results, Autopilot `passed` evidence label, lease expiry, connector outage and UI canary false-success. This does **not** prove Hermes integration, real-model execution or GitHub CI success. A future trusted snapshot reader and permission service are required; this module cannot enforce external authorizations.
 
 ## 11. Planned integration in distinct ownership lanes
 
@@ -304,4 +304,4 @@ More importantly, three **false-completion risks** are now fail-closed:
 
 These are **classifier invariants**, not authenticated checks. A caller still must supply a trustworthy, coherent snapshot, verify signer identity, bind receipts and approval to canonical task/run/fence, and never expose a self-asserted trusted bit as a model-facing tool. Revisions already terminal require independent reconciliation, not retroactive overwriting.
 
-The 43 offline synthetic tests pass in the isolated container. Full repository CI and a real Hermes/CDP/Windows run are separate release gates.
+The 46 offline synthetic tests pass in the isolated container, including 3,200 classifications across 32 concurrent Python observers and a 20-case external effect/status subtest matrix. This is a classifier concurrency exercise, **not** parallel GPT worker execution. Full repository CI and a real Hermes/CDP/Windows run are separate release gates.
