@@ -63,3 +63,18 @@ jobs:
           OPENAI_API_KEY: ""
           OPENROUTER_API_KEY: ""
           NOUS_API_KEY: ""
+
+  windows-contracts:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install minimal schema dependencies
+        shell: pwsh
+        run: python -m pip install "PyYAML>=6,<7"
+      - name: Verify manifests on native Windows paths
+        shell: pwsh
+        run: python -m scripts.verify_skill_harness_portability

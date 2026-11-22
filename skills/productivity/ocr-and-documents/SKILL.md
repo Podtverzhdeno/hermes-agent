@@ -161,7 +161,7 @@ No extra dependencies needed — pymupdf covers split, merge, search, and text e
 
 ---
 
-## Verification and disclosure
+## Privacy, verification and disclosure
 
 - Record input digest or source ID, pages processed, selected extractor, OCR configuration, failed or skipped pages and whether any content was sent to a remote provider.
 - Spot-check extracted text against rendered pages, particularly numbers, tables, superscripts, equations and multi-column layouts. OCR output is **not** ground truth.
