@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "skill": "github-pr-workflow",
+  "purpose": "Manage traceable GitHub pull request changes under explicit review gates.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Open a PR for the completed feature branch in my repository",
+      "Check whether the PR for my exact commit passed CI",
+      "Merge the reviewed PR after all checks and approval"
+    ],
+    "do_not_trigger": [
+      "Write a new feature in my local files without GitHub",
+      "Summarize a paper about pull request practices",
+      "Delete a remote repository"
+    ]
+  },
+  "preflight": [
+    "Resolve the exact repository, branch and head commit; refuse ambiguous targets.",
+    "Use a scoped GitHub identity; never extract tokens from .env or git credential stores.",
+    "Determine whether the task is branch creation, PR publication, CI monitoring or merge."
+  ],
+  "workflow": [
+    "Create a task-specific branch or confirm that the current worktree is isolated.",
+    "Verify the exact PR head SHA, expected base and required status contexts.",
+    "Never retry a write after an ambiguous remote outcome without read-back.",
+    "Report the PR URL, observed head, check outcomes and any unresolved blocks."
+  ],
+  "actions": [
+    {
+      "operation": "pr.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "pr-head",
+        "pr-state"
+      ]
+    },
+    {
+      "operation": "pr.publish",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "pr-head",
+        "pr-state"
+      ]
+    },
+    {
+      "operation": "pr.merge",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "pr-head",
+        "ci-status",
+        "review-approval",
+        "pr-state"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "pr-head",
+      "source": "git",
+      "how_to_verify": "Read back the exact PR head SHA and compare to intended revision."
+    },
+    {
+      "id": "pr-state",
+      "source": "remote_api",
+      "how_to_verify": "Independently read the target PR URL, number, base and current state."
+    },
+    {
+      "id": "ci-status",
+      "source": "ci",
+      "how_to_verify": "Required check conclusions must be successful at the same SHA."
+    },
+    {
+      "id": "review-approval",
+      "source": "human",
+      "how_to_verify": "Owner approves the exact PR number and head SHA before merge."
+    }
+  ],
+  "failure_modes": [
+    "Missing required check is blocked, never treated as success.",
+    "Unknown push/merge response must be reconciled by remote read-back."
+  ]
+}
