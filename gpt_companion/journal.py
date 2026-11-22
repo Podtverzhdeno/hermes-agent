@@ -310,6 +310,24 @@ class EventJournal:
         terminal_sources = {e["source"] for e in terminal_events}
         if len(terminal_sources) > 1:
             contradictory = True
+        terminal_kinds = {e["kind"] for e in terminal_events}
+        if {"run.reported_completed", "run.reported_failed"}.issubset(terminal_kinds):
+            contradictory = True
+        # A source that resumes normal execution after a final report in the
+        # SAME attempt has a broken lifecycle contract; demand trace review.
+        terminal_seq_by_source = {}
+        for e in terminal_events:
+            if e["kind"] in ("run.reported_completed", "run.reported_failed"):
+                src = e["source"]
+                terminal_seq_by_source[src] = min(
+                    e["sequence"], terminal_seq_by_source.get(src, e["sequence"])
+                )
+        for e, _ in events:
+            final_seq = terminal_seq_by_source.get(e["source"])
+            if (final_seq is not None and e["sequence"] > final_seq
+                    and e["kind"] not in ("worker.stopped", "run.reported_completed",
+                                           "run.reported_failed")):
+                contradictory = True
         last_terminal = (max(terminal_events, key=lambda e: e["sequence"])["kind"]
                          if terminal_events else None)
         reason = next((e["reason_code"] for e in reversed(terminal_events)
