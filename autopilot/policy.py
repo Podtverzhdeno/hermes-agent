@@ -33,7 +33,6 @@ _CAPABILITY_RISKS = MappingProxyType({
     "github.pr.create": "R2",
     "github.issue.comment": "R2",
     "github.pr.merge": "R3",
-    "github.repo.delete": "R3",
     # Scoped local file edits require a separate realpath-checked service.
     "workspace.file.patch": "R1",
     "workspace.file.read": "R0",
@@ -199,6 +198,19 @@ class ActionPolicy:
                 if not all(_safe_ref(intent.arguments.get(key))
                            for key in ("head", "base")):
                     raise PolicyDenied("PR head/base must be explicit safe refs")
+            if intent.capability == "github.pr.merge":
+                number = intent.arguments.get("pull_number")
+                expected_sha = intent.arguments.get("expected_head_sha")
+                if not (type(number) is int and number > 0
+                        and isinstance(expected_sha, str)
+                        and re.fullmatch(r"[0-9a-fA-F]{40}", expected_sha)):
+                    raise PolicyDenied("merge requires exact PR number and expected 40-hex head SHA")
+            if intent.capability == "github.issue.comment":
+                issue_number = intent.arguments.get("issue_number")
+                body = intent.arguments.get("body")
+                if not (type(issue_number) is int and issue_number > 0
+                        and isinstance(body, str) and 0 < len(body) <= 8192):
+                    raise PolicyDenied("comment needs exact issue number and bounded body")
         else:
             # No path can be considered trustworthy until a scoped local file
             # service can canonicalize and check it on the destination host.
