@@ -77,3 +77,11 @@ A task is not complete because a model says so. Mark unobserved causes as unknow
 - Found residual leak surface: the CLI still receives the **full CDP bearer URL in OS argv**. Logging redaction is partial mitigation, not credential isolation. Documented in SDD section 18 and added version-gated validation of `AGENT_BROWSER_CDP` / `AGENT_BROWSER_PIN_TAB` for a later secure invocation.
 - Version compatibility nuance: Hermes source explicitly avoids `--session` + `--cdp` for observed agent-browser ≥0.13 semantics, while newer vendor documentation supports session tab pinning. Do not switch CLI flags without a per-version E2E test matrix.
 - No live browser process was started or affected by these changes; user-local state remains unobservable.
+
+
+### Browser redaction self-review and release checklist
+- Added forced timeout/exception capture-file cleanup to the CDP subprocess, with a synthetic timeout test. Log redaction alone did not delete temporary raw stderr/stdout on premature returns.
+- Self-review found a second missed leak: failed JSON might place URL credentials in arbitrary top-level fields, not only `error`/`data`. Replaced failed CDP JSON with a strict allowlisted diagnostic envelope (safe `tab_gone`/`tab_locked` code or generic `cdp_command_failed`).
+- The browser integration regression suite is now **10 tests** in GitHub. These import the full Hermes tree and have not been counted as passing in the isolated **46/46** synthetic classifier suite.
+- **Residual:** CDP URL may still be present in OS argv when invoking `agent-browser --cdp <url>`. This requires explicit installed CLI compatibility and an owner-approved, safer transport design; neither log scrubbing nor green tests resolve it.
+- Full-repository CI must pass at the exact final PR head before merging. Additional automated commits invalidate prior SHA-bound CI evidence, even if earlier runs were green.
