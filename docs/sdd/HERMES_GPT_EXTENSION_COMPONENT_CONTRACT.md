@@ -263,3 +263,30 @@ These facts come from authoritative public engineering documentation and define 
 6. Run 30 concurrent candidate client tasks against the documented upstream default of 10 run slots. Expected overload is 429 admission backpressure; the exact deployed cap must be observed rather than assumed.
 
 The isolated implementation and synthetic tests live in [HERMES_GPT_READONLY_AUDITOR_SDD.md](HERMES_GPT_READONLY_AUDITOR_SDD.md) and `gateway/gpt_bridge_event_audit.py`. This is a **diagnostic foundation**, not browser automation or an autonomous fix agent.
+
+
+## 14. Chrome/CDP startup and native bridge failure classification — source-verified hypotheses
+
+**Conditional, not an incident attribution:** The user's actual installed browser executable, exact Chrome/Chromium fork behavior, extension manifest, process command line, policies and bridge logs were not accessible. The following are developer-documented mechanisms to **check**, not a claim that one caused the historically reported `18763` bridge outage.
+
+| Symptom | Possible cause to prove | Safe verification / response |
+|---|---|---|
+| CDP TCP port absent even though Chrome running | **Google Chrome 136+ ignores `--remote-debugging-port`/`--remote-debugging-pipe` when targeting its default user-data directory** (security change) | Inspect actual executable/version/launch args without opening credentials; if authorized, test a dedicated non-default **testing profile**. Never copy normal profile cookies or force-debug the user's everyday session |
+| `chrome.debugger.attach` fails | Missing `debugger` permission, tab no longer present, simultaneous debugger client, incompatible protocol or enterprise policy | Check actual `manifest.json`, precise Chrome error and attach event. Avoid privilege escalation or policy bypass |
+| Works unmanaged, fails on managed browser | **Chrome 155 enterprise restrictions** on debugger permission / blocked hosts may apply | Read enterprise policy status and request authorized policy review; never circumvent corporate controls |
+| Bridge native host not found | Windows Native Messaging manifest/registry mapping or `allowed_origins`/extension ID mismatch | Check registered host path/manifest, allowlisted extension origin and executable signature locally; do not invent a registry fix without source |
+| Web page causes background command unexpectedly | Untrusted content-script message or unchecked `sender.origin` forwarded to host | Reject anything not matching the explicit extension/page origin and capability/lease command schema |
+| Bridge reconnects but current tab is wrong | Stale tab/document epoch, profile or conversation mismatch | Rehandshake and observe, do NOT execute Send |
+| CDP command fails after browser upgrade | DevTools Protocol does not promise cross-version backward compatibility | Negotiate `Browser.getVersion`/supported capabilities; fail closed and collect redacted error category |
+
+**Authoritative sources (reviewed 2026-11-22):**
+- Google Chrome 136 remote-debugging restriction: https://developer.chrome.com/blog/remote-debugging-port
+- DevTools Protocol compatibility statement: https://chromedevtools.github.io/devtools-protocol/
+- Chrome `chrome.debugger` reference: https://developer.chrome.com/docs/extensions/reference/api/debugger
+- Chrome 155 enterprise debugger restrictions: https://developer.chrome.com/blog/debugger-enterprise-policy-restrictions
+- Chrome Native Messaging registration and sender validation: https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging
+- Chromium Extensions security FAQ (native hosts and debugger privilege): https://chromium.googlesource.com/chromium/src/+/refs/heads/main/extensions/docs/security_faq.md
+
+**Risk ownership rule:** An adapter with `debugger` or native messaging privilege is a high-trust boundary. A web page can contain adversarial instructions, but such content is never authorization to run an agent task, change settings, read local files, or export conversation data. The extension must validate incoming command origin, run/step/lease, approved capability, document epoch and effect-intent record before any page mutation.
+
+Do not assume the Chromium-specific version behavior above automatically applies to Yandex Browser or other derivatives; verify the running product and version. None of these checks requires bypassing authentication, policy restrictions, or scraping a private ChatGPT account.
