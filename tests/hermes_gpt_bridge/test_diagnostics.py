@@ -287,3 +287,42 @@ class DistinctChannelRecoveryTests(unittest.TestCase):
         second = event("run.started", 1, emitter="bridge")
         second = Event(**{**second.__dict__, "event_id": first.event_id})
         self.assertIn("EVENT_ID_COLLISION", codes([first, second]))
+
+
+class BoundedIngestionTests(unittest.TestCase):
+    def test_no_unbounded_readline(self):
+        from unittest.mock import patch
+        class FakeStream:
+            def __enter__(self): return self
+            def __exit__(self, *args): return None
+            def readline(self, size):
+                self.requested_size = size
+                return b"x" * (size + 1)
+        fake = FakeStream()
+        with patch("pathlib.Path.open", return_value=fake), self.assertRaises(TraceError):
+            load_jsonl("unused")
+        from hermes_gpt_bridge.diagnostics import MAX_LINE_BYTES
+        self.assertEqual(fake.requested_size, MAX_LINE_BYTES + 1)
+
+    def test_bounded_event_capacity(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "event.jsonl"
+            one = dict(event("run.created", 1).__dict__)
+            one["observed_at"] = NOW.isoformat()
+            p.write_text(json.dumps(one) + "\n" + json.dumps(one), encoding="utf-8")
+            with self.assertRaises(TraceError):
+                load_jsonl(p, max_events=1)
+            for bad in (-1, True, 0, 100000000):
+                with self.subTest(bad=bad), self.assertRaises(TraceError):
+                    load_jsonl(p, max_events=bad)
+
+    def test_total_input_size_guard_does_not_expose_payload(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "events.jsonl"
+            raw = dict(event("run.created", 1).__dict__)
+            raw["observed_at"] = NOW.isoformat()
+            p.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+            with patch("hermes_gpt_bridge.diagnostics.MAX_TOTAL_BYTES", 8):
+                with self.assertRaisesRegex(TraceError, "total input size limit"):
+                    load_jsonl(p)
