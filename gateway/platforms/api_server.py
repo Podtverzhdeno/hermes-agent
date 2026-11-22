@@ -189,7 +189,7 @@ class ResponseStore:
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Session-Id",
-    "Access-Control-Expose-Headers": "X-Hermes-Request-Id, X-Hermes-Session-Id",
+    "Access-Control-Expose-Headers": "X-Hermes-Request-Id, X-Hermes-Session-Id, X-Hermes-Agent-Outcome",
 }
 
 
@@ -376,6 +376,27 @@ def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
         subset, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     )
     return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _agent_run_outcome(result: Dict[str, Any]) -> str:
+    """Normalize explicit Hermes runner result flags into observable outcomes.
+
+    Missing flags preserve compatibility with older or mocked agents. A partial
+    result or interrupted run must NOT be presented as finish_reason=stop.
+    """
+    if not isinstance(result, dict):
+        return "failed"
+    if result.get("failed") or (result.get("error") and not result.get("final_response")):
+        return "failed"
+    if result.get("interrupted"):
+        return "interrupted"
+    if result.get("completed") is False:
+        return "incomplete"
+    return "succeeded"
+
+
+class AgentReportedFailure(RuntimeError):
+    """The runner returned a failure status without raising an exception."""
 
 
 class APIServerAdapter(BasePlatformAdapter):
@@ -682,6 +703,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
+            outcome = _agent_run_outcome(result)
+            if outcome == "failed":
+                raise AgentReportedFailure("Hermes runner reported failure")
             final_response = result.get("final_response", "") or result.get(
                 "error", "(No response generated)"
             )
@@ -693,7 +717,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 "choices": [{
                     "index": 0,
                     "message": {"role": "assistant", "content": final_response},
-                    "finish_reason": "stop",
+                    "finish_reason": "stop" if outcome == "succeeded" else "length",
                 }],
                 "usage": {
                     "prompt_tokens": usage.get("input_tokens", 0),
@@ -701,7 +725,10 @@ class APIServerAdapter(BasePlatformAdapter):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
-            return {"payload": payload, "session_id": session_id}
+            return {
+                "payload": payload, "session_id": session_id,
+                "agent_outcome": outcome,
+            }
 
         idem_key = request.headers.get("Idempotency-Key")
         if idem_key and len(idem_key) > 256:
@@ -751,7 +778,10 @@ class APIServerAdapter(BasePlatformAdapter):
             )
         return web.json_response(
             completed["payload"],
-            headers={"X-Hermes-Session-Id": completed["session_id"]},
+            headers={
+                "X-Hermes-Session-Id": completed["session_id"],
+                "X-Hermes-Agent-Outcome": completed["agent_outcome"],
+            },
         )
 
     async def _write_sse_chat_completion(
@@ -848,11 +878,31 @@ class APIServerAdapter(BasePlatformAdapter):
                 await response.write(b"data: [DONE]\n\n")
                 return response
 
+            outcome = _agent_run_outcome(result)
+            if outcome in ("failed", "interrupted"):
+                reason = (
+                    "agent_reported_failed" if outcome == "failed"
+                    else "agent_interrupted"
+                )
+                _api_event(
+                    "agent_not_completed", request.get("hermes_request_id", "-"),
+                    phase="stream", reason_code=reason,
+                )
+                await response.write((
+                    "data: " + json.dumps(_openai_error(
+                        "Hermes agent did not complete; inspect server logs.",
+                        err_type="server_error", code=reason,
+                    )) + "\n\n"
+                ).encode())
+                await response.write(b"data: [DONE]\n\n")
+                return response
+
             # Finish chunk
             finish_chunk = {
                 "id": completion_id, "object": "chat.completion.chunk",
                 "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "delta": {},
+                             "finish_reason": "stop" if outcome == "succeeded" else "length"}],
                 "usage": {
                     "prompt_tokens": usage.get("input_tokens", 0),
                     "completion_tokens": usage.get("output_tokens", 0),
@@ -983,6 +1033,9 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
             )
+            outcome = _agent_run_outcome(result)
+            if outcome == "failed":
+                raise AgentReportedFailure("Hermes runner reported failure")
             final_response = result.get("final_response", "") or result.get(
                 "error", "(No response generated)"
             )
@@ -997,7 +1050,7 @@ class APIServerAdapter(BasePlatformAdapter):
             response_data = {
                 "id": response_id,
                 "object": "response",
-                "status": "completed",
+                "status": "completed" if outcome == "succeeded" else "incomplete",
                 "created_at": int(time.time()),
                 "model": body.get("model", "hermes-agent"),
                 "output": self._extract_output_items(result),
@@ -1007,6 +1060,11 @@ class APIServerAdapter(BasePlatformAdapter):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
+            if outcome != "succeeded":
+                response_data["incomplete_details"] = {
+                    "reason": "agent_interrupted" if outcome == "interrupted"
+                    else "agent_incomplete",
+                }
             if store:
                 self._response_store.put(response_id, {
                     "response": response_data,
