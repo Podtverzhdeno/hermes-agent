@@ -78,5 +78,6 @@
   "failure_modes": [
     "Stop and preserve worktree on quota exhaustion or child process loss.",
     "Never silently grant wider tool permissions after a failed attempt."
-  ]
+  ],
+  "skill_git_blob": "326519edc9b1c6d3d51b69c421ff08d1fbcaaeaf"
 }

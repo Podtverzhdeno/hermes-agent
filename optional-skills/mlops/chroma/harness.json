@@ -66,5 +66,6 @@
   "failure_modes": [
     "Never replace an existing collection after a dimension mismatch.",
     "If persistence is uncertain, inspect IDs before retrying inserts."
-  ]
+  ],
+  "skill_git_blob": "94cb8ebac5410c5dce043c8dd4b248b8c0ded2f5"
 }

@@ -65,5 +65,6 @@
   "failure_modes": [
     "Do not assume syntactic PPTX validity proves visual correctness.",
     "On missing fonts/masters, preserve original and disclose rendering difference."
-  ]
+  ],
+  "skill_git_blob": "24432093acc15546118d66e9812954c9daf0139e"
 }

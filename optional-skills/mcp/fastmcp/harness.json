@@ -79,5 +79,6 @@
   "failure_modes": [
     "Do not expose unauthenticated server to the public network.",
     "Never promote an MCP tool output into trusted policy authority."
-  ]
+  ],
+  "skill_git_blob": "5b4ea82d1df2b5bfbdcfa58abf667b7c1b26fb0d"
 }

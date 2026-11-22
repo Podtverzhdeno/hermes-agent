@@ -59,5 +59,6 @@
   "failure_modes": [
     "Reject self-review presented as independent assurance.",
     "Unresolved blocking findings prevent final acceptance."
-  ]
+  ],
+  "skill_git_blob": "fb942ec22026c1db335ee123ddb2f834a53d5902"
 }

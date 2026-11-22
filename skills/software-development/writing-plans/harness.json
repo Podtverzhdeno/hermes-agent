@@ -59,5 +59,6 @@
   "failure_modes": [
     "Do not mark implementation complete from an approved plan alone.",
     "If tasks form a cycle or ownership conflict, block execution and revise plan."
-  ]
+  ],
+  "skill_git_blob": "92a8d0172af3ac35fa18590080956c1be8ef76de"
 }

@@ -72,5 +72,6 @@
   "failure_modes": [
     "Wrong-page edit requires restore, not blind page +1/-1 retry.",
     "Never upload confidential PDFs by default or claim file size proves correctness."
-  ]
+  ],
+  "skill_git_blob": "f9001cdaf7790f6ece9da10b70e26a888e2acfa6"
 }

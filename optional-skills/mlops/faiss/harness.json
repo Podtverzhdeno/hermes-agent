@@ -65,5 +65,6 @@
   "failure_modes": [
     "Do not misstate approximate recall as exact accuracy.",
     "If OOM, stop and reduce index size in an isolated worktree, not system settings."
-  ]
+  ],
+  "skill_git_blob": "2e33007b309667e608d33d249420ca8c1889d5a4"
 }

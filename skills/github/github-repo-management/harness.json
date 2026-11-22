@@ -94,5 +94,6 @@
   "failure_modes": [
     "No credential scraping or secret literal in shell commands.",
     "On unknown admin write, reconcile provider state before any retry."
-  ]
+  ],
+  "skill_git_blob": "879246b5457ecce49f4225394e3f5e23086813eb"
 }

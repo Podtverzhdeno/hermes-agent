@@ -66,5 +66,6 @@
   "failure_modes": [
     "If dataset confidentiality is unclear, do not send it to external provider.",
     "Never report an in-sample improvement as held-out generalization."
-  ]
+  ],
+  "skill_git_blob": "20840199596d3c737e5a0cd4491d7a6cfe0b64d6"
 }

@@ -50,5 +50,6 @@
   "failure_modes": [
     "If source is incomplete, mark that portion unreviewed.",
     "If head changes during review, invalidate stale findings and re-check."
-  ]
+  ],
+  "skill_git_blob": "08efacda0ca98319f5cfaea91a9033361997f8b6"
 }

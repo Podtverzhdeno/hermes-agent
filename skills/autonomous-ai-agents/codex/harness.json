@@ -78,5 +78,6 @@
   "failure_modes": [
     "On worker crash, reconcile actual worktree and external actions before restarting.",
     "Do not infer success from a session end or fluent final message."
-  ]
+  ],
+  "skill_git_blob": "6ccbcf960487e7e8bbb631a8b00e86b9871349ba"
 }
