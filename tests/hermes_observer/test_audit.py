@@ -200,6 +200,23 @@ class MetadataContractTests(unittest.TestCase):
         self.assertEqual(result["counts"]["finding_suppressed"], 50)
         self.assertEqual(len(result["findings"]), 250)
 
+    def test_priority_keeps_late_critical_when_gap_storm_truncates_output(self):
+        gaps = [ev(producer=f"worker-{i}", seq=seq) for i in range(300) for seq in (1, 3)]
+        eid = "55555555-5555-4555-8555-555555555555"
+        collision = [ev(producer="source-alpha", seq=1, event_id=eid),
+                     ev(producer="source-beta", seq=1, event_id=eid)]
+        result = audit(*(gaps + collision))
+        self.assertEqual(result["status"], "integrity_anomaly")
+        self.assertGreater(result["counts"]["finding_suppressed"], 0)
+        self.assertIn("EVENT_ID_COLLISION", [x["code"] for x in result["findings"]])
+
+    def test_priority_selection_stable_for_reversed_event_delivery(self):
+        rows = [ev(producer=f"worker-{i}", seq=seq) for i in range(260) for seq in (1, 3)]
+        a = audit(*rows)
+        b = audit(*reversed(rows))
+        self.assertEqual(a["findings"], b["findings"])
+        self.assertEqual(a["finding_counts"], b["finding_counts"])
+
     def test_bounded_snapshot_does_not_return_green(self):
         src = io.BytesIO(b"".join(json.dumps(ev(seq=i + 1)).encode() + b"\n" for i in range(5)))
         result = audit_stream(src, max_events=2)
@@ -275,6 +292,15 @@ class EffectSafetyTests(unittest.TestCase):
         r = audit(*[ev(producer=f"agent-{i}", seq=1) for i in range(30)])
         self.assertEqual(r["exit_code"], 0)
         self.assertEqual(r["counts"]["producer_count"], 30)
+
+    def test_same_named_agent_in_two_processes_is_two_fence_claimants(self):
+        first = ev(producer="process-boot-a", seq=1, kind="task.claimed",
+                   agent_id="A1", lease_fence=4)
+        second = ev(producer="process-boot-b", seq=1, kind="task.claimed",
+                    agent_id="A1", lease_fence=4)
+        result = audit(first, second)
+        self.assertIn("FENCE_OWNER_CONFLICT", result["finding_counts"])
+        self.assertEqual(result["status"], "integrity_anomaly")
 
     def test_cross_fence_effect_reuse_not_silent(self):
         r = audit(ev(seq=1, kind="tool.effect.reserved", effect_key="write:abc", lease_fence=2),
