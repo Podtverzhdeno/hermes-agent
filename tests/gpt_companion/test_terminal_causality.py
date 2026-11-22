@@ -195,3 +195,44 @@ def test_unverified_prefix_does_not_hide_pending_external_write(journal):
     assert result["state"] == "EFFECT_IN_FLIGHT"
     assert result["unresolved_effects"] == ["write-unknown"]
     assert "UNVERIFIED_SOURCE_PREFIX" in result["diagnostic_flags"]
+
+
+def test_latest_attempt_snapshot_is_single_sql_statement(journal, monkeypatch):
+    # Regression on the observable DB contract: independent autocommit reads
+    # of MAX(attempt) and the row set may see different SQLite snapshots.
+    import sqlite3
+    import gpt_companion.journal as journal_module
+
+    emit(journal, 1, "worker.started")
+    observed_selects = []
+    original_connect = sqlite3.connect
+
+    class TrackingConnection(sqlite3.Connection):
+        def execute(self, sql, *params):
+            if "FROM events WHERE run_id=?" in sql:
+                observed_selects.append(sql)
+            return super().execute(sql, *params)
+
+    def make_connection(*args, **kwargs):
+        return original_connect(*args, factory=TrackingConnection, **kwargs)
+
+    monkeypatch.setattr(journal_module.sqlite3, "connect", make_connection)
+    result = journal.assess("run-causal")
+    assert result["state"] == "RECENT_TELEMETRY"
+    assert len(observed_selects) == 1
+    assert "SELECT MAX(attempt)" in observed_selects[0]
+    assert "SELECT event_json,received_at" in observed_selects[0]
+
+
+def test_latest_attempt_snapshot_reads_only_its_attempt(journal):
+    emit(journal, 1, "run.reported_failed", reason_code="CI_FAILED")
+    new_attempt = {
+        "schema_version": 1, "event_id": "new-worker",
+        "source": "worker", "run_id": "run-causal", "attempt": 2,
+        "sequence": 1, "kind": "worker.started",
+    }
+    assert journal.ingest(new_attempt)
+    result = journal.assess("run-causal")
+    assert result["attempt"] == 2
+    assert result["state"] == "RECENT_TELEMETRY"
+    assert result["reported_reason_code"] is None
