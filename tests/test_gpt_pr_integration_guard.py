@@ -347,6 +347,86 @@ class PRWatchTests(unittest.TestCase):
                          [i['code'] for i in report['findings']])
         self.assertEqual(report['integration_verdict'], 'REVIEW_ONLY')
 
+    def test_bundle_manifest_written_last_and_hashes_verify(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            snap_path, report_path = root / 'snap.json', root / 'report.json'
+            markdown_path, manifest_path = root / 'summary.md', root / 'manifest.json'
+            data = snapshot(pr(1, ['a.py']))
+            report = guard.analyze(data, evidence_mode='offline_snapshot')
+            guard._write_bundle(
+                snapshot_path=snap_path, report_path=report_path,
+                markdown_path=markdown_path, manifest_path=manifest_path,
+                snapshot=data, report=report, summary=guard.markdown(report),
+            )
+            manifest = guard.verify_bundle(
+                manifest_path, snapshot_path=snap_path,
+                report_path=report_path, markdown_path=markdown_path,
+            )
+            self.assertEqual(manifest['schema'], 'hermes.pr.bundle.v1')
+            self.assertEqual(manifest['evidence_mode'], 'offline_snapshot')
+            self.assertEqual(set(manifest['files']), {'snapshot', 'report', 'markdown'})
+
+    def test_partial_or_tampered_bundle_never_verifies(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            snap_path, report_path = root / 'snap.json', root / 'report.json'
+            manifest_path = root / 'manifest.json'
+            data = snapshot(pr(1, ['a.py']))
+            report = guard.analyze(data, evidence_mode='offline_snapshot')
+            guard._write_bundle(
+                snapshot_path=snap_path, report_path=report_path,
+                markdown_path=None, manifest_path=manifest_path,
+                snapshot=data, report=report, summary=guard.markdown(report),
+            )
+            report_path.write_text(report_path.read_text(encoding='utf-8') + '\n')
+            with self.assertRaises(guard.IncompleteSnapshot):
+                guard.verify_bundle(
+                    manifest_path, snapshot_path=snap_path,
+                    report_path=report_path, markdown_path=None,
+                )
+
+    def test_failed_atomic_replace_preserves_last_good_file(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'last-good.json'
+            path.write_bytes(b'VALID')
+            with patch.object(guard.os, 'replace', side_effect=OSError('simulated crash')):
+                with self.assertRaises(OSError):
+                    guard._atomic_write(path, b'NEW')
+            self.assertEqual(path.read_bytes(), b'VALID')
+            self.assertEqual(sorted(p.name for p in Path(d).iterdir()), ['last-good.json'])
+
+    def test_overlapping_output_targets_rejected_without_write(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / 'shared.json'
+            data = snapshot(pr(1, ['a.py']))
+            report = guard.analyze(data, evidence_mode='offline_snapshot')
+            with self.assertRaises(guard.IncompleteSnapshot):
+                guard._write_bundle(
+                    snapshot_path=target, report_path=target,
+                    markdown_path=None, manifest_path=None,
+                    snapshot=data, report=report, summary=guard.markdown(report),
+                )
+            self.assertFalse(target.exists())
+
+    def test_offline_cli_verify_bundle_never_fetches_api(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            fixture, snap, report = root/'source.json', root/'snap.json', root/'report.json'
+            manifest = root/'receipt.json'
+            fixture.write_text(json.dumps(snapshot(pr(1, ['a.py']))), encoding='utf-8')
+            self.assertEqual(guard.main([
+                '--snapshot-in', str(fixture), '--snapshot-out', str(snap),
+                '--report-out', str(report), '--manifest-out', str(manifest),
+            ]), 0)
+            with patch.object(guard, '_api_json', side_effect=AssertionError('network forbidden')):
+                self.assertEqual(guard.main([
+                    '--verify-manifest', str(manifest),
+                    '--snapshot-out', str(snap), '--report-out', str(report),
+                ]), 0)
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
