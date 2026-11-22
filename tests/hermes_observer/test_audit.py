@@ -217,6 +217,36 @@ class MetadataContractTests(unittest.TestCase):
         self.assertEqual(a["findings"], b["findings"])
         self.assertEqual(a["finding_counts"], b["finding_counts"])
 
+    def test_denied_approval_without_reason_cannot_be_silent_stop(self):
+        result = audit(ev(kind="approval.denied"))
+        self.assertEqual(result["status"], "incomplete_observation")
+        self.assertIn("STOP_WITHOUT_REASON_CODE", result["finding_counts"])
+        self.assertEqual(result["stop_observations"][0]["reason_code"], "UNKNOWN")
+
+    def test_explicit_unknown_stop_reason_is_not_specific_diagnosis(self):
+        result = audit(ev(kind="approval.denied", reason_code="UNKNOWN"))
+        self.assertEqual(result["status"], "incomplete_observation")
+        self.assertIn("STOP_REASON_UNKNOWN", result["finding_counts"])
+        self.assertFalse(result["external_effect_retry_allowed"])
+
+    def test_stop_samples_with_truncated_output_stable_for_shuffled_inputs(self):
+        events = [ev(producer=f"worker-{i}", kind="task.blocked",
+                     reason_code="RESOURCE_CONFLICT", seq=1) for i in range(300)]
+        original = audit(*events)
+        reverse = audit(*reversed(events))
+        self.assertEqual(original["stop_observations"], reverse["stop_observations"])
+        self.assertEqual(original["stop_observations_suppressed"], 50)
+        self.assertEqual(len(original["stop_observations"]), 250)
+
+    def test_stops_are_deterministically_sorted_after_shuffled_delivery(self):
+        a = ev(seq=1, kind="approval.denied", reason_code="POLICY_DENIED")
+        b = ev(seq=2, kind="task.blocked", reason_code="RESOURCE_CONFLICT")
+        c = ev(seq=3, kind="worker.lease_expired", reason_code="WORKER_LEASE_LOST")
+        one = audit(a, b, c)
+        two = audit(c, a, b)
+        self.assertEqual(one["stop_observations"], two["stop_observations"])
+        self.assertFalse(one["external_effect_retry_allowed"])
+
     def test_bounded_snapshot_does_not_return_green(self):
         src = io.BytesIO(b"".join(json.dumps(ev(seq=i + 1)).encode() + b"\n" for i in range(5)))
         result = audit_stream(src, max_events=2)
