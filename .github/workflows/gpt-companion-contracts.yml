@@ -1,0 +1,60 @@
+name: GPT Companion contract checks (isolated)
+
+on:
+  push:
+    branches:
+      - fix/gpt-companion-terminal-causality-20261122-r01
+    paths:
+      - "gpt_companion/**"
+      - "tests/gpt_companion/**"
+      - "pyproject.toml"
+      - ".github/workflows/gpt-companion-contracts.yml"
+  pull_request:
+    branches:
+      - feat/gpt-companion-event-observer-sdd-20261122
+    paths:
+      - "gpt_companion/**"
+      - "tests/gpt_companion/**"
+      - "pyproject.toml"
+      - ".github/workflows/gpt-companion-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpt-companion-contract-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  isolated-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    env:
+      OPENAI_API_KEY: ""
+      OPENROUTER_API_KEY: ""
+      NOUS_API_KEY: ""
+    steps:
+      - name: Checkout exact candidate revision
+        uses: actions/checkout@v4
+      - name: Python environment
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install isolated test tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pytest>=9.0.2,<10"
+      - name: Run offline GPT Companion contract tests
+        run: python -m pytest -o addopts= -q tests/gpt_companion
+      - name: Build and install package without runtime dependencies
+        run: python -m pip install --no-deps .
+      - name: Verify installed command imports outside checkout
+        run: |
+          cd "$RUNNER_TEMP"
+          python -m gpt_companion --help
+          python -m gpt_companion.watch --help
