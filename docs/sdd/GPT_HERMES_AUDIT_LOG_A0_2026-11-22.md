@@ -91,3 +91,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 ## Stable target source verification
 - GitHub GET releases/latest at 2026-11-22 reported v0.23.3, published_at 2026-11-20T00:34:38Z, tag SHA 2861fe3744f8134b782659438961a4f69ab5d495 -> commit caafe5389ae585ef77387a962aee05b1bcf17029. Annotated tag verification=false, unsigned. This is NOT evidence of malicious release, only absence of signed tag verification.
 - Stable-release exact tree 27139 blobs, fork main 1261, 667 common exact paths, 26472 stable-only, 594 fork-only. Key native Runs/Kanban code exists in stable release and is absent in fork. Prefer isolated migration from pinned stable commit after independent artifact provenance checks, not live production overwrite.
+
+## Added read-only native Runs capabilities handshake utility
+- Implemented standalone scripts/hermes_capability_probe.py limited to numeric loopback + optional strict profile path; GET-only /v1/capabilities, disabled redirect/proxy and no tokens or prompt content in reports; optional offline --snapshot; never production_ready true. It evaluates actual auth/feature/endpoint/durable-idempotency compatibility of pinned upstream API shape.
+- Added tests/integration/test_hermes_capability_probe.py with 13 no-network success/negative fixtures including remote URL, credentials/query, malformed schema, absent unknown recovery, non-durable store, misleading endpoints, invalid JSON and explicit return code. Updated offline-contract workflow to run both suites. Await exact new SHA CI; no live host probed.
