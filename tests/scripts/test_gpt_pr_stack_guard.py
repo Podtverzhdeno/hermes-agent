@@ -22,8 +22,10 @@ def pr(i,base='main',files=None,head=None,proof=None):
 def snap(*ps):return {'schema_version':1,'repo':'owner/repo','pulls':list(ps)}
 
 
-def proof(parent,behind=0,status='ahead'):
-    return {'parent_sha':f'{parent:040x}','behind_by':behind,'status':status}
+def proof(parent,behind=0,status=None,ahead=None):
+    status = status or ('diverged' if behind else 'ahead')
+    ahead = (0 if status in ('behind','identical') else 1) if ahead is None else ahead
+    return {'parent_sha':f'{parent:040x}','behind_by':behind,'ahead_by':ahead,'status':status}
 
 
 def test_no_stack_cannot_mean_merge_approved():
@@ -97,7 +99,7 @@ def test_collect_verifies_heads_before_and_after_files():
     initial={'number':2,'head':{'ref':'b2','sha':f'{2:040x}','repo':{'full_name':'owner/repo'}},'base':{'ref':'main'}}
     def fetch(path,token):
         if path.endswith('/pulls/2'):return initial
-        if '/compare/' in path:return {'behind_by':0,'status':'ahead'}
+        if '/compare/' in path:return {'behind_by':0,'ahead_by':1,'status':'ahead'}
         raise AssertionError(path)
     def fetch_pages(path,token,cap=10):
         if 'state=open' in path:return [initial]
@@ -150,3 +152,25 @@ def test_invalid_compare_shape_fails_closed():
     with patch.object(mod,'get',side_effect=fetch),patch.object(mod,'pages',side_effect=pages):
         with pytest.raises(mod.IncompleteAudit,match='compare'):
             mod.collect('owner/repo')
+
+
+def test_contradictory_diverged_without_behind_never_green():
+    r=mod.analyze(snap(pr(1,head='parent'),pr(2,base='parent',proof=proof(1,status='diverged',behind=0,ahead=1))))
+    assert r['issues'][0]['code']=='INVALID_COMPARE_EVIDENCE'
+
+
+def test_missing_ahead_field_never_green():
+    x=proof(1)
+    x.pop('ahead_by')
+    r=mod.analyze(snap(pr(1,head='parent'),pr(2,base='parent',proof=x)))
+    assert r['issues'][0]['code']=='INVALID_COMPARE_EVIDENCE'
+
+
+def test_identical_compare_must_have_zero_bidirectional_counts():
+    r=mod.analyze(snap(pr(1,head='parent'),pr(2,base='parent',proof=proof(1,status='identical',ahead=2))))
+    assert r['issues'][0]['code']=='INVALID_COMPARE_EVIDENCE'
+
+
+def test_genuine_identical_parent_head_is_an_ancestry_success_only():
+    r=mod.analyze(snap(pr(1,head='parent'),pr(2,base='parent',proof=proof(1,status='identical',behind=0,ahead=0))))
+    assert r['issues']==[] and r['verdict']=='NO_STACK_ISSUES_NOT_MERGE_APPROVAL'
