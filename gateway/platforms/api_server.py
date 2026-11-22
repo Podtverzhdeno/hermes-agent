@@ -440,6 +440,14 @@ class APIServerAdapter(BasePlatformAdapter):
         except (json.JSONDecodeError, Exception):
             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
 
+        # Reject non-object JSON before accessing .get(), rather than exposing
+        # an internal error for malformed external input.
+        if not isinstance(body, dict):
+            return web.json_response(
+                _openai_error("Request JSON body must be an object.", code="invalid_body"),
+                status=400,
+            )
+
         messages = body.get("messages")
         if not messages or not isinstance(messages, list):
             return web.json_response(
@@ -447,7 +455,34 @@ class APIServerAdapter(BasePlatformAdapter):
                 status=400,
             )
 
+        if any(not isinstance(message, dict) for message in messages):
+            return web.json_response(
+                _openai_error("Every message must be a JSON object.", code="invalid_messages"),
+                status=400,
+            )
+
         stream = body.get("stream", False)
+        if type(stream) is not bool:
+            return web.json_response(
+                _openai_error("stream must be a boolean.", code="invalid_stream"),
+                status=400,
+            )
+
+        # This process-local cache cannot replay an SSE byte stream or recover
+        # external effects after disconnect. Never silently ignore the key.
+        idem_header = request.headers.get("Idempotency-Key")
+        if idem_header is not None and (not idem_header.strip() or len(idem_header) > 200):
+            return web.json_response(
+                _openai_error("Idempotency-Key must contain 1..200 characters.",
+                              code="invalid_idempotency_key"),
+                status=400,
+            )
+        if stream and idem_header is not None:
+            return web.json_response(
+                _openai_error("Idempotency-Key is unsupported for streaming requests.",
+                              code="unsupported_idempotency_mode"),
+                status=400,
+            )
 
         # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
         system_prompt = None
