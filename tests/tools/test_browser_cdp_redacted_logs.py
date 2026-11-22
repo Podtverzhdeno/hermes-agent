@@ -43,3 +43,14 @@ def test_missing_websocket_url_redacts_discovery_endpoint(caplog):
             assert _resolve_cdp_override(raw) == raw
     assert SECRET not in caplog.text
     assert "user:" not in caplog.text
+
+
+def test_cdp_session_creation_does_not_log_browser_websocket_credentials(caplog):
+    from tools.browser_tool import _create_cdp_session
+
+    websocket = f"wss://user:{SECRET}@example.test:9223/devtools/browser/{SECRET}"
+    with caplog.at_level(logging.INFO, logger="tools.browser_tool"):
+        session = _create_cdp_session("opaque-task", websocket)
+    assert session["cdp_url"] == websocket
+    assert SECRET not in caplog.text
+    assert "devtools/browser" not in caplog.text
