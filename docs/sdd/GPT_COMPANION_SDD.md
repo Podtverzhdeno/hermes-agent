@@ -411,3 +411,14 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 Для каждого предложения завести: hypothesis → alternative designs → risk/benefit score → experimental falsification → implementation owner → tests → release gate → decision + rationale. Спорные предложения остаются OPEN, duplicate ADR сливается с существующим только через review. Оценка и audit trail переживают перезапуск любого агентного контекста.
 
 Ни один процесс ChatGPT в этой беседе не является круглосуточным monitor. Реальный always-on режим потребует отдельного разрешённого host service, процессов и supervision на Windows/WSL, а также соответствующего доступа. До их появления статусы "continuous monitoring enabled", "local Obsidian synced", "repair deployed" недопустимы.
+
+
+## 22. Cross-attempt effect stickiness — integrity gate
+
+**Confirmed source defect (OBS-006):** prior to this change, `assess(run_id)` selected `MAX(attempt)` and examined only that attempt. An unresolved external write in attempt 1 disappeared from the visible diagnostics as soon as attempt 2 emitted `worker.started`. This was a *diagnostic omission*, not proof that real API duplication occurred; the live connector is absent.
+
+**Patch in stacked branch:** fetch prior attempts' effect reservations and matching claimed resolutions, scope them by `(attempt, action_id)`, and return `NEEDS_RECONCILIATION / RECONCILE_PREVIOUS_ATTEMPT_EFFECTS` when an earlier reservation has no valid matching resolution. Add `prior_attempt_unresolved_effect_count`, a bounded display of 50 records, and `PRIOR_ATTEMPT_EFFECT_UNKNOWN` / `PRIOR_EFFECT_LIST_TRUNCATED`. Only metadata ID fields; no payloads. Any `tool.effect_acknowledged` is still untrusted; the gateway needs independent provider read-back and a fence-bound receipt before *any* replay. This observer cannot authorize retries.
+
+**Counterexamples to test:** new worker starts after an unacknowledged effect, ACK belongs to a later attempt with identical action_id, effect ACK arrives before reserve from same source, report failure in new attempt while old effect remains unknown, 52 earlier attempts with bounded output, matching same-attempt source-local ACK. Cases added under `test_terminal_causality.py`.
+
+**Known gaps:** a claimed cross-source ACK cannot establish true causality; authenticated ingress and external verified receipt remain release blockers. A missing `tool.effect_reserved` event could conceal a real write, so absence of entries is not proof of absence. Full history is scanned on each call: on large runs, replace with indexed durable per-attempt effect-state projection with transactional updates, reconciliation and migration tests; measure p95/p99 inspect latency and WAL contention at 10/30/100-worker load. The diagnostic schema is additive but any downstream parser must be version-gated. No automatic remediation and no production patch without versioned control-plane integration.
