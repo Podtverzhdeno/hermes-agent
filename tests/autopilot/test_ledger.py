@@ -347,3 +347,79 @@ def test_effects_projection_preserves_unknown_state(ctx):
     assert effects[0]["status"] == "reserved"
     assert effects[0]["digest"] == "digest:send"
     assert effects[0]["result_ref"] is None
+
+
+def test_owner_stop_cancels_queued_and_blocks_future_submissions(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    generation = ledger.stop_project("My_shelter")
+    assert generation == 1
+    assert ledger.project_control("My_shelter")["stopped"] == 1
+    assert ledger.get(task)["status"] == "cancelled"
+    assert ledger.claim("A1") is None
+    with pytest.raises(LedgerConflict, match="project is stopped"):
+        submit(ledger, key="second")
+    assert ledger.stop_project("My_shelter") == 1  # repeated STOP is idempotent
+    assert ledger.resume_project("My_shelter") == 2
+    newer = submit(ledger, key="after-resume")
+    assert ledger.claim("A1")["id"] == newer
+    assert ledger.get(task)["status"] == "cancelled"  # no automatic reactivation
+
+
+def test_stop_revokes_live_fence_and_resuming_does_not_reactivate(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    assert ledger.stop_project("My_shelter") == 1
+    with pytest.raises(LedgerConflict, match="revoked project"):
+        ledger.heartbeat(task, "A1", token)
+    assert ledger.resume_project("My_shelter") == 2
+    with pytest.raises(LedgerConflict):
+        ledger.begin_verification(task, "A1", token)
+    clock.advance(16)
+    assert ledger.claim("A2") is None
+    assert ledger.get(task)["status"] == "cancelled"
+
+
+def test_stop_does_not_claim_other_projects(ctx):
+    ledger, _ = ctx
+    submit(ledger, key="stop-me")
+    other = ledger.submit(
+        request_key="other-project", project="unrelated",
+        goal="isolated", revision="sha:b", required_evidence=["ci"],
+    )
+    ledger.stop_project("My_shelter")
+    assert ledger.claim("A1")["id"] == other
+
+
+def test_stop_keeps_unknown_effect_for_reconciliation(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "post", "sha256:x", clock() + 100)
+    ledger.decide_approval(task, "post", "sha256:x", "owner", True)
+    worker = ledger.claim("A2", lease_seconds=15)
+    ledger.reserve_effect(task, "A2", worker["fence"], "post", "sha256:x")
+    ledger.stop_project("My_shelter")
+    with pytest.raises(LedgerConflict):
+        ledger.acknowledge_effect(task, "A2", worker["fence"], "post",
+                                  "sha256:x", "untrusted")
+    clock.advance(16)
+    assert ledger.claim("A3") is None
+    assert ledger.get(task)["status"] == "needs_reconciliation"
+    ledger.reconcile_effect(task, "post", "acknowledged", "receipt:remote-check")
+    assert ledger.get(task)["status"] == "cancelled"
+    assert ledger.effects(task)[0]["result_ref"] == "receipt:remote-check"
+
+
+def test_project_controls_persist_across_restart(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    ledger.stop_project("My_shelter")
+    reopened = AutopilotLedger(ledger.path, clock)
+    assert reopened.project_control("My_shelter")["generation"] == 1
+    assert reopened.get(task)["status"] == "cancelled"
+    with pytest.raises(LedgerConflict):
+        submit(reopened, key="new-on-stopped")
+    assert reopened.resume_project("My_shelter") == 2
+    assert reopened.project_control("My_shelter")["stopped"] == 0
