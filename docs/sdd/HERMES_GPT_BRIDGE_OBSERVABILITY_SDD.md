@@ -201,6 +201,26 @@ Use weighted utility per candidate: 30% severity/risk reduction, 25% evidence co
 
 Scores are editorial planning estimates; not empirical benchmarks. No external claims of universal best practice are made from these scores.
 
+### 9.1. Updated upstream-aware prioritization, 2026-11-22 (supersedes fork-only ranking)
+
+The preceding ranking evaluated missing features of the **April fork**. Do not use it to justify re-implementing modern upstream Kanban, run idempotency, or SSE. New scores use weights: risk reduction 30%, confidence in *observed source evidence* 20%, implementability 20%, reuse/compatibility 20%, operational cost (higher = lower cost) 10%. Each criterion is scored 1–5, independently reviewed before merge. Score = sum(weight × rating); **none are measurements of production performance**. Release gates can override aggregate scores for safety.
+
+| Proposal | Risk ↓ | Evidence | Doable | Reuse | Low cost | Score /5 | Decision / authority |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Pure read-only `/v1/runs` causal auditor, gap detection, separate status verification | 5 | 5 | 5 | 5 | 4 | **4.90** | P0 diagnostics; this branch |
+| Native upstream Kanban/turn-lease based single-writer policy | 5 | 5 | 4 | 5 | 4 | **4.70** | P0 verify/reuse, **not reimplement** |
+| Browser ↔ bridge version/capability handshake, fail-closed major mismatch | 5 | 4 | 3 | 4 | 4 | **4.10** | P1 after actual extension source retrieval |
+| Controlled migration from Apr fork to pinned v0.23.3+ with DB restore rehearsal | 5 | 5 | 2 | 3 | 3 | **3.80** | P0 **architectural prerequisite** despite complexity |
+| Browser send effect receipt + UNKNOWN reconciliation across MV3 restart | 5 | 3 | 2 | 4 | 3 | **3.60** | P0 **safety prerequisite** before automated sends |
+| Unattended AI fix suggestion in isolated worktree + independent PR review | 4 | 3 | 3 | 4 | 2 | **3.40** | P2 later, no self-merge |
+| Autonomous uncontrolled ChatGPT/CDP tab sending or permission bypass | 1 | 1 | 1 | 1 | 1 | **1.00** | REJECT: violates trust/replay model |
+
+**Interpretation:** diagnostic projection ranks high because it is isolated, reversible and does not control execution. Migration and external-effect safety still have hard P0 priority even with lower numerical scores, because no high-risk production deployment is acceptable without them. No candidate is "10/10 production ready" without direct test evidence from the target machine.
+
+**Definition of a high-quality fix proposal:** exact fault reproduction, baseline and new SHA, diagnosis with at least one disconfirming hypothesis, causal mechanism, minimum diff, isolated regression test, no secrets in logs, CI result on exact HEAD, rollback action, ownership conflict check, and human release decision for any browser send or irreversible tool effect.
+
+
+
 ## 10. Verification, falsification and release gates
 
 Safety tests:
@@ -230,6 +250,14 @@ Staged rollout: offline unit contract -> integration with mocked gateway -> faul
 | 2026-11-22 | GitHub main 7e91009, separate active feature branches | Observed source state | High | Avoid conflicting edits; integrate via PR after checks |
 | 2026-11-22 | API idempotency awaits compute before saving result | Verified static defect H-01 | High | Fix and concurrency test |
 | 2026-11-22 | SSE suppresses backend error and emits stop | Verified static defect H-02 | High | Fix and regression test |
+
+| 2026-11-22 | Local_WorkSpace list_workspaces was probed again and **succeeded**; only scoped `shelter` root was exposed, not the Tunnel/Hermes extension directory | Observed scope and recovery | High | Local MCP general connection is back; extension source/runtime remain **not accessible**, so no live extension fix can be claimed |
+| 2026-11-22 | temp_folder_readonly list_workspaces also succeeded on recheck; only read-only `temp-folder` root is exposed | Observed scope and recovery | High | The earlier 429 was transient at probe level; cause is unverified |
+| 2026-11-22 | Modern upstream pinned `da8e7d71abe4ac165760cd813c0c18c53e697b90` has `/v1/runs` + durable store, Kanban and bounded SSE replay | Verified static source | High | Native source-of-truth; no second scheduler, see ADR-007 |
+| 2026-11-22 | PR #4/#5/#6 overlap old `gateway/platforms/api_server.py`; #4 draft freeze coordinated in PR comment | GitHub PR inspection and owner comment | High | Require single integration owner and upstream parity gate |
+| 2026-11-22 | PR #4 earlier full Actions run 45013330331: 7513 passed, 29 failed, 171 skipped; one stale raw-error-content test conflicts with new redaction; remaining failures include missing credentials and unrelated timeouts | Confirmed run logs; exact tested SHA differs from current HEAD | High for result, LOW for attribution without baseline test comparison | Old raw-error test updated in branch; latest HEAD CI must finish before release |
+| 2026-11-22 | PR #6 run 45013031713: 7510 passed, 34 failed, 171 skipped, including MagicMock serialization in SSE tests | Confirmed run logs; SHA scoped | High | Not approved for merge without fixes and independent parity check |
+| 2026-11-22 | Offline `gateway/gpt_bridge_event_audit.py` and synthetic tests written on draft branch | Commit evidence; tests not yet green on HEAD | High for file existence, UNKNOWN for runtime quality | Await focused/full CI; never call it a live monitor |
 
 Next operator record must include SHA, test command, result counts, and limitation. Do not label an unexecuted test "passed".
 
