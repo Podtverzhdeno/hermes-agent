@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import stat
 import re
 import sqlite3
 import time
@@ -94,6 +96,28 @@ def validate_event(data: Mapping[str, Any]) -> dict[str, Any]:
     return value
 
 
+def _prepare_private_sqlite_path(path: Path) -> None:
+    """Best-effort POSIX local-file protection for metadata-only journals.
+
+    Create mode 0600 before SQLite starts; harden pre-existing regular files.
+    Reject symlinks on supported POSIX systems. Windows requires its own
+    directory ACL policy and is not claimed secure by chmod here.
+    """
+    if os.name != "posix":
+        return
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise OSError("secure SQLite path preparation unavailable")
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError("SQLite journal must be a regular file")
+        os.fchmod(fd, 0o600)
+    finally:
+        os.close(fd)
+
+
 class EventJournal:
     """Local SQLite WAL event inbox: not a trusted verifier or task scheduler.
 
@@ -104,7 +128,8 @@ class EventJournal:
     def __init__(self, path: str | Path, clock=time.time):
         self.path = Path(path)
         self.clock = clock
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _prepare_private_sqlite_path(self.path)
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
