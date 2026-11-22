@@ -14,6 +14,7 @@ from gateway.platforms.api_server import (
     _IdempotencyCache,
     IdempotencyConflictError,
     IdempotencyCapacityError,
+    IdempotencyUncertainOutcome,
 )
 
 
@@ -118,23 +119,71 @@ async def test_capacity_does_not_evict_pending_operation():
 
 
 @pytest.mark.asyncio
-async def test_failed_result_not_cached():
+async def test_failed_keyed_execution_is_fenced_until_reconciliation():
+    """A lost tool ACK must NOT cause a second external effect."""
     cache = _IdempotencyCache()
     tries = 0
+    external_commits = 0
 
     async def work():
-        nonlocal tries
+        nonlocal tries, external_commits
         tries += 1
-        if tries == 1:
-            raise RuntimeError("offline")
-        return "success"
+        external_commits += 1
+        # The effect committed, but the result acknowledgement was lost.
+        raise RuntimeError("ACK lost after external commit")
 
     with pytest.raises(RuntimeError):
-        await cache.get_or_set("k", "fp", work)
-    # Allow completion callback to run and evict the failed task.
+        await cache.get_or_set("key-effect", "fp", work)
     await asyncio.sleep(0)
-    assert await cache.get_or_set("k", "fp", work) == "success"
-    assert tries == 2
+    with pytest.raises(IdempotencyUncertainOutcome):
+        await cache.get_or_set("key-effect", "fp", work)
+    assert tries == 1
+    assert external_commits == 1
+
+
+@pytest.mark.asyncio
+async def test_unknown_outcome_does_not_expire_from_short_success_ttl():
+    cache = _IdempotencyCache(ttl_seconds=0)
+    tries = 0
+
+    async def fails():
+        nonlocal tries
+        tries += 1
+        raise RuntimeError("unknown completion")
+
+    with pytest.raises(RuntimeError):
+        await cache.get_or_set("key", "fp", fails)
+    await asyncio.sleep(0)
+    with pytest.raises(IdempotencyUncertainOutcome):
+        await cache.get_or_set("key", "fp", fails)
+    assert tries == 1
+
+
+@pytest.mark.asyncio
+async def test_hundred_concurrent_same_key_calls_one_agent():
+    cache = _IdempotencyCache()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def work():
+        nonlocal calls
+        calls += 1
+        entered.set()
+        await release.wait()
+        return "same"
+
+    tasks = [
+        asyncio.create_task(cache.get_or_set("hundred", "fp", work))
+        for _ in range(100)
+    ]
+    await entered.wait()
+    await asyncio.sleep(0)
+    assert calls == 1
+    release.set()
+    assert await asyncio.gather(*tasks) == ["same"] * 100
+    assert calls == 1
+
 
 
 def _app(adapter):
@@ -350,3 +399,27 @@ def test_cors_exposes_tracing_and_session_headers():
     assert "X-Hermes-Session-Id" in _CORS_HEADERS["Access-Control-Allow-Headers"]
     assert "X-Hermes-Session-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
     assert "X-Hermes-Request-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
+
+
+@pytest.mark.asyncio
+async def test_responses_prior_unknown_effect_returns_conflict_no_second_call():
+    adapter = _adapter()
+    calls = 0
+
+    async def agent_with_lost_ack(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("provider may have committed operation")
+
+    adapter._run_agent = agent_with_lost_ack
+    headers = {"Authorization": "Bearer test-key", "Idempotency-Key": "lost-ack"}
+    payload = {"input": "perform unsafe write"}
+    async with TestClient(TestServer(_app(adapter))) as client:
+        first = await client.post("/v1/responses", json=payload, headers=headers)
+        assert first.status == 500
+        await asyncio.sleep(0)
+        retry = await client.post("/v1/responses", json=payload, headers=headers)
+        assert retry.status == 409
+        assert (await retry.json())["error"]["code"] == "execution_outcome_unknown"
+        assert calls == 1
+    adapter._response_store.close()
