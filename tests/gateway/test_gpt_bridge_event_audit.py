@@ -205,3 +205,72 @@ def test_reordering_late_frame_never_silently_claims_full_history():
 def test_frame_size_bounded_before_private_capture():
     with pytest.raises(InvalidTelemetry):
         parse_sse_frames("data: " + ("x" * (256 * 1024 + 1)) + "\n\n")
+
+
+def test_late_event_does_not_rewind_last_confirmed_sequence():
+    out = explain_sse(sse(event("run.queued", 0), event("run.completed", 2),
+                          event("tool.started", 1, tool_call_id="late_call")), RID)
+    assert out["missing_events"]
+    assert out["last_event"] == "run.completed"
+    # A late effect must not be added as if it started after completion.
+    assert out["pending_tool_calls"] == 0
+    assert "OUT_OF_ORDER_EVENT" in out["evidence"]
+
+
+def test_stale_status_snapshot_cannot_confirm_newer_completion():
+    wire = sse(event("run.queued", 0), event("run.completed", 1))
+    out = explain_sse(wire, RID,
+        {"run_id": RID, "status": "completed", "updated_at": 1795343999.0})
+    assert out["stop_reason"] == "STALE_STATUS_SNAPSHOT"
+    assert out["next_action"] == "REFETCH_AUTHORITATIVE_STATUS"
+    assert "STATUS_SNAPSHOT_STALE" in out["evidence"]
+
+
+def test_fresh_status_snapshot_can_confirm_terminal():
+    wire = sse(event("run.queued", 0), event("run.completed", 1))
+    out = explain_sse(wire, RID,
+        {"run_id": RID, "status": "completed", "updated_at": 1795344002.0})
+    assert out["stop_reason"] == "COMPLETED"
+
+
+@pytest.mark.parametrize("bad_time", ["not-a-time", float("nan"), -10, True])
+def test_invalid_status_timestamps_refused_safely(bad_time):
+    with pytest.raises(InvalidTelemetry):
+        explain_sse(sse(event("run.queued", 0)), RID,
+            {"run_id": RID, "status": "running", "updated_at": bad_time})
+
+
+def test_completed_run_with_failed_tool_keeps_failure_evidence():
+    wire = sse(event("run.queued", 0),
+               event("tool.started", 1, tool_call_id="tool_1"),
+               event("tool.completed", 2, tool_call_id="tool_1", error=True,
+                     preview="never_record_me"),
+               event("run.completed", 3))
+    out = explain_sse(wire, RID,
+        {"run_id": RID, "status": "completed", "updated_at": 1795344001.0})
+    assert out["tool_errors"] == 1
+    assert out["stop_reason"] == "COMPLETED_WITH_TOOL_ERRORS"
+    assert out["next_action"] == "INSPECT_TOOL_FAILURE_RECOVERY"
+    assert "TOOL_ERROR_OBSERVED" in out["evidence"]
+    assert "never_record_me" not in json.dumps(out)
+
+
+def test_unscoped_single_approval_response_is_weakly_inferred():
+    wire = sse(event("run.queued", 0),
+               event("approval.request", 1, request_id="request_1"),
+               event("approval.responded", 2))
+    out = explain_sse(wire, RID)
+    assert out["pending_approvals"] == 0
+    assert "APPROVAL_INFERRED_SINGLE_PENDING" in out["evidence"]
+
+
+def test_unscoped_multi_approval_response_remains_ambiguous():
+    wire = sse(event("run.queued", 0),
+               event("approval.request", 1, request_id="request_1"),
+               event("approval.request", 2, request_id="request_2"),
+               event("approval.responded", 3))
+    out = explain_sse(wire, RID)
+    assert out["missing_events"]
+    assert out["pending_approvals"] == 2
+    assert "APPROVAL_RESOLUTION_UNCORRELATED" in out["evidence"]
+    assert out["next_action"] == "FETCH_STATUS_AND_REPLAY_EVENTS"
