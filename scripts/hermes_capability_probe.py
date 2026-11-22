@@ -100,8 +100,9 @@ def evaluate_capabilities(raw):
         retention = int(idem.get("retention_seconds", 0))
     except (ValueError, TypeError, OverflowError):
         retention = 0
-    if (type(idem.get("retention_seconds")) is not int
-            or retention < MIN_CONTROL_RETENTION_SECONDS):
+    if type(idem.get("retention_seconds")) is not int:
+        missing.append("idempotency_retention")
+    elif retention < MIN_CONTROL_RETENTION_SECONDS:
         missing.append("idempotency_retention_below_24h")
     missing = sorted(set(missing))
     # Monitoring existing runs needs fewer privileges than controlling/retrying them.

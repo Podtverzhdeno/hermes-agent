@@ -120,6 +120,13 @@ class ProbeTests(unittest.TestCase):
         self.assertFalse(report["eligible_for_readonly_monitoring"])
         self.assertIn("auth_required", report["monitor_missing"])
 
+    def test_boolean_retention_type_is_not_integer_86400(self):
+        x = canonical()
+        x["features"]["runs_idempotency"]["retention_seconds"] = True
+        report = m.evaluate_capabilities(x)
+        self.assertIn("idempotency_retention", report["missing"])
+        self.assertFalse(report["eligible_for_isolated_integration_test"])
+
     def test_short_idempotency_retention_blocks_control(self):
         x = canonical()
         x["features"]["runs_idempotency"]["retention_seconds"] = 1
