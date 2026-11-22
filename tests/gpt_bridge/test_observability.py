@@ -415,3 +415,67 @@ def test_producer_id_cannot_change_owners_without_new_fence(pair):
                  producer_id="processX", fence=1, source_seq=2, kind="task.completed", source="worker")
     assert len(s.timeline(task_id="task1")) == 1
     assert s.verify_chain()
+
+
+def test_new_observer_journal_is_owner_only_on_posix(tmp_path):
+    import os
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits are not Windows ACLs")
+    store = ObservationStore(tmp_path / "private.sqlite")
+    assert store.path.stat().st_mode & 0o077 == 0
+    assert store.path.parent.stat().st_mode & 0o077 == 0
+
+
+def test_refuses_public_existing_observer_file(tmp_path):
+    import os
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits are not Windows ACLs")
+    p = tmp_path / "public.sqlite"
+    p.write_bytes(b"existing-file-untouched")
+    p.chmod(0o644)
+    with pytest.raises(PermissionError, match="observation file"):
+        ObservationStore(p)
+    assert p.read_bytes() == b"existing-file-untouched"
+
+
+def test_refuses_public_directory_for_observer(tmp_path):
+    import os
+    if os.name == "nt":
+        pytest.skip("POSIX permission bits are not Windows ACLs")
+    p = tmp_path / "public-dir"
+    p.mkdir(mode=0o755)
+    p.chmod(0o755)
+    with pytest.raises(PermissionError, match="observation directory"):
+        ObservationStore(p / "obs.sqlite")
+    assert not (p / "obs.sqlite").exists()
+
+
+def test_observer_wal_startup_retries_locked_initializer():
+    import sqlite3
+    from unittest.mock import patch
+    from gpt_bridge.observability import _enable_wal
+    class FakeDb:
+        count = 0
+        def execute(self, _):
+            self.count += 1
+            if self.count < 3:
+                raise sqlite3.OperationalError("database is locked")
+            class Cursor:
+                def fetchone(self): return ("wal",)
+            return Cursor()
+    db = FakeDb()
+    with patch("gpt_bridge.observability.time.sleep") as sleep:
+        _enable_wal(db)
+    assert db.count == 3
+    assert sleep.call_count == 2
+
+
+def test_observer_does_not_accept_rollback_journal_mode():
+    from gpt_bridge.observability import _enable_wal
+    class FakeDb:
+        def execute(self, _):
+            class Cursor:
+                def fetchone(self): return ("delete",)
+            return Cursor()
+    with pytest.raises(EventValidationError, match="journal_mode_not_wal"):
+        _enable_wal(FakeDb())
