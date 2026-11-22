@@ -144,3 +144,54 @@ def test_clock_regression_does_not_authorize_effect_retry(journal):
     assert result["unresolved_effects"] == ["write-1"]
     assert "CLOCK_REGRESSION" in result["diagnostic_flags"]
     assert result["next_action"] == "MONITOR_NO_BLIND_RETRY"
+
+
+def test_nonzero_first_sequence_is_unknown_prefix_not_internal_gap(journal):
+    emit(journal, 50, "worker.started")
+    emit(journal, 51, "worker.progress")
+    emit(journal, 52, "worker.heartbeat")
+    result = journal.assess("run-causal")
+    assert result["missing_sequences"] == 0
+    assert result["unverified_prefix_sources"] == ["worker"]
+    assert result["state"] == "TRACE_INCOMPLETE"
+    assert result["next_action"] == "VERIFY_SOURCE_CURSOR_OR_CHECKPOINT"
+    assert "UNVERIFIED_SOURCE_PREFIX" in result["diagnostic_flags"]
+    assert "MISSING_SEQUENCES" not in result["diagnostic_flags"]
+
+
+def test_known_internal_gap_and_unknown_prefix_are_both_reported(journal):
+    emit(journal, 50, "worker.started")
+    emit(journal, 52, "worker.heartbeat")
+    result = journal.assess("run-causal")
+    assert result["missing_sequences"] == 1
+    assert result["unverified_prefix_sources"] == ["worker"]
+    assert "MISSING_SEQUENCES" in result["diagnostic_flags"]
+    assert "UNVERIFIED_SOURCE_PREFIX" in result["diagnostic_flags"]
+    assert result["next_action"] == "FETCH_MISSING_EVENTS"
+
+
+def test_source_prefix_baseline_is_scoped_independently_per_producer(journal):
+    emit(journal, 1, "worker.started", source="worker")
+    emit(journal, 90, "llm.request_started", source="gateway")
+    emit(journal, 91, "llm.response_received", source="gateway")
+    result = journal.assess("run-causal")
+    assert result["missing_sequences"] == 0
+    assert result["unverified_prefix_sources"] == ["gateway"]
+    assert result["state"] == "TRACE_INCOMPLETE"
+
+
+def test_source_seq_start_one_is_complete_not_prefix_unknown(journal):
+    emit(journal, 1, "worker.started")
+    emit(journal, 2, "worker.progress")
+    result = journal.assess("run-causal")
+    assert result["missing_sequences"] == 0
+    assert result["unverified_prefix_sources"] == []
+    assert result["state"] == "RECENT_TELEMETRY"
+
+
+def test_unverified_prefix_does_not_hide_pending_external_write(journal):
+    emit(journal, 50, "tool.effect_reserved", action_id="write-unknown")
+    result = journal.assess("run-causal")
+    assert result["state"] == "EFFECT_IN_FLIGHT"
+    assert result["unresolved_effects"] == ["write-unknown"]
+    assert "UNVERIFIED_SOURCE_PREFIX" in result["diagnostic_flags"]
