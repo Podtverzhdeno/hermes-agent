@@ -5,7 +5,7 @@
 ## Canonical integration decision candidate
 
 - [2026-11-22 GPT/Hermes convergence and action-level diagnosis](integration-control/2026-11-22-hermes-gpt-convergence.md) — observed fork defects, branch-collision evidence, proposal for authoritative ledger and observer separation, event states/ACK ladder, safety gates, candidate-level review of PRs #5 and #6, failure-injection matrix, engineering log, measured-vs-proposed legend.
-- **Decision status:** PROPOSED. This document is the review entrypoint for cross-branch decisions, **not** a command to merge everything or the source of truth for live task state.
+- [Upstream API parity and residual idempotency audit](integration-control/2026-11-22-upstream-parity.md) — official NousResearch main already implements /v1/runs + durable reservations and native CDP; see remaining legacy cache risks.\n- **Decision status:** PROPOSED. This document is the review entrypoint for cross-branch decisions, **not** a command to merge everything or the source of truth for live task state.
 
 ## Reviewable parallel drafts — explicitly not yet canonical
 
