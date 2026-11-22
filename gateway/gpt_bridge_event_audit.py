@@ -46,6 +46,17 @@ _REASON_ALLOWLIST = frozenset((
     "WORKER_STALLED", "UNKNOWN", "OUTCOME_UNKNOWN",
     "max_iterations", "max_turns", "context_limit", "model_error",
     "tool_error", "interrupted", "completed", "failed", "partial",
+    # Exact upstream agent/turn_explainers.py reason catalog at pinned rev:
+    "empty_response_exhausted", "all_retries_exhausted_no_response",
+    "partial_stream_recovery", "fallback_prior_turn_content",
+    "redirect_restart_limit_exceeded", "rebuilt_restart_limit_exceeded",
+    "budget_exhausted", "ollama_runtime_context_too_small",
+    "pending_tool_result", "context_compression_timeout",
+    "session_persistence_failed", "text_response(stop)",
+))
+_REASON_PREFIX_ALLOWLIST = frozenset((
+    "interrupted_during_api_call", "max_iterations_reached",
+    "error_near_max_iterations", "repeated_outer_errors",
 ))
 _TERMINAL = frozenset(("completed", "failed", "cancelled", "interrupted"))
 _TOOL_BEGIN = frozenset(("tool.started",))
@@ -120,7 +131,20 @@ def _safe_reason(value) -> Optional[str]:
         return None
     # Unknown categories are deliberately dropped rather than echoed.
     # Raw provider exception text may be a single identifier-shaped secret.
-    return value if isinstance(value, str) and value in _REASON_ALLOWLIST else "UNCLASSIFIED"
+    if not isinstance(value, str):
+        return "UNCLASSIFIED"
+    if value in _REASON_ALLOWLIST:
+        return value
+    for prefix in _REASON_PREFIX_ALLOWLIST:
+        if value.startswith(prefix + "(") and value.endswith(")") and len(value) <= 256:
+            suffix = value[len(prefix) + 1:-1]
+            # max_iterations_reached is machine-typed e.g. (3/3); a
+            # token-shaped suffix is not an iteration counter.
+            if prefix == "max_iterations_reached" and not re.fullmatch(r"[0-9]{1,6}/[0-9]{1,6}", suffix):
+                continue
+            # Strip potentially sensitive issuer/error text completely.
+            return prefix
+    return "UNCLASSIFIED"
 
 
 def _safe_status(value) -> str:
