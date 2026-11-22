@@ -51,7 +51,7 @@ Sources:
 Files:
 - gateway/gpt_bridge_observer.py: strict metadata-only v1 event-envelope validator and bounded causal-sequence advisory observer.
 - scripts/gpt_bridge_observe.py: offline standard-input JSONL probe, emitting only aggregate counters and uncertainty labels.
-- tests/gateway/test_gpt_bridge_observer.py: 40 offline unit/parameterized checks including 30 producers × 50 out-of-order events, invalid fields, bounded resource use and redaction.
+- tests/gateway/test_gpt_bridge_observer.py: 45 offline unit/parameterized checks including 30 producers × 50 out-of-order events, invalid fields, bounded resource use and redaction.
 
 Accepted v1 envelope uses per-incarnation producer_id and source_event_seq, unique event_id, run/task/attempt IDs, UTC timestamps, W3C-shape trace and span IDs, optional causation/fence/effect metadata, a finite event vocabulary, allowlisted hashes as evidence. Unknown fields, raw prompt or credentials, invalid kinds, future schemas and oversized messages fail closed without copying raw content into diagnostic output.
 
@@ -66,7 +66,7 @@ From the repository root, run:
     python -m pytest tests/gateway/test_gpt_bridge_observer.py -q
     python scripts/gpt_bridge_observe.py < trusted_metadata_events.jsonl
 
-**TESTED-OFFLINE:** 40 tests passed in an isolated interpreter and compile checks passed. GitHub CI, real Windows extension, Native Messaging host, live gateway integration and 24-hour soak are **not** covered by this result.
+**TESTED-OFFLINE:** 45 tests passed in an isolated interpreter and compile checks passed. GitHub CI, real Windows extension, Native Messaging host, live gateway integration and 24-hour soak are **not** covered by this result.
 
 ## 3. Production invariants and crash boundaries
 
@@ -150,4 +150,29 @@ Any unknown external effect, unverified approval, audit outage before privileged
 
 ## 9. Independent parser self-audit
 
-A changed event with the same event ID and source sequence is **not** a valid replay. The first offline version compared only IDs/sequence and thus could not distinguish a modified payload from identical delivery. This was found in a second review and repaired: the observer now records SHA-256 of the entire validated canonical event alongside identity, rejects payload collisions and has an explicit regression test. The CLI also rejects duplicate JSON object keys, which otherwise could change the apparent event meaning using last-key-wins parsing. **40 tests pass in an isolated Python environment**; these claims are limited to the standalone observer, not end-to-end Hermes/GPT or Windows. For an authenticated durable observer, persist the digest in a transactional event store rather than rely on this bounded in-memory cache.
+A changed event with the same event ID and source sequence is **not** a valid replay. The first offline version compared only IDs/sequence and thus could not distinguish a modified payload from identical delivery. This was found in a second review and repaired: the observer now records SHA-256 of the entire validated canonical event alongside identity, rejects payload collisions and has an explicit regression test. The CLI also rejects duplicate JSON object keys, which otherwise could change the apparent event meaning using last-key-wins parsing. **45 tests pass in an isolated Python environment**; these claims are limited to the standalone observer, not end-to-end Hermes/GPT or Windows. For an authenticated durable observer, persist the digest in a transactional event store rather than rely on this bounded in-memory cache.
+
+## 10. Source-matched adversarial verification (latest offline facts)
+
+New regression classes were found and fixed **in this candidate's own observer**:
+- Causal gap starvation: the first implementation refused valid later events after a full cache of missing-parent links. The repaired bounded reverse child→parent index removes unresolved links on eviction and never conflates incomplete evidence with observer death.
+- Causation cycles: even correct UUIDs/sequence numbers can encode A→B→A or A→B→C→A. The repaired bounded ancestor walk rejects cycles visible within retained evidence *before* committing an event; cycles beyond history are **unknown**, never certified absent.
+- Concurrency: cursor updates and snapshots are now guarded by one process-local lock; tests use 30 threads and 3,000 events.
+- Input ambiguities: replay ID plus changed full payload is rejected using canonical SHA-256, and duplicate JSON keys are rejected by the CLI.
+
+**Current isolated test result:** 45/45 passed plus Python compile checks. A dedicated per-PR GitHub Actions workflow now runs the same contract independently. This is not a claim about a native browser extension, authenticated producer, persistent outbox or live external effects.
+
+### Synthetic 100-agent stress (local environment; informational, not SLA)
+
+| Case | Producers | Events | Threads | Elapsed | Observed throughput | Bounded recent cache |
+|---|---:|---:|---:|---:|---:|---:|
+| Deterministic shuffle in 8-event batches, 1000 each | 100 | 100,000 | 1 | 2.246 s | 44,533 events/s | 8,192 |
+| Ordered events, 500 each, 32-thread pool | 100 | 50,000 | 32 | 1.589 s | 31,467 events/s | 8,192 |
+
+Both tests ended with 100 independent producer cursors, zero pending sequence gaps and no rejected events. Shared-process peak RSS measured around 99–105 MiB **including Python interpreter and imported Hermes modules**; this is not observer-only heap usage. These numbers came from one local CPU/process run, no persistent storage, no browser, no provider delays, no cryptographic source auth and no live network; therefore **they must not be used as production capacity promises**. Measure confidence intervals, tail latency, crash recovery and data loss under a production-like host before deciding concurrency or SLA limits.
+
+### CI gate and evidence integrity
+
+Earlier full-suite GitHub job [45015318217](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45015318217) reported **28 failing / 7,543 passing / 171 skipped** outside this observer's tests, including missing mocked OpenAI credentials, Codex fallback expectations and three 30-second tool-read timeouts. A baseline run on the same environment must determine which are pre-existing; do not label all as unrelated regressions merely because filenames differ. Do not add real provider secrets to unit CI and do not disable those general tests. The dedicated 45-case observer contract is an additional *component gate*, while the overall suite stays an independent release gate.
+
+**Decision:** continue keeping this PR draft until task/observer schema convergence, upstream Kanban parity, actual extension source/runtime E2E, crash/restore/fencing and full-suite green or explicitly approved baseline exception. The purpose is to prevent a diagnostic subsystem from creating new failures or false success signals.
