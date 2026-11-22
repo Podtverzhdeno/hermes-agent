@@ -300,11 +300,17 @@ class IdempotencyCapacityError(RuntimeError):
     """The bounded cache cannot safely accept another keyed request."""
 
 
+class IdempotencyUncertainOutcome(RuntimeError):
+    """A prior execution failed; its external effects may have committed."""
+
+
 class _IdempotencyCache:
     """Process-local single-flight idempotency; no guarantee after restart.
 
-    Never evict running or unexpired entries: that would duplicate side effects.
+    Never evict running or uncertain-outcome entries: that would duplicate
+    external effects after a lost ACK or process-local failure.
     Values represent full API responses, including stable response/session IDs.
+    A host restart still loses this memory-only safety barrier.
     """
 
     def __init__(self, max_items: int = 1000, ttl_seconds: int = 300):
@@ -316,7 +322,11 @@ class _IdempotencyCache:
     def _purge(self) -> None:
         now = time.monotonic()
         for key, item in list(self._store.items()):
-            if item["task"].done() and now - item["ts"] >= self._ttl:
+            if (
+                item["task"].done() and
+                item["state"] == "succeeded" and
+                now - item["ts"] >= self._ttl
+            ):
                 self._store.pop(key, None)
 
     def _on_done(self, key: str, task: "asyncio.Task") -> None:
@@ -324,9 +334,11 @@ class _IdempotencyCache:
         if item is None or item["task"] is not task:
             return
         if task.cancelled() or task.exception() is not None:
-            self._store.pop(key, None)
+            item["state"] = "outcome_unknown"
+            logger.warning("hermes_api_idempotency outcome=unknown")
         else:
-            self._store[key]["ts"] = time.monotonic()
+            item["state"] = "succeeded"
+        item["ts"] = time.monotonic()
 
     async def get_or_set(self, key: str, fingerprint: str, compute_coro):
         self._purge()
@@ -335,6 +347,12 @@ class _IdempotencyCache:
             if item["fp"] != fingerprint:
                 raise IdempotencyConflictError("Key reused with different input")
             self._store.move_to_end(key)
+            if item["task"].done() and (
+                item["task"].cancelled() or item["task"].exception() is not None
+            ):
+                raise IdempotencyUncertainOutcome(
+                    "Previous execution outcome requires reconciliation"
+                )
             logger.info("hermes_api_idempotency outcome=%s", (
                 "replay" if item["task"].done() else "join"
             ))
@@ -344,6 +362,7 @@ class _IdempotencyCache:
         task = asyncio.create_task(compute_coro())
         self._store[key] = {
             "task": task, "fp": fingerprint, "ts": time.monotonic(),
+            "state": "running",
         }
         task.add_done_callback(lambda finished: self._on_done(key, finished))
         logger.info("hermes_api_idempotency outcome=new")
@@ -707,6 +726,14 @@ class APIServerAdapter(BasePlatformAdapter):
                 _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
                 status=409,
             )
+        except IdempotencyUncertainOutcome:
+            logger.warning("hermes_api_idempotency outcome=unknown endpoint=chat")
+            return web.json_response(
+                _openai_error(
+                    "Previous execution may have committed effects; reconcile before retry",
+                    code="execution_outcome_unknown",
+                ), status=409,
+            )
         except IdempotencyCapacityError:
             logger.warning("hermes_api_idempotency outcome=capacity endpoint=chat")
             return web.json_response(
@@ -1009,6 +1036,14 @@ class APIServerAdapter(BasePlatformAdapter):
             return web.json_response(
                 _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
                 status=409,
+            )
+        except IdempotencyUncertainOutcome:
+            logger.warning("hermes_api_idempotency outcome=unknown endpoint=responses")
+            return web.json_response(
+                _openai_error(
+                    "Previous execution may have committed effects; reconcile before retry",
+                    code="execution_outcome_unknown",
+                ), status=409,
             )
         except IdempotencyCapacityError:
             logger.warning("hermes_api_idempotency outcome=capacity endpoint=responses")
