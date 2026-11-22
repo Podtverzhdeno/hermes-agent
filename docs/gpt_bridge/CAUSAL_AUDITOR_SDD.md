@@ -69,7 +69,7 @@ Limits enforced by the module:
 | Evidence IDs per event | 16 | stop metadata abuse |
 | Identifiers | typed UUID / opaque token constraints | never print raw exception/payload text |
 | Duplicate JSON object keys | prohibited | prevent ambiguous parser interpretations |
-| JSON `NaN`/`Infinity`, boolean-as-int, invalid UTC, zero trace ID | prohibited | strict schema |
+| JSON `NaN`/`Infinity`, deeply nested JSON, boolean-as-int, null required occurrence time, invalid UTC, zero trace ID | prohibited | strict schema |
 
 The offline audit retains validated event metadata in memory until exit; it does not persist inputs. The source file is opened read-only. This is **not a guarantee** against a malicious, already compromised host, nor a substitute for source-side redaction. File reads, machine logs, and third-party tracing need their own privacy audits.
 
@@ -148,7 +148,7 @@ For 30+ agents, partition nonconflicting projects and limit global provider quot
 
 ## 9. Fault-injection evaluation plan (not a pass claim)
 
-**Implemented offline test groups:** exact duplicate vs collision; sequence gaps and 30-producer independence; out-of-order clocks, missing parents and causal cycles; malformed/duplicate JSON keys; payload-field rejection and size limits; reserved/acked/unknown/reconciled effects; receipt and causal-link validation; cross-fence replay; misleading success with stale verifier; two claimants on same fence; stop reason observations; capped exports.
+**Implemented offline test groups:** exact duplicate vs collision; sequence gaps and 30-producer independence; out-of-order clocks, missing parents and causal cycles; malformed/deeply nested/duplicate-key JSON and null required occurrence timestamp; payload-field rejection and size limits; reserved/acked/unknown/reconciled effects; receipt and causal-link validation; cross-fence replay; misleading success with stale verifier; two claimants on same fence; stop reason observations; capped exports.
 
 **Next release gates:**
 
