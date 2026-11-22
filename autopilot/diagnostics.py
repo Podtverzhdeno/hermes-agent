@@ -13,6 +13,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
+from .ledger import FAILURE_CODES
+
 
 class LedgerObserver:
     """Bounded, read-only view suitable for an authenticated control plane.
@@ -90,6 +92,18 @@ class LedgerObserver:
                     SELECT seq,kind FROM events WHERE task_id=?
                     ORDER BY seq DESC LIMIT 1
                 """, (t["id"],)).fetchone()
+                last_failure = db.execute("""
+                    SELECT detail FROM events WHERE task_id=? AND kind='failed_attempt'
+                    ORDER BY seq DESC LIMIT 1
+                """, (t["id"],)).fetchone()
+                failure_code = None
+                if last_failure:
+                    try:
+                        candidate = json.loads(last_failure["detail"]).get("reason_code")
+                        if candidate in FAILURE_CODES or candidate == "UNCLASSIFIED_FAILURE":
+                            failure_code = candidate
+                    except (TypeError, ValueError, AttributeError):
+                        pass
                 approval = db.execute("""
                     SELECT MIN(expires_at) AS expires_at
                     FROM approvals WHERE task_id=? AND state='pending'
@@ -127,6 +141,7 @@ class LedgerObserver:
                     "cancel_requested": bool(t["cancel_requested"]),
                     "last_event_seq": last["seq"] if last else None,
                     "last_event_kind": last["kind"] if last else None,
+                    "last_failure_code": failure_code,
                 })
             cursor = db.execute("SELECT COALESCE(MAX(seq),0) AS n FROM events").fetchone()["n"]
         return {"schema_version": 1, "observed_at_epoch": now,
