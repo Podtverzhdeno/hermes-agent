@@ -216,6 +216,12 @@ class EventJournal:
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
+        # Server receipt timestamps can jump backward after NTP/time changes.
+        # In that case time-based liveness diagnosis is unreliable.
+        clock_reversed = any(
+            rows[i]["received_at"] + 1.0 < rows[i - 1]["received_at"]
+            for i in range(1, len(rows))
+        ) or moment + 1.0 < max(t for _, t in events)
         # Delivery can be reordered. A backfilled event with an older sequence
         # must NOT refresh liveness/progress and conceal an abandoned worker.
         # Track the source-local highest sequence at receipt time, without
@@ -303,6 +309,8 @@ class EventJournal:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
+        elif clock_reversed:
+            state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
         elif contradictory or missing:
             state, next_action = "TRACE_INCOMPLETE", "FETCH_MISSING_EVENTS"
         elif pending_approval:
