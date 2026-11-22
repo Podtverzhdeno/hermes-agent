@@ -96,3 +96,10 @@ Integration owner note: this patch is stacked on PR #12 and is not a separate re
 #### Sequence prefix / internal gap contract
 
 A newly observed source whose first sequence is `50` has an **unverified source prefix**, not 49 confirmed gaps in the inspected run. `missing_sequences` counts only holes between observed minimum and maximum for each source, `unverified_prefix_sources` lists sources starting above 1, and `UNVERIFIED_SOURCE_PREFIX` requests a producer cursor/checkpoint review. A known internal hole still requests `FETCH_MISSING_EVENTS`. This is fail-closed because the source may have emitted earlier events outside the journal. Neither status means an external write did or did not happen.
+
+
+#### What counts as real progress
+
+An observer may receive fresh `worker.heartbeat`, repeated `worker.started`, or `llm.request_started` without any finished stage. None resets `progress_age_seconds`. Only reported completed boundaries (`worker.progress`, `llm.response_received`, `tool.effect_acknowledged`, `tool.effect_not_executed`, `approval.resolved`, `run.reported_completed`, `run.reported_failed`) can refresh the **untrusted** progress clock. A recent heartbeat plus stale progress can result in `ALIVE_NO_PROGRESS`. This remains a hint, not independent proof of tool effects or task completion.
+
+The latest attempt and its rows are read in a single SQLite SELECT to avoid mixed autocommit read snapshots during concurrent event ingestion. This does not provide cross-database atomicity or a trusted signed evidence chain. See SDD sections 30–31.
