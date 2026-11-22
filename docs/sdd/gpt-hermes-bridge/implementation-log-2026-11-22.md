@@ -1,5 +1,14 @@
 # Implementation and audit log — 2026-11-22
 
+> **Follow-up audit entry — upstream parity and parallel PRs (2026-11-22, after initial patch)**
+>
+> - Verified official upstream release `v0.23.3`, published 2026-11-20; upstream main SHA `da8e7d71abe4ac165760cd813c0c18c53e697b90`.
+> - Verified native `/v1/runs`, `RunIdempotencyStore`, Kanban CAS/event DB, per-session turn leases, delivery ledger, gateway lifecycle sentinel, stall signals and exact-head PR acceptance. This **supersedes** the earlier assumption that the old fork needs a new authoritative ledger.
+> - Added [upstream parity/PR coordination audit](upstream-parity-and-pr-coordination-2026-11-22.md).
+> - Detected overlapping API work in PRs #4, #5 and #6 and a possible duplicate task authority in PR #1. Posted linked, source-backed cross-PR coordination comments on #1/#4/#5/#6. No merges or production rollout.
+> - Source verification does not establish the local runtime version, extension presence, or production behavior. Gate G0 remains open.
+
+
 This is a factual, append-only audit diary for the current engineering pass.
 Plans, examples and unrun tests are labelled accordingly. All dates use UTC
 where shown. This log is a durable reference for agents continuing the work;
