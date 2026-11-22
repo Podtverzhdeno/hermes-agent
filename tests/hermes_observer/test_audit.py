@@ -117,6 +117,23 @@ class MetadataContractTests(unittest.TestCase):
             with self.subTest(obj=obj):
                 self.assertEqual(audit(obj)["exit_code"], 4)
 
+    def test_deeply_nested_json_is_invalid_not_a_process_crash(self):
+        # Python's json decoder can raise RecursionError before it returns an
+        # ordinary JSON value; hostile metadata must never crash diagnosis.
+        malicious = (b"[" * 2200) + b"0" + (b"]" * 2200)
+        result = audit_stream(io.BytesIO(malicious + b"\n" + json.dumps(ev()).encode() + b"\n"))
+        self.assertEqual(result["status"], "invalid_snapshot")
+        self.assertEqual(result["counts"]["accepted_events"], 1)
+        self.assertEqual(result["counts"]["invalid_events"], 1)
+
+    def test_required_occurrence_timestamp_cannot_be_null(self):
+        self.assertEqual(audit(ev(occurred_at_utc=None))["status"], "invalid_snapshot")
+
+    def test_task_completion_cannot_transition_to_running(self):
+        result = audit(ev(kind="task.completed", state_to="running"))
+        self.assertEqual(result["status"], "incomplete_observation")
+        self.assertIn("COMPLETION_WITHOUT_TERMINAL_STATE", result["finding_counts"])
+
     def test_total_file_byte_budget_prevents_unbounded_scan(self):
         data = json.dumps(ev()).encode() + b"\n" + b"x" * 2000
         with patch("hermes_observer.audit.MAX_TOTAL_BYTES", 500):
