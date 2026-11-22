@@ -273,7 +273,14 @@ class EventJournal:
         by_source: dict[str, set[int]] = {}
         for source, seq in keys:
             by_source.setdefault(source, set()).add(seq)
-        missing = sum(max(sequences) - len(sequences) for sequences in by_source.values())
+        # Distinguish a *known internal hole* from a prefix never observed.
+        # A producer starting at seq=50 does not prove that seq=1..49 are
+        # missing from this run. Such a prefix needs cursor/boot evidence.
+        missing = sum(max(sequences) - min(sequences) + 1 - len(sequences)
+                      for sequences in by_source.values())
+        unverified_prefix_sources = sorted(
+            src for src, seqs in by_source.items() if min(seqs) != 1
+        )
         reserved_events, effect_resolutions = {}, {}
         approval_requests, approval_resolutions = {}, {}
         contradictory = False
@@ -328,10 +335,13 @@ class EventJournal:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
         elif clock_reversed:
             state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
-        elif contradictory or missing:
+        elif contradictory or missing or unverified_prefix_sources:
             state = "TRACE_INCOMPLETE"
-            next_action = ("RECONCILE_CONFLICTING_EVENTS" if contradictory
-                           else "FETCH_MISSING_EVENTS")
+            next_action = (
+                "RECONCILE_CONFLICTING_EVENTS" if contradictory else
+                "FETCH_MISSING_EVENTS" if missing else
+                "VERIFY_SOURCE_CURSOR_OR_CHECKPOINT"
+            )
         elif pending_approval:
             state, next_action = "WAITING_APPROVAL", "ASK_AUTHORIZED_REVIEWER"
         elif last_terminal == "run.reported_failed":
@@ -353,9 +363,11 @@ class EventJournal:
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
+                "unverified_prefix_sources": unverified_prefix_sources,
                 "reported_reason_code": reason if state == "REPORTED_FAILED" else None,
                 "diagnostic_flags": sorted(
                     (["MISSING_SEQUENCES"] if missing else []) +
+                    (["UNVERIFIED_SOURCE_PREFIX"] if unverified_prefix_sources else []) +
                     (["CLOCK_REGRESSION"] if clock_reversed else []) +
                     (["EVENT_CAUSALITY_CONFLICT"] if contradictory else []) +
                     (["CROSS_SOURCE_TERMINALS"] if cross_source_terminal else []) +
