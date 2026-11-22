@@ -31,7 +31,7 @@ No access to private model deliberation, live production traces, user's local ru
 
 ## Changed files and audit provenance
 - `gateway/platforms/api_server.py`: bounded per-adapter single-flight cache; HTTP 409/503; stable replay; metadata-only request tracing; distinct SSE failure; bind guard; CORS; malformed request validation; timing-safe auth comparison.
-- `tests/gateway/test_api_server_idempotency.py`: 15 targeted tests; all newly authored this session; they must run under GitHub Actions before they are considered passing.
+- `tests/gateway/test_api_server_idempotency.py`: 27 test functions (some parametrized); a separate targeted CI successfully ran the whole affected suite.
 - `docs/sdd/gpt-extension-observability-2026-11-22.md`: architecture, invariants, failure taxonomy, research, dependency gate ordering, weighted proposals, multi-agent lease/fencing protocol.
 
 Code branch `sdd/gpt-observability-2026-11-22`; baseline `main@7e9100901819ee44c16b4ddcb79a6bcb7909f591`. Every write has a corresponding Git commit. The branch is intentionally isolated from default `main`.
@@ -50,6 +50,28 @@ Code branch `sdd/gpt-observability-2026-11-22`; baseline `main@7e9100901819ee44c
 
 ## Validation ledger
 - 2026-11-22: inspected GitHub baseline code, tests, architecture; static review completed.
-- 2026-11-22: 15 pytest regression cases added, not yet executed.
-- 2026-11-22: no production stress test, no local runtime data and no external-agent health verification.
-- Release status: **NOT VERIFIED / DO NOT AUTO-MERGE** until CI and runtime evidence.
+- 2026-11-22: initial 15 targeted test cases added; subsequently expanded to 27 test functions, including parametrized runner outcomes, 100 concurrent requests and SQLite transaction fault injection.
+- 2026-11-22: target gateway regression CI on commit 753a1dda581fdcb1a078a041f6ef77cc2d411f4a completed successfully: 136 passed (run https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013927978). No production stress test, no local browser runtime data and no external-agent health verification.
+- Release status: **TARGETED GATE PASSED; FULL GATE NOT PASSED / DO NOT AUTO-MERGE**. Local browser and multi-process E2E not verified; PR #4/#5/#6 own same source file. Full-suite baseline initially red for multiple unrelated causes.
+
+
+## Follow-up evidence — independent CI and new failures
+
+| # | Type | Evidence | Fix / disposition |
+|---|---|---|---|
+| E17 | OBSERVED_CI | Full suite on initial patch commit d0369dcb8a2a1b32a87ece6644c0609b0d8faf98: 7510 passed, 34 failed, 171 skipped. 5 SSE-disconnect tests failed while logging a MagicMock request ID, and 1 prior test asserted leaked raw exception string. | Normalize the log ID and assert error redaction; subsequent targeted tests pass. Many remaining failures derive from unset provider credentials or unrelated Codex/file tools; not attributed to this patch without main-baseline comparison. |
+| E18 | OBSERVED_CODE | A failed agent call after an external effect may be retried under the same key after old cache eviction, duplicating writes. | Preserve unknown result in process-level cache; HTTP 409 `execution_outcome_unknown` on retry. Regression simulates ACK lost after committed effect. **Still NOT durable across restart.** |
+| E19 | OBSERVED_CODE | Hermes runner explicitly distinguishes `failed`, `interrupted`, `completed=False` but API adapter previously returned `finish_reason=stop` unconditionally. | Normalize runner outcome; SSE emits error or `length`, Chat returns outcome header/appropriate finish reason, Responses returns incomplete status/reason. |
+| E20 | OBSERVED_CODE | `ResponseStore.put` and `set_conversation` committed separately. Deletion and LRU eviction left aliases to nonexistent responses. | One SQLite transaction for response+alias+eviction, clean dangling aliases on delete/evict; regression creates SQL trigger failure and verifies rollback. Concurrent updates of the SAME conversation remain future P1 work. |
+| E21 | OBSERVED_CI | Targeted CI https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013927978 on 753a1dda581fdcb1a078a041f6ef77cc2d411f4a passed **136** tests. | Verified for that head only, not entire repository or local Chrome. |
+| E22 | OBSERVED_UPSTREAM | Community Hermes Browser Extension README (v0.4.1) includes own tab leases, 20 tab tools, 7 context/journal tools, per-profile plugin after Hermes 0.22.5. | [Upstream-vs-custom SDD](gpt-browser-upstream-reuse-2026-11-22.md). Prefer negotiated thin adapter over another standalone browser controller. Neither ownership of the user's installed extension nor local compatibility is confirmed. |
+| E23 | EXTERNAL_FAILURE | Local Workspace MCP: Session terminated. Secondary local probe: HTTP 429. | Treat observer status as unknown; do not mark Hermes worker dead or overwrite local files without verified access. |
+| E24 | OBSERVED_PR | PR #4, #5, #6 independently alter `gateway/platforms/api_server.py`. | Cross-agent review ADR and comments on PR #4/#5/#6. No automatic merge, select one canonical idempotency implementation. |
+
+### Logs, sources and freshness
+- Initial broad test job: https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013031713
+- First targeted pass: https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013406772 (**115 passed** on earlier SHA).
+- Later targeted pass: https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013927978 (**136 passed** on SHA 753a1dda...).
+- Current branch may have later commits; **never transfer a past green CI result to a new head SHA**. The exact SHA must be checked independently.
+- Chromium MV3 reference: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
+- Companion plugin reference: https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md
