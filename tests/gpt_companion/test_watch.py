@@ -184,3 +184,13 @@ def test_watch_cli_reports_locked_db_without_leaking_internal_exception(tmp_path
     output = capsys.readouterr().err.strip()
     assert json.loads(output)["state"] == "WATCH_DB_LOCKED"
     assert "/private/customer/path" not in output
+
+
+def test_status_watcher_db_private_file_on_posix(tmp_path):
+    import os
+    import stat
+    if os.name != "posix":
+        return  # no NTFS security claim
+    watcher = StatusWatch(tmp_path / "events.db", tmp_path / "status.db")
+    assert stat.S_IMODE((tmp_path / "events.db").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "status.db").stat().st_mode) == 0o600
