@@ -227,6 +227,9 @@ class EventJournal:
         # must eventually be classified as alive without progress.
         last_seen = max(frontier_receipts)
         last_progress = max(progress_receipts) if progress_receipts else min(frontier_receipts)
+        # Wall-clock rollback must never make stale telemetry look fresh.
+        # Production still needs supervisor/lease probes and a monotonic clock.
+        clock_regression = moment + 1e-6 < last_seen
         live_age = max(0.0, moment - last_seen)
         progress_age = max(0.0, moment - last_progress)
         keys = {(r["source"], r["sequence"]) for r in rows}
@@ -289,6 +292,8 @@ class EventJournal:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
+        elif clock_regression:
+            state, next_action = "CLOCK_ANOMALY", "CHECK_OBSERVER_CLOCK_AND_SUPERVISOR"
         elif contradictory or missing:
             # Replaying an intact trace does not fix contradictory reports.
             state = "TRACE_INCOMPLETE"
@@ -314,6 +319,7 @@ class EventJournal:
                 "reported_reason_code": reason if state == "REPORTED_FAILED" else None,
                 "diagnostic_flags": sorted(
                     (["MISSING_SEQUENCES"] if missing else []) +
+                    (["CLOCK_REGRESSION"] if clock_regression else []) +
                     (["EVENT_CAUSALITY_CONFLICT"] if contradictory else []) +
                     (["CROSS_SOURCE_TERMINALS"] if cross_source_terminal else []) +
                     (["CONFLICTING_OUTCOME_REPORTS"] if conflicting_outcomes else [])),
