@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: github-code-review
+activation:
+  when: ["Review a GitHub PR diff and optionally draft inline comments","Identify release-blocking defects with traceable line anchors"]
+  not_when: undefined
+capabilities:
+  tools: ["gh","git","GitHub API (authenticated client)"]
+  side_effects: external_write
+  approval_required: ["Publish review, inline comments or approval if not explicitly requested"]
+lifecycle:
+  preflight: ["Resolve target PR and exact head SHA before inspecting diff","Read review guidelines and existing discussion to avoid duplicates"]
+  execute: ["Audit changed behavior and dependencies; build candidate findings","Anchor comments to changed lines in the selected head revision"]
+  verify: ["Check each issue against relevant code/tests","Deduplicate findings and classify confirmed versus tentative"]
+  recover: ["If PR head changes, invalidate stale line comments and re-evaluate","Leave a draft instead of posting when authority is missing"]
+budget:
+  max_tool_calls: 36
+  max_reference_bytes: 262144
+evidence:
+  required: ["PR head SHA and changed-line location","Reproduction or code-path evidence for blocking comments"]
+output:
+  format: "Severity-ranked findings and optional review draft"
+  acceptance: ["No posting without explicit authority","No invented PR line numbers"]
