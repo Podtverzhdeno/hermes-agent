@@ -113,3 +113,29 @@ def test_no_prior_effects_does_not_override_current_report(journal):
     journal.ingest(event(2, 1, "run.reported_failed", source="worker-2", reason="CI_FAILED"))
     assert journal.assess("run-causal")["state"] == "REPORTED_FAILED"
     assert journal.assess("run-causal")["unresolved_effects_prior_attempts"] == []
+
+
+def test_missing_sequence_in_earlier_attempt_does_not_disappear(journal):
+    journal.ingest(event(1, 1, "worker.started"))
+    journal.ingest(event(1, 3, "worker.stopped"))
+    journal.ingest(event(2, 1, "worker.started", source="replacement"))
+    result = journal.assess("run-causal")
+    assert result["state"] == "TRACE_INCOMPLETE"
+    assert result["missing_sequences"] == 0
+    assert result["missing_sequences_prior_attempts"] == 1
+    journal.ingest(event(1, 2, "worker.heartbeat"))
+    repaired = journal.assess("run-causal")
+    assert repaired["state"] == "RECENT_TELEMETRY"
+    assert repaired["missing_sequences_prior_attempts"] == 0
+
+
+def test_prior_missing_event_has_lower_priority_than_unresolved_write(journal):
+    journal.ingest(event(1, 1, "tool.effect_reserved", action="write-unknown"))
+    journal.ingest(event(1, 3, "worker.stopped"))
+    journal.ingest(event(2, 1, "worker.started", source="replacement"))
+    result = journal.assess("run-causal")
+    assert result["missing_sequences_prior_attempts"] == 1
+    assert result["state"] == "NEEDS_RECONCILIATION"
+    assert result["unresolved_effects_prior_attempts"] == [
+        {"attempt": 1, "action_id": "write-unknown"}
+    ]
