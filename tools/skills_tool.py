@@ -912,6 +912,24 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                 ensure_ascii=False,
             )
 
+        # Individual skill contracts travel with the skill directory.
+        # They only add an advisory execution/evidence checklist; no new
+        # executable tool privileges are introduced by this metadata.
+        # Malformed opt-in contracts fail closed rather than silently being
+        # ignored by the loader.
+        from agent.skill_harness import (
+            SkillHarnessError, format_harness_guidance, load_skill_harness,
+        )
+        try:
+            harness_profile = load_skill_harness(skill_dir, resolved_name)
+        except SkillHarnessError as exc:
+            return json.dumps({
+                "success": False,
+                "name": resolved_name,
+                "error": "Invalid skill harness: " + str(exc),
+                "readiness_status": "unsupported",
+            }, ensure_ascii=False)
+
         # If a specific file path is requested, read that instead
         if file_path and skill_dir:
             # Security: Prevent path traversal attacks
@@ -1166,24 +1184,6 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     skill_name,
                     exc_info=True,
                 )
-
-        # Individual skill contracts travel with the skill directory.
-        # They only add an advisory execution/evidence checklist; no new
-        # executable tool privileges are introduced by this metadata.
-        # Malformed opt-in contracts fail closed rather than silently being
-        # ignored by the loader.
-        from agent.skill_harness import (
-            SkillHarnessError, format_harness_guidance, load_skill_harness,
-        )
-        try:
-            harness_profile = load_skill_harness(skill_dir, skill_name)
-        except SkillHarnessError as exc:
-            return json.dumps({
-                "success": False,
-                "name": skill_name,
-                "error": "Invalid skill harness: " + str(exc),
-                "readiness_status": "unsupported",
-            }, ensure_ascii=False)
 
         result = {
             "success": True,
