@@ -204,15 +204,15 @@ def _resolve_cdp_override(cdp_url: str) -> str:
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
-        logger.warning("Failed to resolve CDP endpoint %s via %s: %s", raw, version_url, exc)
+        logger.warning("CDP endpoint discovery failed (%s); using raw endpoint", type(exc).__name__)
         return raw
 
     ws_url = str(payload.get("webSocketDebuggerUrl") or "").strip()
     if ws_url:
-        logger.info("Resolved CDP endpoint %s -> %s", raw, ws_url)
+        logger.info("CDP endpoint resolved via discovery")
         return ws_url
 
-    logger.warning("CDP discovery at %s did not return webSocketDebuggerUrl; using raw endpoint", version_url)
+    logger.warning("CDP discovery returned no WebSocket URL; using raw endpoint")
     return raw
 
 
@@ -654,8 +654,8 @@ def _create_cdp_session(task_id: str, cdp_url: str) -> Dict[str, str]:
     """Create a session that connects to a user-supplied CDP endpoint."""
     import uuid
     session_name = f"cdp_{uuid.uuid4().hex[:10]}"
-    logger.info("Created CDP browser session %s → %s for task %s",
-                session_name, cdp_url, task_id)
+    logger.info("Created CDP browser session %s for task %s",
+                session_name, task_id)
     return {
         "session_name": session_name,
         "bb_session_id": None,
@@ -833,14 +833,16 @@ def _run_browser_command(
     try:
         session_info = _get_session_info(task_id)
     except Exception as e:
-        logger.warning("Failed to create browser session for task=%s: %s", task_id, e)
-        return {"success": False, "error": f"Failed to create browser session: {str(e)}"}
+        logger.warning("Failed to create browser session for task=%s (error_type=%s)",
+                       task_id, type(e).__name__)
+        return {"success": False, "error": "Failed to create browser session"}
     
     # Build the command with the appropriate backend flag.
     # Cloud mode: --cdp <websocket_url> connects to Browserbase.
     # Local mode: --session <name> launches a local headless Chromium.
     # The rest of the command (--json, command, args) is identical.
-    if session_info.get("cdp_url"):
+    cdp_attached = bool(session_info.get("cdp_url"))
+    if cdp_attached:
         # Cloud mode — connect to remote Browserbase browser via CDP
         # IMPORTANT: Do NOT use --session with --cdp. In agent-browser >=0.13,
         # --session creates a local browser instance and silently ignores --cdp.
@@ -853,6 +855,8 @@ def _run_browser_command(
         "--json",
         command
     ] + args
+    stdout_path = None
+    stderr_path = None
     
     try:
         # Give each task its own socket directory to prevent concurrency conflicts.
@@ -914,6 +918,12 @@ def _run_browser_command(
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+            # Do not retain credential-bearing child output after timeout.
+            for capture_path in (stdout_path, stderr_path):
+                try:
+                    os.unlink(capture_path)
+                except OSError:
+                    pass
             logger.warning("browser '%s' timed out after %ds (task=%s, socket_dir=%s)",
                            command, timeout, task_id, task_socket_dir)
             return {"success": False, "error": f"Command timed out after {timeout} seconds"}
@@ -934,20 +944,32 @@ def _run_browser_command(
         # Log stderr for diagnostics — use warning level on failure so it's visible
         if stderr and stderr.strip():
             level = logging.WARNING if returncode != 0 else logging.DEBUG
-            logger.log(level, "browser '%s' stderr: %s", command, stderr.strip()[:500])
+            # CDP CLI diagnostics may echo bearer URLs, query tokens and session IDs.
+            safe_stderr = "[CDP stderr redacted]" if cdp_attached else stderr.strip()[:500]
+            logger.log(level, "browser '%s' stderr: %s", command, safe_stderr)
         
         # Log empty output as warning — common sign of broken agent-browser
         if not stdout.strip() and returncode == 0:
-            logger.warning("browser '%s' returned empty stdout with rc=0. "
-                           "cmd=%s stderr=%s",
-                           command, " ".join(cmd_parts[:4]) + "...",
-                           (stderr or "")[:200])
+            logger.warning("browser '%s' returned empty stdout with rc=0 (stderr_present=%s)",
+                           command, bool(stderr and stderr.strip()))
 
         stdout_text = stdout.strip()
 
         if stdout_text:
             try:
                 parsed = json.loads(stdout_text)
+                if cdp_attached and isinstance(parsed, dict) and not parsed.get("success", False):
+                    # A failed CDP response can echo credentials in *any* field
+                    # (message, metadata, data, url or diagnostic), not just error.
+                    # Preserve only recognized non-sensitive recovery codes.
+                    safe_code = parsed.get("code")
+                    if safe_code not in ("tab_gone", "tab_locked"):
+                        safe_code = "cdp_command_failed"
+                    parsed = {
+                        "success": False,
+                        "error": "Browser CDP command failed (diagnostic redacted)",
+                        "code": safe_code,
+                    }
                 # Warn if snapshot came back empty (common sign of daemon/CDP issues)
                 if command == "snapshot" and parsed.get("success"):
                     snap_data = parsed.get("data", {})
@@ -957,7 +979,7 @@ def _run_browser_command(
                                        "returncode=%s", returncode)
                 return parsed
             except json.JSONDecodeError:
-                raw = stdout_text[:2000]
+                raw = ("[CDP output redacted]" if cdp_attached else stdout_text[:2000])
                 logger.warning("browser '%s' returned non-JSON output (rc=%s): %s",
                                command, returncode, raw[:500])
 
@@ -969,10 +991,8 @@ def _run_browser_command(
                     recovered_path = _extract_screenshot_path_from_text(combined_text)
 
                     if recovered_path and Path(recovered_path).exists():
-                        logger.info(
-                            "browser 'screenshot' recovered file from non-JSON output: %s",
-                            recovered_path,
-                        )
+                        logger.info("browser 'screenshot' recovered file from non-JSON output%s",
+                                    " (CDP path redacted)" if cdp_attached else ": " + recovered_path)
                         return {
                             "success": True,
                             "data": {
@@ -989,12 +1009,27 @@ def _run_browser_command(
         # Check for errors
         if returncode != 0:
             error_msg = stderr.strip() if stderr else f"Command failed with code {returncode}"
+            if cdp_attached:
+                logger.warning("browser '%s' failed (rc=%s); CDP error redacted", command, returncode)
+                return {"success": False, "error": "Browser CDP command failed (diagnostic redacted)"}
             logger.warning("browser '%s' failed (rc=%s): %s", command, returncode, error_msg[:300])
             return {"success": False, "error": error_msg}
         
         return {"success": True, "data": {}}
         
     except Exception as e:
+        # Remove any captured child output on all exceptional paths, including
+        # failures before normal stdout/stderr handling and cleanup.
+        for capture_path in (stdout_path, stderr_path):
+            if capture_path:
+                try:
+                    os.unlink(capture_path)
+                except OSError:
+                    pass
+        if cdp_attached:
+            logger.warning("browser '%s' CDP exception (type=%s, details redacted)",
+                           command, type(e).__name__)
+            return {"success": False, "error": "Browser CDP command exception (diagnostic redacted)"}
         logger.warning("browser '%s' exception: %s", command, e, exc_info=True)
         return {"success": False, "error": str(e)}
 
