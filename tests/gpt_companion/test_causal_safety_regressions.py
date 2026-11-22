@@ -248,3 +248,30 @@ def test_multiple_worker_stops_are_not_cross_report_conflict(journal):
     journal.ingest(event(1, 1, "worker.stopped", source="worker-1"))
     journal.ingest(event(1, 1, "worker.stopped", source="worker-2"))
     assert journal.assess("run-causal")["state"] == "STOPPED_UNCONFIRMED"
+
+
+def test_local_journal_is_private_on_posix(tmp_path):
+    import os
+    import stat
+    if os.name != "posix":
+        return  # Windows needs separately tested NTFS ACL policy
+    path = tmp_path / "events.db"
+    journal = EventJournal(path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    # Simulate a pre-existing file with overly broad permission bits.
+    path.chmod(0o644)
+    journal = EventJournal(path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_local_journal_rejects_symlink_path_on_posix(tmp_path):
+    import os
+    if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
+        return
+    target = tmp_path / "existing.db"
+    target.write_bytes(b"do not follow symlink")
+    alias = tmp_path / "alias.db"
+    alias.symlink_to(target)
+    with pytest.raises(OSError):
+        EventJournal(alias)
+    assert target.read_bytes() == b"do not follow symlink"
