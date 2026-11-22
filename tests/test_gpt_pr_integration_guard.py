@@ -260,6 +260,35 @@ class PRWatchTests(unittest.TestCase):
                 with self.assertRaises(guard.IncompleteSnapshot):
                     guard.collect(repo)
 
+    def test_redirect_policy_does_not_forward_authorization(self):
+        policy = guard._NoRedirect()
+        with self.assertRaises(guard.IncompleteSnapshot):
+            policy.redirect_request(None, None, 302, 'Found', {},
+                                    'https://redirect.attacker.invalid/collect')
+
+    def test_offline_snapshots_are_not_claimed_as_live(self):
+        fixture = snapshot(pr(1, ['a.py']))
+        offline = guard.analyze(fixture, evidence_mode='offline_snapshot')
+        self.assertEqual(offline['evidence_mode'], 'offline_snapshot')
+        self.assertEqual(offline['snapshot_currentness'], 'UNVERIFIED_OFFLINE')
+        self.assertIn('offline snapshot', offline['provenance'])
+        self.assertEqual(offline['runtime_verdict'], 'UNOBSERVED')
+        live = guard.analyze(fixture, evidence_mode='github_api')
+        self.assertEqual(live['snapshot_currentness'], 'RECENT_API_READ_NOT_ATOMIC')
+        self.assertIn('non-atomic', live['provenance'])
+
+    def test_offline_cli_report_marks_unverified_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'snapshot.json'
+            report = Path(folder) / 'report.json'
+            source.write_text(json.dumps(snapshot(pr(1, ['a.py']))), encoding='utf-8')
+            self.assertEqual(
+                guard.main(['--snapshot-in', str(source), '--report-out', str(report)]), 0,
+            )
+            saved = json.loads(report.read_text(encoding='utf-8'))
+            self.assertEqual(saved['evidence_mode'], 'offline_snapshot')
+            self.assertEqual(saved['snapshot_currentness'], 'UNVERIFIED_OFFLINE')
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
