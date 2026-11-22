@@ -234,9 +234,17 @@ if AIOHTTP_AVAILABLE:
         except asyncio.CancelledError:
             _api_event("request_cancelled", request_id)
             raise
-        except Exception:
-            _api_event("request_exception", request_id)
-            logger.exception("Unhandled API request exception request_id=%s", request_id)
+        except Exception as exc:
+            _api_event(
+                "request_exception", request_id,
+                error_class=type(exc).__name__,
+            )
+            # Python exception messages may contain private prompt data, URLs
+            # or API tokens. Preserve the class and trace identity only.
+            logger.error(
+                "Unhandled API request exception request_id=%s error_class=%s",
+                request_id, type(exc).__name__,
+            )
             raise
         response.headers.setdefault("X-Hermes-Request-Id", request_id)
         _api_event(
@@ -359,37 +367,64 @@ class _IdempotencyCache:
             return
         if task.cancelled() or task.exception() is not None:
             item["state"] = "outcome_unknown"
-            logger.warning("hermes_api_idempotency outcome=unknown")
+            _api_event(
+                "idempotency_outcome_unknown", item["request_id"],
+                entry_id=item["entry_id"], endpoint=item["endpoint"],
+                reason_code="unverified_effect_status",
+            )
         else:
             item["state"] = "succeeded"
         item["ts"] = time.monotonic()
 
-    async def get_or_set(self, key: str, fingerprint: str, compute_coro):
+    async def get_or_set(
+        self, key: str, fingerprint: str, compute_coro,
+        *, request_id: str = "unattributed",
+    ):
         self._purge()
+        endpoint = key.split(":", 1)[0]
         item = self._store.get(key)
         if item is not None:
             if item["fp"] != fingerprint:
+                _api_event(
+                    "idempotency_conflict", request_id,
+                    entry_id=item["entry_id"], endpoint=endpoint,
+                )
                 raise IdempotencyConflictError("Key reused with different input")
             self._store.move_to_end(key)
             if item["task"].done() and (
                 item["task"].cancelled() or item["task"].exception() is not None
             ):
+                _api_event(
+                    "idempotency_reconciliation_required", request_id,
+                    entry_id=item["entry_id"], endpoint=endpoint,
+                )
                 raise IdempotencyUncertainOutcome(
                     "Previous execution outcome requires reconciliation"
                 )
-            logger.info("hermes_api_idempotency outcome=%s", (
-                "replay" if item["task"].done() else "join"
-            ))
+            _api_event(
+                "idempotency_replay" if item["task"].done()
+                else "idempotency_join",
+                request_id, entry_id=item["entry_id"],
+                endpoint=endpoint,
+            )
             return await asyncio.shield(item["task"])
         if len(self._store) >= self._max:
+            _api_event(
+                "idempotency_capacity", request_id, endpoint=endpoint,
+            )
             raise IdempotencyCapacityError("All idempotency slots occupied")
         task = asyncio.create_task(compute_coro())
+        entry_id = "hid_" + uuid.uuid4().hex[:20]
         self._store[key] = {
             "task": task, "fp": fingerprint, "ts": time.monotonic(),
-            "state": "running",
+            "state": "running", "entry_id": entry_id,
+            "request_id": request_id, "endpoint": endpoint,
         }
         task.add_done_callback(lambda finished: self._on_done(key, finished))
-        logger.info("hermes_api_idempotency outcome=new")
+        _api_event(
+            "idempotency_new", request_id,
+            entry_id=entry_id, endpoint=endpoint,
+        )
         return await asyncio.shield(task)
 
 
@@ -768,6 +803,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 )
                 completed = await self._idem_cache.get_or_set(
                     "chat:" + idem_key, fp, _compute_completion,
+                    request_id=request.get("hermes_request_id", "unattributed"),
                 )
             else:
                 completed = await _compute_completion()
@@ -1112,6 +1148,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 fp = _make_request_fingerprint({"body": body}, ["body"])
                 response_data = await self._idem_cache.get_or_set(
                     "responses:" + idem_key, fp, _compute_response,
+                    request_id=request.get("hermes_request_id", "unattributed"),
                 )
             else:
                 response_data = await _compute_response()
