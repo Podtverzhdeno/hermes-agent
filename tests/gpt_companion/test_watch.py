@@ -146,3 +146,41 @@ def test_watcher_tracks_partial_repair_of_prior_attempt_sequence_gap(tmp_path):
     assert third["diagnosis"]["missing_sequences_prior_attempts"] == 0
     assert third["diagnosis"]["state"] == "RECENT_TELEMETRY"
     assert len(watcher.history("run-42")) == 3
+
+
+def test_watch_sqlite_error_codes_are_not_all_corruption():
+    import sqlite3
+    from gpt_companion.watch import _sqlite_stop_code
+
+    cases = [
+        (sqlite3.SQLITE_BUSY, "WATCH_DB_LOCKED"),
+        (sqlite3.SQLITE_LOCKED, "WATCH_DB_LOCKED"),
+        (sqlite3.SQLITE_FULL, "WATCH_STORAGE_FULL"),
+        (sqlite3.SQLITE_CORRUPT, "JOURNAL_INTEGRITY_FAILED"),
+        (sqlite3.SQLITE_NOTADB, "JOURNAL_INTEGRITY_FAILED"),
+        (sqlite3.SQLITE_IOERR, "WATCH_IO_ERROR"),
+        (sqlite3.SQLITE_ERROR, "WATCH_DB_UNAVAILABLE"),
+    ]
+    for code, expected in cases:
+        error = sqlite3.OperationalError("do not expose /private/local/db/path")
+        error.sqlite_errorcode = code
+        assert _sqlite_stop_code(error) == expected
+    assert _sqlite_stop_code(sqlite3.DatabaseError("unclassified")) == "WATCH_DB_UNAVAILABLE"
+
+
+def test_watch_cli_reports_locked_db_without_leaking_internal_exception(tmp_path, monkeypatch, capsys):
+    import sqlite3
+
+    def simulate_locked(*args, **kwargs):
+        error = sqlite3.OperationalError("database is locked: /private/customer/path")
+        error.sqlite_errorcode = sqlite3.SQLITE_BUSY
+        raise error
+
+    monkeypatch.setattr(StatusWatch, "sample", simulate_locked)
+    result = main(["--db", str(tmp_path / "events.db"),
+                   "--status-db", str(tmp_path / "alerts.db"),
+                   "--run-id", "run-42"])
+    assert result == 3
+    output = capsys.readouterr().err.strip()
+    assert json.loads(output)["state"] == "WATCH_DB_LOCKED"
+    assert "/private/customer/path" not in output
