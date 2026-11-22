@@ -113,3 +113,13 @@ Unverified and REQUIRED for promotion: Python 3.11/3.12 package imports in actua
 - https://opentelemetry.io/docs/specs/semconv/general/events/
 - https://sqlite.org/wal.html
 - https://docs.temporal.io/encyclopedia/retry-policies
+
+## ADD-008: CI cancellation is not a test failure
+
+The fork's main `.github/workflows/tests.yml` sets `concurrency.group: tests-${{ github.ref }}` and `cancel-in-progress: true`. When a second commit advances the same PR, a previous workflow can be cancelled even though no test assertion failed. Do not infer that a cancelled workflow proves a code failure, a stopped Hermes agent or successful completion.
+
+Categorize `CI_SUPERSEDED_BY_NEW_SHA` (cancellation correlated with newer commit/run on same ref); `CI_CANCELLED_UNEXPLAINED` (cause unknown); `CI_TEST_FAILURE` (assertion failure with test ID); `CI_INFRA_FAILURE` (dependency, credential, runner, setup); `CI_SKIPPED` (not evidence); and `CI_PASSED_AT_OLD_SHA` (invalid for current head). Every category requires exact current head SHA and run ID; verify cause from logs/check metadata, not the icon color.
+
+PR #4's general workflow had 7,513 passed, 29 failed, 171 skipped; many errors report missing OpenAI credentials, and `test_agent_error_returns_500` expects provider error text now deliberately redacted by the API. Do not restore sensitive error output simply to pass the outdated assertion. PR #6's targeted GPT Gateway Regression passed but its general run cancelled, with no full-suite green conclusion.
+
+The dedicated observer offline CI uses `cancel-in-progress: true` to coalesce obsolete same-PR checks and avoid a 50-agent runner stampede. Distinct PR refs retain distinct concurrency groups. The latest exact-SHA successful test is the only eligible test evidence. This is a verified workflow setting and a **possible**, not universally confirmed, explanation of the cancelled runs.
