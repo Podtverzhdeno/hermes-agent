@@ -1,0 +1,39 @@
+name: External CDP Browser Ownership QA
+
+on:
+  pull_request:
+    paths:
+      - 'tools/browser_tool.py'
+      - 'tests/tools/test_browser_cleanup.py'
+      - 'tests/tools/test_browser_cdp_override.py'
+      - '.github/workflows/browser-cdp-ownership-qa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attached-browser-cleanup:
+    name: Detached CDP ownership / local cleanup regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Configure Python 3.11
+        run: uv python install 3.11
+      - name: Install module and focused test dependencies
+        shell: bash
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e '.[dev]'
+      - name: Run targeted tests without external credentials or real browsers
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ''
+          OPENAI_API_KEY: ''
+          NOUS_API_KEY: ''
+        run: |
+          source .venv/bin/activate
+          python -m pytest tests/tools/test_browser_cleanup.py tests/tools/test_browser_cdp_override.py -q -n 0 --tb=short
