@@ -127,8 +127,8 @@ class TestBrowserCleanup:
         terminate_pid.assert_not_called()
         remove_socket.assert_not_called()
 
-    def test_attached_cleanup_on_inactivity_and_exit_is_non_destructive(self):
-        """Both caller pathways use cleanup_browser; neither may kill CDP owner."""
+    def test_attached_idle_cleanup_is_non_destructive(self):
+        """Inactivity cleanup must never terminate an externally attached browser."""
         browser_tool = self.browser_tool
         browser_tool._active_sessions["attached-task"] = {
             "session_name": "cdp_12345678",
@@ -167,3 +167,26 @@ class TestBrowserCleanup:
             browser_tool.cleanup_browser("local-task")
         cli.assert_called_once_with("local-task", "close", [], timeout=10)
         assert "local-task" not in browser_tool._active_sessions
+
+    def test_attached_exit_cleanup_is_non_destructive(self):
+        """Process-exit cleanup must forget Hermes state, not terminate Edge."""
+        browser_tool = self.browser_tool
+        browser_tool._cleanup_done = False
+        browser_tool._active_sessions["attached-task"] = {
+            "session_name": "cdp_12345678",
+            "bb_session_id": None,
+            "cdp_url": "ws://127.0.0.1:9223/devtools/browser/test",
+            "features": {"cdp_override": True},
+        }
+        with (
+            patch("tools.browser_tool._maybe_stop_recording"),
+            patch("tools.browser_tool._run_browser_command") as cli,
+            patch("tools.browser_tool.os.kill") as terminate_pid,
+            patch("tools.browser_tool.shutil.rmtree") as remove_socket,
+        ):
+            browser_tool._emergency_cleanup_all_sessions()
+        cli.assert_not_called()
+        terminate_pid.assert_not_called()
+        remove_socket.assert_not_called()
+        assert browser_tool._cleanup_done is True
+        assert browser_tool._active_sessions == {}
