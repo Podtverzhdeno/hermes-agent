@@ -29,6 +29,21 @@ PROFILES = (
     "skills/mlops/evaluation/lm-evaluation-harness",
     "skills/research/arxiv",
     "skills/mcp/native-mcp",
+    "skills/github/github-auth",
+    "skills/github/github-repo-management",
+    "skills/autonomous-ai-agents/codex",
+    "skills/autonomous-ai-agents/claude-code",
+    "skills/software-development/code-review",
+    "skills/software-development/writing-plans",
+    "skills/software-development/requesting-code-review",
+    "optional-skills/mcp/fastmcp",
+    "optional-skills/mlops/chroma",
+    "optional-skills/mlops/faiss",
+    "skills/mlops/research/dspy",
+    "skills/productivity/powerpoint",
+    "skills/productivity/nano-pdf",
+    "optional-skills/creative/blender-mcp",
+    "skills/productivity/ocr-and-documents",
 )
 
 
@@ -82,7 +97,7 @@ class TestBundledHarnesses(unittest.TestCase):
                 negative_cases.update(profile["routing"]["do_not_trigger"])
         self.assertEqual(len(names), len(PROFILES))
         self.assertFalse(trigger_cases & negative_cases)
-        self.assertGreaterEqual(len(trigger_cases) + len(negative_cases), 48)
+        self.assertGreaterEqual(len(trigger_cases) + len(negative_cases), 120)
 
     def test_no_unprofiled_twin_for_same_skill(self):
         names = []
