@@ -617,7 +617,9 @@ class AutopilotLedger:
         ):
             raise ValueError("invalid evidence")
         with self._db(write=True) as db:
-            self._task(db, task_id)
+            current = self._task(db, task_id)
+            if current["status"] in TERMINAL:
+                raise LedgerConflict("evidence for a terminal task is immutable")
             db.execute("""
                 INSERT INTO evidence
                 (task_id,kind,source,revision,conclusion,artifact_ref,trusted,observed_at)
@@ -651,15 +653,20 @@ class AutopilotLedger:
             if task["status"] != "verifying":
                 raise LedgerConflict("verification has not begun")
             required = json.loads(task["required_evidence"])
-            passed = {
-                x["kind"] for x in db.execute("""
-                    SELECT kind FROM evidence WHERE task_id=? AND revision=?
-                        AND conclusion='passed' AND trusted=1
-                """, (task_id, task["revision"]))
-            }
-            if not set(required).issubset(passed):
+            verdicts = list(db.execute("""
+                SELECT kind, conclusion FROM evidence
+                WHERE task_id=? AND revision=? AND trusted=1
+            """, (task_id, task["revision"])))
+            passed = {x["kind"] for x in verdicts if x["conclusion"] == "passed"}
+            failed = {x["kind"] for x in verdicts if x["conclusion"] == "failed"}
+            # A trusted negative verdict from ANY verifier for a required
+            # kind takes precedence over a positive verdict from another
+            # verifier. Merely finding one pass does not prove consensus.
+            failed_required = sorted(set(required) & failed)
+            missing = sorted(set(required) - passed)
+            if failed_required or missing:
                 self._event(db, task_id, "verification_incomplete",
-                            {"missing": sorted(set(required) - passed)})
+                            {"missing": missing, "failed": failed_required})
                 return False
             db.execute("""
                 UPDATE tasks SET status='succeeded', owner=NULL,lease_until=NULL,
