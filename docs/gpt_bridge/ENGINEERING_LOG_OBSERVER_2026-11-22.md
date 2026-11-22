@@ -83,3 +83,5 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 
 
 | O-32 | VERIFIED_UPSTREAM_TAG + DESIGN | Inspected v0.23.3 Kanban worker-lanes contract: task_runs, task_events, claim extension, crash/give_up/timeout, stranded and stale diagnostics, review deadlocks, owner receipts and cooperative descendants fence. | Added phase-specific stop taxonomy and Kanban/Runs evidence join in SDD §17. No live installed Kanban/extension observed, no scheduler added. |
+
+| O-33 | HISTORICAL_CONTEXT_NOT_LIVE + COMMITTED_RUNBOOK | Prior Hermes/GPT Windows extension path and bridge port 18763 identified from earlier setup, with earlier v0.6.6 stale/bridge-down state. Current extension itself not visible via scoped Workspace. Read-only Windows diagnostic runbook committed; no local files or services changed. | Obtain exact current extension manifest, version, authorized host/source and redacted health; keep live monitoring deployment HOLD. |
