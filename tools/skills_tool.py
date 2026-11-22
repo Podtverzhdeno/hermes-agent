@@ -1029,6 +1029,31 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     ensure_ascii=False,
                 )
 
+            # Per-skill reference cap is a real read boundary, unlike
+            # advisory tool/approval fields. Prevent accidental huge context
+            # loads and force large archives into referenced chapters.
+            if harness is not None:
+                reference_cap = harness["budget"]["max_reference_bytes"]
+                try:
+                    reference_bytes = target_file.stat().st_size
+                except OSError as exc:
+                    return json.dumps(
+                        {"success": False,
+                         "error": f"Cannot inspect skill reference size: {type(exc).__name__}",
+                         "harness_status": "declared"},
+                        ensure_ascii=False,
+                    )
+                if reference_bytes > reference_cap:
+                    return json.dumps(
+                        {"success": False,
+                         "error": "Skill reference exceeds harness byte limit.",
+                         "code": "reference_too_large",
+                         "size_bytes": reference_bytes,
+                         "max_reference_bytes": reference_cap,
+                         "hint": "Split the reference into smaller chapters and load only the needed one."},
+                        ensure_ascii=False,
+                    )
+
             # Read the file content
             try:
                 content = target_file.read_text(encoding="utf-8")
