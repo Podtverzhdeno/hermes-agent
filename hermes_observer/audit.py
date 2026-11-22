@@ -355,8 +355,14 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
             if event.get("state_to") == "succeeded":
                 successes.append(event)
         if kind in STOP_KINDS and task_id:
-            if kind in ("task.blocked", "worker.lease_expired") and not event.get("reason_code"):
+            # A denied approval is a stop too. Missing its reason is a real
+            # observability gap, not a healthy run, even if no tool was called.
+            if not event.get("reason_code"):
                 findings.add("STOP_WITHOUT_REASON_CODE", "incomplete", task_id=task_id, event_id=eid)
+            elif event["reason_code"] == "UNKNOWN":
+                # Valid but non-actionable classification: do not treat this as
+                # an explained stop merely because it is a recognized enum.
+                findings.add("STOP_REASON_UNKNOWN", "incomplete", task_id=task_id, event_id=eid)
             stopped.append(event)
         if kind in EFFECT_KINDS:
             key = (task_id, event["effect_key"], fence)
@@ -468,11 +474,16 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
         status, exit_code = "incomplete_observation", 3
     else:
         status, exit_code = "no_anomalies_in_supplied_slice", 0
+    # Source streams can arrive in arbitrary order. An order-dependent cap
+    # produces false changes in operator reports and can hide a later stop.
+    # Sort the bounded metadata only; IDs are validated and content is omitted.
+    sorted_stops = sorted(stopped, key=lambda x: (
+        x["task_id"], x["kind"], x["event_id"]))
     stop_observations = [
         {"task_id": x["task_id"], "kind": x["kind"],
          "reason_code": x.get("reason_code") or "UNKNOWN",
          "basis": "UNTRUSTED_REPORTED_METADATA"}
-        for x in stopped[:MAX_FINDINGS]
+        for x in sorted_stops[:MAX_FINDINGS]
     ]
     return {
         "schema_version": 1,
