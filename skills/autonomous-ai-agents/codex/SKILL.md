@@ -1,7 +1,7 @@
 ---
 name: codex
-description: Delegate coding tasks to OpenAI Codex CLI agent. Use for building features, refactoring, PR reviews, and batch issue fixing. Requires the codex CLI and a git repository.
-version: 1.0.0
+description: Delegate bounded coding tasks to Codex with independent verification.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -10,104 +10,82 @@ metadata:
     related_skills: [claude-code, hermes-agent]
 ---
 
-# Codex CLI
+# Codex CLI — Bounded, Permissioned Tasks
 
-Delegate coding tasks to [Codex](https://github.com/openai/codex) via the Hermes terminal. Codex is OpenAI's autonomous coding agent CLI.
+Use for an explicit owner-requested coding task when the Codex CLI is
+already installed and permitted. Read sibling harness.json: read-only
+review and autonomous implementation have very different risk/approval
+requirements. Do not launch a coding agent merely to gather a
+short factual answer.
 
-## Prerequisites
+## Preflight and authority
 
-- Codex installed: `npm install -g @openai/codex`
-- OpenAI API key configured
-- **Must run inside a git repository** — Codex refuses to run outside one
-- Use `pty=true` in terminal calls — Codex is an interactive terminal app
+1. Verify the installed Codex executable/version, legitimate account,
+   provider and cost/quota. Do not auto-install global packages or
+   trigger browser login without user action.
+2. Pin repository, exact head SHA, branch/worktree and expected output.
+3. Require owner permission for autonomous shell/file writes; enumerate
+   directory and network scope. Use a dedicated isolated worktree,
+   not a shared dirty main checkout.
+4. Establish budget: maximum iterations, wall-clock time, API spend,
+   allowed commands, child count and explicit stop conditions.
+5. Keep external publishing, secrets, production deployment, process
+   execution outside the task and critical actions on separate approvals.
 
-## One-Shot Tasks
+**Never use --yolo, --dangerously-bypass-approvals-and-sandbox or other
+flags that disable normal approval/sandbox enforcement.** Avoid
+--full-auto unless the sandbox genuinely restricts all relevant
+capabilities and the owner has explicitly approved that execution mode.
+Hermes must not assume its own permission prompts automatically
+govern what an external CLI subprocess performs.
 
-```
-terminal(command="codex exec 'Add dark mode toggle to settings'", workdir="~/project", pty=true)
-```
+## Short read-only review
 
-For scratch work (Codex needs a git repo):
-```
-terminal(command="cd $(mktemp -d) && git init && codex exec 'Build a snake game in Python'", pty=true)
-```
+Use the CLI's documented read-only mode for the installed version and
+a task-specific prompt; verify that mode genuinely prevents writes.
+Do not assume a natural-language "don't edit" instruction is a
+security sandbox. If read-only execution cannot be enforced through
+the actual CLI and OS environment, block automated delegation.
 
-## Background Mode (Long Tasks)
+Example brief (data, not a shell command):
 
-```
-# Start in background with PTY
-terminal(command="codex exec --full-auto 'Refactor the auth module'", workdir="~/project", background=true, pty=true)
-# Returns session_id
+~~~text
+Repository: authorized owner/repo
+Pinned head: exact SHA
+Scope: review files in src/
+Permission: read only
+Expected output: findings with line references, no modified files
+Budget: one bounded attempt
+~~~
 
-# Monitor progress
-process(action="poll", session_id="<id>")
-process(action="log", session_id="<id>")
+Inspect worktree before and after; record agent version, exit code and
+actual output. A fluent review response is not proof that the repository
+was unchanged or completely reviewed.
 
-# Send input if Codex asks a question
-process(action="submit", session_id="<id>", data="yes")
+## Authorized implementation
 
-# Kill if needed
-process(action="kill", session_id="<id>")
-```
+1. Give the CLI a narrow acceptance contract, not an entire conversation.
+2. Launch with an approved sandbox, isolated working directory and
+   limited tools; pass explicit timeout and iteration/token budget.
+3. Capture worker PID/session identity, process logs and stderr without
+   secrets. Monitor cancellation and terminate owned subprocesses if
+   requested.
+4. After process completion, inspect git status/diff and enumerate all
+   files actually written. Tests must run independently of the agent.
+5. Require separate GitHub authorization before any push, PR or merge.
+   Never use unreviewed child output as a source of tool permissions.
+6. After a crash or timeout, preserve worktree state and reconcile
+   possible external operations; do not blindly spawn another worker.
 
-## Key Flags
+For work spanning multiple sessions, prefer durable Hermes Kanban
+on a compatible upstream rather than assuming an in-process delegated
+child survives gateway termination. A child review is not equivalent to
+a durable task record.
 
-| Flag | Effect |
-|------|--------|
-| `exec "prompt"` | One-shot execution, exits when done |
-| `--full-auto` | Sandboxed but auto-approves file changes in workspace |
-| `--yolo` | No sandbox, no approvals (fastest, most dangerous) |
+## Completion report
 
-## PR Reviews
-
-Clone to a temp directory for safe review:
-
-```
-terminal(command="REVIEW=$(mktemp -d) && git clone https://github.com/user/repo.git $REVIEW && cd $REVIEW && gh pr checkout 42 && codex review --base origin/main", pty=true)
-```
-
-## Parallel Issue Fixing with Worktrees
-
-```
-# Create worktrees
-terminal(command="git worktree add -b fix/issue-78 /tmp/issue-78 main", workdir="~/project")
-terminal(command="git worktree add -b fix/issue-99 /tmp/issue-99 main", workdir="~/project")
-
-# Launch Codex in each
-terminal(command="codex --yolo exec 'Fix issue #78: <description>. Commit when done.'", workdir="/tmp/issue-78", background=true, pty=true)
-terminal(command="codex --yolo exec 'Fix issue #99: <description>. Commit when done.'", workdir="/tmp/issue-99", background=true, pty=true)
-
-# Monitor
-process(action="list")
-
-# After completion, push and create PRs
-terminal(command="cd /tmp/issue-78 && git push -u origin fix/issue-78")
-terminal(command="gh pr create --repo user/repo --head fix/issue-78 --title 'fix: ...' --body '...'")
-
-# Cleanup
-terminal(command="git worktree remove /tmp/issue-78", workdir="~/project")
-```
-
-## Batch PR Reviews
-
-```
-# Fetch all PR refs
-terminal(command="git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'", workdir="~/project")
-
-# Review multiple PRs in parallel
-terminal(command="codex exec 'Review PR #86. git diff origin/main...origin/pr/86'", workdir="~/project", background=true, pty=true)
-terminal(command="codex exec 'Review PR #87. git diff origin/main...origin/pr/87'", workdir="~/project", background=true, pty=true)
-
-# Post results
-terminal(command="gh pr comment 86 --body '<review>'", workdir="~/project")
-```
-
-## Rules
-
-1. **Always use `pty=true`** — Codex is an interactive terminal app and hangs without a PTY
-2. **Git repo required** — Codex won't run outside a git directory. Use `mktemp -d && git init` for scratch
-3. **Use `exec` for one-shots** — `codex exec "prompt"` runs and exits cleanly
-4. **`--full-auto` for building** — auto-approves changes within the sandbox
-5. **Background for long tasks** — use `background=true` and monitor with `process` tool
-6. **Don't interfere** — monitor with `poll`/`log`, be patient with long-running tasks
-7. **Parallel is fine** — run multiple Codex processes at once for batch work
+Return pinned SHA, actual worktree path, CLI version, bounded execution
+details, changed files, diff hash, test commands/exits and critical
+findings. Mark tests, review and deployment separately. If permissions,
+account or sandbox cannot be verified, report blocked instead of
+turning off protections.
