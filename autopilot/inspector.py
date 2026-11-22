@@ -84,16 +84,17 @@ def inspect_project(
             """, (project, limit)).fetchall()
             cards = []
             for task in rows:
-                missing = []
+                missing, failures = [], []
                 if task["status"] == "verifying":
-                    passed = {
-                        r["kind"] for r in db.execute("""
-                            SELECT kind FROM evidence
-                            WHERE task_id=? AND revision=?
-                              AND conclusion='passed' AND trusted=1
-                        """, (task["id"], task["revision"]))
-                    }
-                    missing = sorted(set(json.loads(task["required_evidence"])) - passed)
+                    verdicts = list(db.execute("""
+                        SELECT kind, conclusion FROM evidence
+                        WHERE task_id=? AND revision=? AND trusted=1
+                    """, (task["id"], task["revision"])))
+                    passed = {r["kind"] for r in verdicts if r["conclusion"] == "passed"}
+                    failed = {r["kind"] for r in verdicts if r["conclusion"] == "failed"}
+                    required = set(json.loads(task["required_evidence"]))
+                    missing = sorted(required - passed)
+                    failures = sorted(required & failed)
                 cards.append({
                     "task_id": task["id"],
                     "status": task["status"],
@@ -107,6 +108,7 @@ def inspect_project(
                                     and task["lease_until"] is not None
                                     and task["lease_until"] <= now,
                     "missing_evidence": missing,
+                    "failed_required_evidence": failures,
                     # Never emit approval digest, tool arguments, receipts or secrets.
                 })
             db.execute("ROLLBACK")
@@ -117,6 +119,7 @@ def inspect_project(
 
     stopped = bool(control and control["stopped"])
     generation = int(control["generation"]) if control else 0
+    failed_evidence_cards = sum(bool(c["failed_required_evidence"]) for c in cards)
     if pending_effects:
         urgency, next_step = ("critical", "reconcile_reserved_external_effects")
     elif stopped:
@@ -127,6 +130,8 @@ def inspect_project(
         urgency, next_step = ("attention", "owner_approval_required")
     elif expired_workers:
         urgency, next_step = ("attention", "reclaim_stale_workers")
+    elif failed_evidence_cards:
+        urgency, next_step = ("attention", "repair_failed_required_evidence")
     elif counts.get("blocked", 0):
         urgency, next_step = ("attention", "resolve_blockers")
     elif counts.get("failed", 0):
@@ -152,6 +157,7 @@ def inspect_project(
         "waiting_owner_approvals": waiting_approvals,
         "expired_owner_approvals": expired_approvals,
         "expired_worker_leases": expired_workers,
+        "failed_required_evidence_cards_shown": failed_evidence_cards,
         "urgency": urgency,
         "next_step": next_step,
         "tasks_shown": len(cards),
