@@ -308,11 +308,19 @@ class EventJournal:
         # Only a source-local sequence is ordered. Contradictory terminal
         # reports from multiple emitters require operator reconciliation.
         terminal_sources = {e["source"] for e in terminal_events}
-        if len(terminal_sources) > 1:
+        cross_source_terminal = len(terminal_sources) > 1
+        # A worker stop is lifecycle cleanup, not a reported task outcome.
+        outcome_reports = [e for e in terminal_events if e["kind"] != "worker.stopped"]
+        conflicting_outcomes = len({e["kind"] for e in outcome_reports}) > 1
+        if cross_source_terminal or conflicting_outcomes:
             contradictory = True
-        last_terminal = (max(terminal_events, key=lambda e: e["sequence"])["kind"]
-                         if terminal_events else None)
-        reason = next((e["reason_code"] for e in reversed(terminal_events)
+        last_terminal = (max(outcome_reports, key=lambda e: e["sequence"])["kind"]
+                         if outcome_reports else
+                         ("worker.stopped" if terminal_events else None))
+        failure_reports = sorted(
+            (e for e in outcome_reports if e["kind"] == "run.reported_failed"),
+            key=lambda e: e["sequence"], reverse=True)
+        reason = next((e["reason_code"] for e in failure_reports
                        if "reason_code" in e), "UNKNOWN")
         if reserved and live_age >= liveness_timeout:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
@@ -321,7 +329,9 @@ class EventJournal:
         elif clock_reversed:
             state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
         elif contradictory or missing:
-            state, next_action = "TRACE_INCOMPLETE", "FETCH_MISSING_EVENTS"
+            state = "TRACE_INCOMPLETE"
+            next_action = ("RECONCILE_CONFLICTING_EVENTS" if contradictory
+                           else "FETCH_MISSING_EVENTS")
         elif pending_approval:
             state, next_action = "WAITING_APPROVAL", "ASK_AUTHORIZED_REVIEWER"
         elif last_terminal == "run.reported_failed":
@@ -343,7 +353,13 @@ class EventJournal:
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
-                "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
+                "reported_reason_code": reason if state == "REPORTED_FAILED" else None,
+                "diagnostic_flags": sorted(
+                    (["MISSING_SEQUENCES"] if missing else []) +
+                    (["CLOCK_REGRESSION"] if clock_reversed else []) +
+                    (["EVENT_CAUSALITY_CONFLICT"] if contradictory else []) +
+                    (["CROSS_SOURCE_TERMINALS"] if cross_source_terminal else []) +
+                    (["CONFLICTING_OUTCOME_REPORTS"] if conflicting_outcomes else [])),
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
                 "worker_sources_count": len(worker_sources),

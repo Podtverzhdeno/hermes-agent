@@ -47,7 +47,7 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | --- | --- |
 | `NOT_OBSERVED` | Inspect authenticated intake and observer connection |
 | `CLOCK_SKEW_DETECTED` | Check server clock/time sync; do not diagnose a dead worker from invalid timestamps |
-| `TRACE_INCOMPLETE` | Replay missing source-local sequences from durable outbox |
+| `TRACE_INCOMPLETE` | Use diagnostic_flags to distinguish sequence gap replay from conflicting outcome investigation |
 | `RECENT_TELEMETRY` | Observe; do not infer task success |
 | `ALIVE_NO_PROGRESS` | Check tool stage, budget, provider response and true process state |
 | `PARTIAL_WORKER_OUTAGE` | Find the stale worker source; fresh gateway/other-worker events do not prove that worker is alive |
@@ -55,7 +55,7 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | `EFFECT_IN_FLIGHT` | Wait for authenticated receipt; never blind-retry writes |
 | `NEEDS_RECONCILIATION` | Read back provider action by stable ID, reconcile in task ledger |
 | `WAITING_APPROVAL` | Request exact human approval bound to action digest and expiry |
-| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision |
+| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision; worker stop does not hide reported outcome |
 | `REPORTED_FAILED` | Use normalized reason and inspect provider/CI evidence |
 
 ### No persistent process by default
@@ -79,3 +79,15 @@ python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-hist
 ```
 
 The process prints only state transitions. A crash between persisting an alert and printing it means stdout can miss a line; the durable `transitions` table still contains the event. Neither polling interval nor event freshness proves that the user's GPT account/browser is alive. There is no external action, retry, repair, webhook, push notification, or auto-approval path.
+
+### Causal diagnosis hardening (stacked change, awaiting CI)
+
+
+- A worker stop after a failure or completion report cannot hide the reported outcome. A reported completion still requires independent verification.
+- Conflicting completion/failure claims in one attempt are flagged rather than accepting the newest text.
+- A backwards wall-clock jump yields CLOCK_SKEW_DETECTED (except when an unresolved effect already demands a more conservative state). This does not prove process death.
+- diagnostic_flags is an additive, untrusted diagnostic hint; it may contain MISSING_SEQUENCES, CLOCK_REGRESSION, EVENT_CAUSALITY_CONFLICT, CROSS_SOURCE_TERMINALS and CONFLICTING_OUTCOME_REPORTS.
+- Do not interpret tool.effect_acknowledged or tool.effect_not_executed from an unauthenticated emitter as proof that an external write is safely resolved. Only the trusted ledger/verifier may authorize retry or certify success.
+- Direct Python consumers should call verify_chain before assess and handle SQLite failures without treating corruption as a worker failure. The packaged CLI already performs integrity checking. No authenticated ingress, live session monitor, scheduler or production repair is added here.
+
+Integration owner note: this patch is stacked on PR #12 and is not a separate replacement for the PR #9 gpt_bridge observer. Consult the SDD collision map before merging.
