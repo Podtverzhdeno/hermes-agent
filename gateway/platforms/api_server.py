@@ -44,7 +44,15 @@ logger = logging.getLogger(__name__)
 
 
 def _api_event(event: str, request_id: str, **details: Any) -> None:
-    """Structured, payload-free operational telemetry (no prompts or credentials)."""
+    """Structured, payload-free operational telemetry (no prompts or credentials).
+
+    Emit best-effort diagnostics; logging must not mask client disconnects or
+    change the primary execution outcome even with mocked/invalid requests.
+    """
+    if not isinstance(request_id, str) or not (
+        len(request_id) == 36 and request_id.startswith("hrq_")
+    ):
+        request_id = "unattributed"
     logger.info(
         "hermes_api_event %s",
         json.dumps(
@@ -705,8 +713,11 @@ class APIServerAdapter(BasePlatformAdapter):
                 _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
                 status=503, headers={"Retry-After": "5"},
             )
-        except Exception:
-            logger.exception("Agent execution failed in chat completion")
+        except Exception as exc:
+            logger.error(
+                "Agent execution failed in chat completion; error_class=%s",
+                type(exc).__name__,
+            )
             return web.json_response(
                 _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
                 status=500,
@@ -790,10 +801,11 @@ class APIServerAdapter(BasePlatformAdapter):
             try:
                 result, agent_usage = await agent_task
                 usage = agent_usage or usage
-            except Exception:
-                logger.exception(
-                    "SSE agent failed request_id=%s completion_id=%s",
+            except Exception as exc:
+                logger.error(
+                    "SSE agent failed request_id=%s completion_id=%s error_class=%s",
                     request.get("hermes_request_id", "-"), completion_id,
+                    type(exc).__name__,
                 )
                 _api_event(
                     "agent_failed", request.get("hermes_request_id", "-"),
@@ -1004,8 +1016,11 @@ class APIServerAdapter(BasePlatformAdapter):
                 _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
                 status=503, headers={"Retry-After": "5"},
             )
-        except Exception:
-            logger.exception("Agent execution failed in Responses API")
+        except Exception as exc:
+            logger.error(
+                "Agent execution failed in Responses API; error_class=%s",
+                type(exc).__name__,
+            )
             return web.json_response(
                 _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
                 status=500,
