@@ -130,29 +130,53 @@ class ResponseStore:
         self._conn.commit()
         return json.loads(row[0])
 
-    def put(self, response_id: str, data: Dict[str, Any]) -> None:
-        """Store a response, evicting the oldest if at capacity."""
-        import time
-        self._conn.execute(
-            "INSERT OR REPLACE INTO responses (response_id, data, accessed_at) VALUES (?, ?, ?)",
-            (response_id, json.dumps(data, default=str), time.time()),
-        )
-        # Evict oldest entries beyond max_size
-        count = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
-        if count > self._max_size:
+    def put(
+        self,
+        response_id: str,
+        data: Dict[str, Any],
+        *,
+        conversation_name: Optional[str] = None,
+    ) -> None:
+        """Atomically persist a response, optional conversation alias, and eviction.
+
+        Previously the response and alias were committed separately: a crash
+        between the two left a committed response but a stale conversation.
+        The context manager rolls back ALL local store changes on SQL failure.
+        This does not serialize reads or concurrent agent runs by conversation.
+        """
+        with self._conn:
             self._conn.execute(
-                "DELETE FROM responses WHERE response_id IN "
-                "(SELECT response_id FROM responses ORDER BY accessed_at ASC LIMIT ?)",
-                (count - self._max_size,),
+                "INSERT OR REPLACE INTO responses (response_id, data, accessed_at) VALUES (?, ?, ?)",
+                (response_id, json.dumps(data, default=str), time.time()),
             )
-        self._conn.commit()
+            count = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+            if count > self._max_size:
+                self._conn.execute(
+                    "DELETE FROM responses WHERE response_id IN "
+                    "(SELECT response_id FROM responses ORDER BY accessed_at ASC LIMIT ?)",
+                    (count - self._max_size,),
+                )
+            if conversation_name:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO conversations (name, response_id) VALUES (?, ?)",
+                    (conversation_name, response_id),
+                )
+            # Expiry or deletion must never leave an alias pointing to a
+            # non-existent parent response.
+            self._conn.execute(
+                "DELETE FROM conversations WHERE response_id NOT IN "
+                "(SELECT response_id FROM responses)"
+            )
 
     def delete(self, response_id: str) -> bool:
-        """Remove a response from the store. Returns True if found and deleted."""
-        cursor = self._conn.execute(
-            "DELETE FROM responses WHERE response_id = ?", (response_id,)
-        )
-        self._conn.commit()
+        """Delete a response and its conversation references in one transaction."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM responses WHERE response_id = ?", (response_id,)
+            )
+            self._conn.execute(
+                "DELETE FROM conversations WHERE response_id = ?", (response_id,)
+            )
         return cursor.rowcount > 0
 
     def get_conversation(self, name: str) -> Optional[str]:
@@ -1066,13 +1090,15 @@ class APIServerAdapter(BasePlatformAdapter):
                     else "agent_incomplete",
                 }
             if store:
-                self._response_store.put(response_id, {
-                    "response": response_data,
-                    "conversation_history": full_history,
-                    "instructions": instructions,
-                })
-                if conversation:
-                    self._response_store.set_conversation(conversation, response_id)
+                self._response_store.put(
+                    response_id,
+                    {
+                        "response": response_data,
+                        "conversation_history": full_history,
+                        "instructions": instructions,
+                    },
+                    conversation_name=conversation,
+                )
             return response_data
 
         idem_key = request.headers.get("Idempotency-Key")
