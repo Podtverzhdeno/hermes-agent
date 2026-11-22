@@ -3,7 +3,7 @@
 **Revision:** 0.2 · 2026-11-22 · **Status:** design-only in this branch, not deployed.  
 **Base:** main at `7e9100901819ee44c16b4ddcb79a6bcb7909f591`.  
 **Ownership:** Independent observer/investigator; no edits to `gateway/platforms/api_server.py`, the browser extension, ACLs, ACP callbacks or the Autopilot ledger.  
-**Implementation note:** The tested offline inspector and its 42 synthetic tests are available in the separately distributed project ZIP, **not committed to this branch yet**. Do not call the real system monitored.
+**Implementation note:** The tested offline inspector and its 46 synthetic tests are available in the separately distributed project ZIP, **not committed to this branch yet**. Do not call the real system monitored.
 
 ## 1. Evidence classification and source snapshot
 
@@ -11,7 +11,7 @@
 
 **BLOCKED (local):** `Local_WorkSpace.list_workspaces` reported `Session terminated` on repeated attempts. The owner's Windows extension, Obsidian documentation, running Chrome, credentials, native host and live task logs could not be inspected. Treat connector outage as *observer unavailable*, not *Hermes stopped*.
 
-**VERIFIED OFFLINE ONLY:** 42 synthetic unittest cases on a separate Python metadata-only trace inspector succeeded; no browser test, installed-extension test, full Hermes integration test or provider stress test was executed. The inspector does not execute external writes.
+**VERIFIED OFFLINE ONLY:** 46 synthetic unittest cases on a separate Python metadata-only trace inspector succeeded; no browser test, installed-extension test, full Hermes integration test or provider stress test was executed. The inspector does not execute external writes.
 
 **Unknowable:** hidden model reasoning, uninstrumented browser operations, missed prefixes/suffixes of a finite log segment, remote side effects without trusted receipt, whether a tab or worker still runs while disconnected.
 
@@ -131,7 +131,7 @@ Inspector scoring reflects *low operational risk*, not proof that it provides fu
 
 ## 9. Fault injection gates and release conditions
 
-**Offline tested:** duplicate delivery; conflicting ID/sequence; internal gap; 30 producers starting at sequence 1; out-of-order delivery; missing causal predecessor; cycle; reserved/unknown effect; attempt crossover; unsupported schema; missing success proof; pending approval; bounded malformed input; 1500-event DAG. 42 synthetic tests PASS in isolated container, not full Hermes CI.
+**Offline tested:** duplicate delivery; conflicting ID/sequence; internal gap; 30 producers starting at sequence 1; out-of-order delivery; missing causal predecessor; cycle; reserved/unknown effect; attempt crossover; unsupported schema; missing success proof; pending approval; bounded malformed input; 1500-event DAG. 46 synthetic tests PASS in isolated container, not full Hermes CI.
 
 **NOT EXECUTED:** Chrome/Native Messaging restarts, installed extension audit, Windows/WSL fault injection, actual live GPT session, 100-way gateway retries, 30/50 concurrent file writers, real provider auth/429 faults, source-to-ledger exporter validation. No experimental result should be fabricated for those.
 
