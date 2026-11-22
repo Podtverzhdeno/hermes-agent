@@ -346,3 +346,41 @@ def test_independent_same_kind_run_outcome_reporters_need_reconciliation(journal
     assert result["state"] == "TRACE_INCOMPLETE"
     assert result["next_action"] == "RECONCILE_CONFLICTING_EVENTS"
     assert "CROSS_SOURCE_TERMINALS" in result["diagnostic_flags"]
+
+
+def test_thirty_parallel_sqlite_producers_append_without_chain_corruption(tmp_path):
+    # Real thread concurrency against one SQLite WAL file, with 30 separately
+    # constructed producer streams; no real agent/model/browser is launched.
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    db_path = tmp_path / "parallel-producers.sqlite3"
+    j = EventJournal(db_path, clock=lambda: 1000.0)
+    start = Barrier(30)
+
+    def producer(i):
+        source = f"worker-{i:02d}"
+        start.wait(timeout=15)
+        inserted = 0
+        for seq, kind in (
+            (1, "worker.started"),
+            (2, "worker.heartbeat"),
+            (3, "worker.progress"),
+        ):
+            event = {
+                "schema_version": 1, "event_id": f"{source}-{seq}",
+                "source": source, "run_id": "run-30-thread",
+                "attempt": 1, "sequence": seq, "kind": kind,
+            }
+            inserted += bool(j.ingest(event))
+        return inserted
+
+    with ThreadPoolExecutor(max_workers=30) as workers:
+        inserted_counts = list(workers.map(producer, range(30)))
+    assert inserted_counts == [3] * 30
+    assert j.verify_chain() is True
+    result = j.assess("run-30-thread")
+    assert result["worker_sources_count"] == 30
+    assert result["missing_sequences"] == 0
+    assert result["unverified_prefix_sources"] == []
+    assert result["state"] == "RECENT_TELEMETRY"
