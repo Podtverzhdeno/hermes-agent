@@ -21,6 +21,31 @@ from typing import Iterable, Optional
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _SAFE_CODE = re.compile(r"^[A-Za-z0-9_.:-]{1,96}$")
+# Treat externally supplied labels as untrusted content. Syntax validation
+# alone is not redaction: a token such as sk-secret can look like a code.
+_EVENT_ALLOWLIST = frozenset((
+    "run.queued", "run.running", "run.completed", "run.failed",
+    "run.cancelled", "run.interrupted", "run.steered",
+    "tool.started", "tool.completed", "reasoning.available",
+    "subagent.start", "subagent.complete", "message.delta",
+    "approval.request", "approval.responded", "approval.resolved",
+    "approval.denied", "approval.cancelled", "replay.truncated",
+))
+_STATUS_ALLOWLIST = frozenset((
+    "queued", "running", "waiting_for_approval", "completed",
+    "failed", "cancelled", "interrupted", "stopping", "unknown",
+))
+_REASON_ALLOWLIST = frozenset((
+    "AGENT_ERROR", "STREAM_FAILED", "AGENT_CANCELLED",
+    "AUTH_REQUIRED", "AUTH_EXPIRED", "PERMISSION_DENIED",
+    "THROTTLED", "UPSTREAM_UNAVAILABLE", "MODEL_REJECTED",
+    "BROWSER_TARGET_LOST", "EXTENSION_SUSPENDED", "DOM_CONTRACT_CHANGED",
+    "SSE_CLIENT_GONE", "WAITING_HUMAN", "DEPENDENCY_UNAVAILABLE",
+    "IDEMPOTENCY_CONFLICT", "IN_PROGRESS", "SIDE_EFFECT_UNCERTAIN",
+    "WORKER_STALLED", "UNKNOWN", "OUTCOME_UNKNOWN",
+    "max_iterations", "max_turns", "context_limit", "model_error",
+    "tool_error", "interrupted", "completed", "failed", "partial",
+))
 _TERMINAL = frozenset(("completed", "failed", "cancelled", "interrupted"))
 _TOOL_BEGIN = frozenset(("tool.started",))
 _TOOL_END = frozenset(("tool.completed",))
@@ -83,13 +108,24 @@ def _safe_id(value, *, optional=False) -> Optional[str]:
     return value
 
 
+def _safe_event_kind(value) -> str:
+    if not isinstance(value, str) or not _SAFE_CODE.fullmatch(value):
+        raise InvalidTelemetry("Event type is missing or invalid")
+    return value if value in _EVENT_ALLOWLIST else "event.unrecognized"
+
+
 def _safe_reason(value) -> Optional[str]:
     if value is None:
         return None
+    # Unknown categories are deliberately dropped rather than echoed.
+    # Raw provider exception text may be a single identifier-shaped secret.
+    return value if isinstance(value, str) and value in _REASON_ALLOWLIST else "UNCLASSIFIED"
+
+
+def _safe_status(value) -> str:
     if not isinstance(value, str) or not _SAFE_CODE.fullmatch(value):
-        # Never leak text that can contain credentials or prompt fragments.
-        return "UNCLASSIFIED"
-    return value
+        raise InvalidTelemetry("Run status is missing or invalid")
+    return value if value in _STATUS_ALLOWLIST else "unknown_status"
 
 
 def normalize_run_event(payload: dict, *, sse_id=None) -> SafeEvent:
@@ -97,9 +133,7 @@ def normalize_run_event(payload: dict, *, sse_id=None) -> SafeEvent:
     if not isinstance(payload, dict):
         raise InvalidTelemetry("Event payload must be a JSON object")
     run_id = _safe_id(payload.get("run_id"))
-    kind = _safe_reason(payload.get("event"))
-    if kind is None or kind == "UNCLASSIFIED":
-        raise InvalidTelemetry("Event type is missing or invalid")
+    kind = _safe_event_kind(payload.get("event"))
     raw_seq = payload.get("seq", sse_id)
     if raw_seq is None:
         seq = None
@@ -200,6 +234,9 @@ class CausalRunAuditor:
         if event.truncated:
             self._missing_events = True
             self._anomalies.add("REPLAY_TRUNCATED")
+        if event.kind == "event.unrecognized":
+            self._missing_events = True
+            self._anomalies.add("UNRECOGNIZED_EVENT")
         if event.kind in _TOOL_BEGIN:
             if event.tool_call_id:
                 self._pending_tools.add(event.tool_call_id)
@@ -246,10 +283,10 @@ class CausalRunAuditor:
         """A caller-provided status snapshot; transport/auth must be checked by caller."""
         if not isinstance(status, dict) or status.get("run_id") != self.run_id:
             raise InvalidTelemetry("Run status snapshot does not match run")
-        value = status.get("status")
-        if not isinstance(value, str) or not _SAFE_CODE.fullmatch(value):
-            raise InvalidTelemetry("Run status is missing or invalid")
+        value = _safe_status(status.get("status"))
         self._status = value
+        if value == "unknown_status":
+            self._anomalies.add("UNRECOGNIZED_STATUS")
         raw_updated = status.get("updated_at")
         if raw_updated is not None:
             if isinstance(raw_updated, bool):
