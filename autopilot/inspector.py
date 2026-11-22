@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import time
+from hashlib import sha256
 from typing import Callable
 
 from .ledger import AutopilotLedger
@@ -23,6 +24,8 @@ def inspect_project(
 ) -> dict:
     """Return one consistent snapshot of project coordination state.
 
+    Revisions are SHA-256 fingerprinted; goal text, request arguments and
+    downstream receipts are deliberately excluded from this projection.
     Operator must distinguish unavailable/unverified external service health
     from this local database's health. Display cannot assert that a GitHub
     PR, Obsidian sync or running agent actually succeeded.
@@ -65,7 +68,7 @@ def inspect_project(
                   AND lease_until<=?
             """, (project, now)).fetchone()[0]
             rows = db.execute("""
-                SELECT id, goal, status, revision, attempts, max_attempts,
+                SELECT id, status, revision, attempts, max_attempts,
                        required_evidence, lease_until, updated_at, cancel_requested
                 FROM tasks WHERE project=?
                 ORDER BY
@@ -93,9 +96,10 @@ def inspect_project(
                     missing = sorted(set(json.loads(task["required_evidence"])) - passed)
                 cards.append({
                     "task_id": task["id"],
-                    "goal": task["goal"],
                     "status": task["status"],
-                    "revision": task["revision"],
+                    "revision_fingerprint": "sha256:" + sha256(
+                        task["revision"].encode("utf-8")
+                    ).hexdigest()[:20],
                     "attempts": task["attempts"],
                     "max_attempts": task["max_attempts"],
                     "cancel_requested": bool(task["cancel_requested"]),
