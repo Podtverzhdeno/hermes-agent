@@ -51,3 +51,12 @@ Each escalation must include: exact task and revision, first observed failing ev
 No unguarded resume across an unknown reserved external effect. No successful terminal state without verified evidence contract. No fake passing CI or LLM assertion. No protected-main merge and no local shared file write from this experimental branch. Require independent unit/race/fault-injection tests, a green CI result for the exact PR head SHA, and staged rollback procedures.
 
 The diagnostic tests are synthetic and do **not** run live monitoring; they verify classifier behavior only.
+
+
+## 8. Owner-authorized CDP failure response
+
+For a user-authorized `web-chatgpt-high-cdp` backend, verify authenticated lane owner, expected vs observed fence, bridge connectivity, extension attachment, target tab and command/ACK sequence. If the fence differs, halt all new browser commands. If a command is unacknowledged, do **not** blindly resend: the action may already have been applied.
+
+A ChatGPT UI answer or token canary is only transport evidence. It must be correlated to a task and verified against independently accessible GitHub/CI/file artifacts before declaring task success. One tab, one active writer; other agents queue rather than sharing clicks or typing.
+
+Use the pure `gpt_extension/cdp_diagnostics.py` module for evidence interpretation only. The current local bridge and actual extension health were not observed because Local Workspace MCP returned `Session terminated`.
