@@ -153,6 +153,47 @@ class AutopilotLedger:
             row["required_evidence"] = json.loads(row["required_evidence"])
             return row
 
+    def list_tasks(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+        """Bounded read-only queue projection for operators and restart snapshots."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._db() as db:
+            if status is None:
+                rows = db.execute("""
+                    SELECT * FROM tasks ORDER BY priority DESC, created_at DESC LIMIT ?
+                """, (limit,)).fetchall()
+            else:
+                rows = db.execute("""
+                    SELECT * FROM tasks WHERE status=?
+                    ORDER BY priority DESC, created_at DESC LIMIT ?
+                """, (status, limit)).fetchall()
+            result = [dict(x) for x in rows]
+            for row in result:
+                row["required_evidence"] = json.loads(row["required_evidence"])
+            return result
+
+    def effects(self, task_id: str) -> list[dict]:
+        """Read-only effect journal for crash recovery; never reissue reserved keys."""
+        with self._db() as db:
+            self._task(db, task_id)
+            return [dict(x) for x in db.execute("""
+                SELECT action_key, digest, status, result_ref, created_at, updated_at
+                FROM actions WHERE task_id=? ORDER BY created_at, action_key
+            """, (task_id,))]
+
+    def approval_queue(self, limit: int = 100) -> list[dict]:
+        """Human decision inbox, including exact action digest and expiry."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._db() as db:
+            return [dict(x) for x in db.execute("""
+                SELECT approvals.task_id, approvals.action_key, approvals.digest,
+                       approvals.expires_at, tasks.project, tasks.goal, tasks.revision
+                FROM approvals JOIN tasks ON tasks.id=approvals.task_id
+                WHERE tasks.status='waiting_approval' AND approvals.state='pending'
+                ORDER BY approvals.expires_at, approvals.task_id LIMIT ?
+            """, (limit,))]
+
     def history(self, task_id: str) -> list[dict]:
         with self._db() as db:
             self._task(db, task_id)
@@ -202,6 +243,25 @@ class AutopilotLedger:
             self._event(db, task_id, "submitted", {"revision": revision})
             return task_id
 
+    def _expire_approvals(self, db, now: float):
+        """Make a timed-out human decision visible instead of hanging forever."""
+        expired = db.execute("""
+            SELECT tasks.id, approvals.action_key
+            FROM tasks JOIN approvals ON tasks.id=approvals.task_id
+            WHERE tasks.status='waiting_approval'
+              AND approvals.state='pending' AND approvals.expires_at <= ?
+        """, (now,)).fetchall()
+        for row in expired:
+            db.execute("""
+                UPDATE approvals SET state='expired'
+                WHERE task_id=? AND action_key=? AND state='pending'
+            """, (row["id"], row["action_key"]))
+            db.execute("""
+                UPDATE tasks SET status='blocked',updated_at=? WHERE id=?
+            """, (now, row["id"]))
+            self._event(db, row["id"], "approval_expired",
+                        {"action_key": row["action_key"]})
+
     def _recover_expired(self, db, now: float):
         expired = db.execute(
             "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until <= ?",
@@ -233,6 +293,7 @@ class AutopilotLedger:
             raise ValueError("invalid worker or lease_seconds")
         now = self.clock()
         with self._db(write=True) as db:
+            self._expire_approvals(db, now)
             self._recover_expired(db, now)
             row = db.execute("""
                 SELECT id FROM tasks
