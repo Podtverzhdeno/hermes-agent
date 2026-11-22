@@ -212,15 +212,15 @@ Record test harness revision, fixture checksum, exact run SHA, environment, inpu
 
 | Idea | R | S | C | E | U | Weighted /5 | Decision |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Authority ledger + effect reconciliation | 5 | 5 | 5 | 2 | 4 | **4.55** | P0, build on #1/#10 |
-| Ingress idempotency + trustworthy failure states | 5 | 5 | 4 | 3 | 4 | **4.50** | P0, choose one API implementation |
-| Approval/session identity isolation | 5 | 5 | 4 | 3 | 3 | **4.40** | P0, review #3 and session binding |
+| Authority ledger + effect reconciliation | 5 | 5 | 5 | 2 | 4 | **4.45** | P0, build on #1/#10 |
+| Ingress idempotency + trustworthy failure states | 5 | 5 | 4 | 3 | 4 | **4.40** | P0, choose one API implementation |
+| Approval/session identity isolation | 5 | 5 | 4 | 3 | 3 | **4.30** | P0, review #3 and session binding |
 | Unified event envelope + runbook | 4 | 4 | 5 | 4 | 5 | **4.30** | P0/P1, avoid competing stores |
 | Per-resource owner lease + collision gate | 5 | 4 | 4 | 3 | 5 | **4.25** | P1, exact-head PR checks |
-| CDP/MV3 lifecycle and synthetic fault harness | 4 | 5 | 4 | 2 | 4 | **4.00** | P1, local deployment unknown |
-| Pretty dashboard before ledger/receipts | 2 | 3 | 2 | 3 | 5 | **2.65** | defer |
+| CDP/MV3 lifecycle and synthetic fault harness | 4 | 5 | 4 | 2 | 4 | **3.95** | P1, local deployment unknown |
+| Pretty dashboard before ledger/receipts | 2 | 3 | 2 | 3 | 5 | **2.70** | defer |
 | Blind agent rerun after timeout | 1 | 0 | 1 | 5 | 1 | **1.35** | reject |
-| Multiple independent authoritative GPT ledgers | 1 | 1 | 2 | 2 | 2 | **1.50** | reject |
+| Multiple independent authoritative GPT ledgers | 1 | 1 | 2 | 2 | 2 | **1.45** | reject |
 
 Scores prioritize safety and reliability over raw throughput. Re-score after full CI, fault-injection and live authorized tests with measured costs and false positives.
 
