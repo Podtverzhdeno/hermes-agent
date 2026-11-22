@@ -6,7 +6,7 @@ This package is a **reviewable, isolated patch**, not a live-installed extension
 
 - `gpt_bridge_metadata_audit.py`: strict metadata-only NDJSON event parser and causal audit, no side effects.
 - `scripts/gpt_bridge_pr_collision_audit.py`: PR overlap and SHA-bound CI evidence checker, never auto-merges.
-- `tests/`: 65 pure-stdlib unit/negative tests for privacy, malicious input, replay, unknown effects, source gaps, 30+ agent coordination.
+- `tests/`: 69 pure-stdlib unit/negative tests for privacy, malicious input, replay, unknown effects, source gaps, 30+ agent coordination.
 - `docs/gpt_bridge/SDD_OBSERVER_REVIEW_AND_INTEGRATION_2026-11-22.md`: architecture evaluation, failure catalog, gates, decisions.
 - `docs/gpt_bridge/ENGINEERING_LOG_OBSERVER_2026-11-22.md`: factual audit ledger and remaining blockers.
 - `.github/workflows/gpt-bridge-observer-offline.yml`: Python 3.11, 3.12 and 3.13 proposed CI.
@@ -42,3 +42,5 @@ Project draft PR: https://github.com/Podtverzhdeno/hermes-agent/pull/26
 Source-based review of native SSE candidate: https://github.com/Podtverzhdeno/hermes-agent/pull/4 (SSE sequence replay collision / `unknown` diagnosis concerns).
 
 The working GitHub SDD and engineering log on PR #26 include later decisions and are more authoritative than any offline copy if the branch has changed since packaging.
+
+`check_snapshot` now accepts optional `required_checks` (explicit operator-provided names); without it the report never labels the full CI suite green. Even with it, the rule is advisory and cannot replace authenticated branch protection policy.

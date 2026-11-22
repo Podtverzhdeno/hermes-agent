@@ -73,3 +73,5 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 
 | O-27 | REVIEW_POSTED | PR #4 native SSE observer at head `f2373ed5551fe47168b014b08d63560a6bb0d68a` may hide same-seq changed events and genericize v0.23.3 `unknown` runs; posted reproducible review comment #7078191241. | Require replay-collision and explicit unknown reconciliation tests, no automatic retry; not a production incident. |
 | O-28 | OBSERVED_CI_AT_SHA | At PR #26 head `8cec46d296e38b156b851dda0fda1b1508048e88`: offline audit checks for Python 3.11/3.12/3.13 are `success`; repository `test` was `in_progress`. | Any subsequent commit invalidates check freshness. Read actual exact HEAD status before review or merge. |
+
+| O-29 | TESTED_OFFLINE/COMMITTED | Partial CI export could incorrectly set checks_ok=true if only a successful security scan was present. Fixed via optional explicit `required_checks` (otherwise false), all-present and all-matching-head enforcement, duplicate checks; four new negative tests. | 53 + 16 = 69 local Python 3.13 checks passed. Do not trust caller's required-check policy as authenticated or use for automerge. |
