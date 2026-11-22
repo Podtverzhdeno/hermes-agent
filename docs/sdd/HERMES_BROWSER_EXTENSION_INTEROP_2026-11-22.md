@@ -89,3 +89,26 @@ The extension already has a realistic `tests/e2e-gateway-failure-diagnostics.mjs
 - Related current audit: https://github.com/Podtverzhdeno/hermes-agent/pull/23
 
 **Strict conclusion:** a browser plugin status response is not a live GPT execution monitor. The current Hermes fork is not verified to satisfy the plugin's minimum declared version. Current safe artifact is a proposed compatibility contract, not a working connector.
+
+
+## 7. Manifest V3 service-worker lifecycle (official Chrome guidance)
+
+The pinned extension's `manifest.json` uses `background.service_worker: background.js`, MV3 and minimum Chrome 116. Chrome documentation explicitly warns that extension service workers can be shut down unexpectedly and must recover state after reinitialization. Worker globals and in-memory timers are **not** durable source-of-truth. This is not a bug that can be fixed by asking the GPT model to continue longer.
+
+**Root-cause taxonomy additions (design only):** `EXT_SERVICE_WORKER_RESTARTED`, `EXTENSION_CONNECTION_LOST`, `CONTROLLER_OWNERSHIP_EXPIRED`, `OUTBOX_REPLAY_PENDING`, `BROWSER_PROFILE_REPLACED`. Require a durable resume cursor and authenticated session/controller handshake before accepting new events. Chrome's `chrome.storage` is supported for state; the Web Storage API is not available to extension service workers. For a protected producer outbox with ordered writes, favor a narrow extension-specific persistent API with schema validation and bounded capacity; test abrupt worker suspension after enqueue and before acknowledgement.
+
+**Verification cases:** idle service worker terminated with active Hermes gateway; extension reloaded while a browser tab remains; gateway process restarts and presents a new boot id; Chrome exits with an in-flight authorization; background task tab orphaned; controller reattaches under a new session; browser restores previously open tabs after update. Every case must prove no silent re-approval and no duplicate external effect. The old worker's delivered events must not freshen the liveness of the new worker without authenticated instance-bound heartbeat.
+
+Reference: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
+
+## 8. Provider response continuity and privacy (primary sources)
+
+OpenAI Responses background mode can return a stable response ID and later be retrieved; signed webhooks can report completion. The correct observer design stores opaque response references and the **fact** of final status or receipt, not user messages, private reasoning traces, or raw payloads. Verify webhook signatures on raw bodies before trust, deduplicate deliveries, and reconcile after lost transport acknowledgements. The browser extension's UI or service worker cannot by itself prove upstream provider completion.
+
+Reference: https://developers.openai.com/api/docs/guides/background and https://developers.openai.com/api/docs/guides/webhooks
+
+OpenTelemetry GenAI conventions are useful to name model/tool spans, but some instrumentation can optionally include full model inputs, outputs and tool definitions. **Default deny all such content-bearing attributes**; use only allowlisted metadata for GPT Companion. Trace headers/baggage must not carry credentials or page data. Pin semconv version in adapter contract tests.
+
+Reference: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md
+
+**Gate COMPAT-5:** a synthetic 30-agent Chrome MV3 suspend/restart test with opt-in session ownership, bounded outbox, replay cursor, no false task completion and no duplicate provider effects. Browser consent revocation must win over reconnect retries. The user must be able to stop monitoring without residual page data collection.
