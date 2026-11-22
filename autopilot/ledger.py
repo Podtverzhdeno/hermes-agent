@@ -518,6 +518,20 @@ class AutopilotLedger:
             task = self._task(db, task_id)
             if task["status"] in TERMINAL:
                 raise LedgerConflict("cannot change evidence for a terminal task")
+            current = db.execute("""
+                SELECT conclusion,artifact_ref,trusted FROM evidence
+                WHERE task_id=? AND kind=? AND source=? AND revision=?
+            """, (task_id, kind, source, revision)).fetchone()
+            if current is not None and current["trusted"] and trusted:
+                # Trusted evidence is immutable for one exact source/revision.
+                # A different CI run must have a distinct source/run identity;
+                # otherwise a later 'pass' could erase a prior trusted failure.
+                if (current["conclusion"] != conclusion or
+                        current["artifact_ref"] != artifact_ref):
+                    raise LedgerConflict("trusted evidence conflict; use a distinct source/run identity")
+                self._event(db, task_id, "evidence_replayed",
+                            {"kind": kind, "source": source, "revision": revision})
+                return
             result = db.execute("""
                 INSERT INTO evidence
                 (task_id,kind,source,revision,conclusion,artifact_ref,trusted,observed_at)
