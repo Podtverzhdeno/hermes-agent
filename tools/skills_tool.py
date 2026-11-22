@@ -505,6 +505,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
         List of skill metadata dicts (name, description, category).
     """
     from agent.skill_utils import get_external_skills_dirs
+    from agent.skill_harness import path_within_root
 
     skills = []
     seen_names: set = set()
@@ -521,6 +522,8 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
     for scan_dir in dirs_to_scan:
         for skill_md in scan_dir.rglob("SKILL.md"):
             if any(part in _EXCLUDED_SKILL_DIRS for part in skill_md.parts):
+                continue
+            if not path_within_root(skill_md, scan_dir):
                 continue
 
             skill_dir = skill_md.parent
@@ -639,10 +642,14 @@ def skills_categories(verbose: bool = False, task_id: str = None) -> str:
                 ensure_ascii=False,
             )
 
+        from agent.skill_harness import path_within_root
+
         category_dirs = {}
         category_counts: Dict[str, int] = {}
         for skill_md in SKILLS_DIR.rglob("SKILL.md"):
             if any(part in _EXCLUDED_SKILL_DIRS for part in skill_md.parts):
+                continue
+            if not path_within_root(skill_md, SKILLS_DIR):
                 continue
 
             try:
