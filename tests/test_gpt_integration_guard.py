@@ -1,5 +1,6 @@
 """Offline tests for no-false-green and parallel-worker integration gates."""
 import importlib.util
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -96,7 +97,7 @@ class IntegrationGateTests(unittest.TestCase):
             self.assertTrue(mod.journal(path, a))
             self.assertFalse(mod.journal(path, a))
             self.assertTrue(mod.journal(path, b))
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 self.assertEqual(db.execute('SELECT COUNT(*) FROM audit_snapshots').fetchone()[0], 2)
 
     def test_cli_bad_snapshot_exits_unknown_not_clean(self):
