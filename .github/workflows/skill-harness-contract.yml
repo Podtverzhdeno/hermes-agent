@@ -1,0 +1,58 @@
+name: Specialized Skill Harness Contracts
+
+on:
+  pull_request:
+    paths:
+      - "agent/skill_harness.py"
+      - "agent/skill_commands.py"
+      - "tools/skills_tool.py"
+      - "skills/**/harness.json"
+      - "skills/**/SKILL.md"
+      - "tests/skill_harness/**"
+      - "tests/agent/test_skill_harness_integration.py"
+      - ".github/workflows/skill-harness-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "agent/skill_harness.py"
+      - "skills/**/harness.json"
+      - "tests/skill_harness/**"
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-contract:
+    name: Profile contracts ${{ matrix.os }} Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 8
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Verify Python syntax
+        run: python -m compileall -q agent/skill_harness.py tests/skill_harness
+      - name: Validate individual contracts (offline, stdlib only)
+        env:
+          OPENAI_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: python -m unittest discover -s tests/skill_harness -p test_*.py -v
