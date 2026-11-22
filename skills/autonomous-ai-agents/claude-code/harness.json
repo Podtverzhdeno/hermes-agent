@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "skill": "claude-code",
+  "purpose": "Run bounded Claude Code tasks in isolated workspaces with independent verification.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Delegate this module refactor to Claude Code CLI",
+      "Have Claude Code inspect a diff read-only",
+      "Use Claude Code to troubleshoot this test under a strict budget"
+    ],
+    "do_not_trigger": [
+      "Translate a paragraph to English",
+      "Bypass an agent confirmation or usage limit",
+      "Modify unrelated repositories with global write scope"
+    ]
+  },
+  "preflight": [
+    "Verify installed Claude CLI identity, version, official execution mode and budget.",
+    "Isolate worktree and enumerate exact tool, filesystem and network capabilities.",
+    "Require owner approval for any autonomous shell/file-writing run."
+  ],
+  "workflow": [
+    "Prepare narrow task contract and acceptance tests.",
+    "Run in a bounded scope, capturing the command and process lifecycle.",
+    "Review proposed changes and test results independently.",
+    "Reconcile unknown side effects and preserve checkpoint on timeout."
+  ],
+  "actions": [
+    {
+      "operation": "claude.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "workspace-snapshot",
+        "review-result"
+      ]
+    },
+    {
+      "operation": "claude.execute",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "workspace-snapshot",
+        "execution-consent",
+        "patch-result",
+        "test-result"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "workspace-snapshot",
+      "source": "git",
+      "how_to_verify": "Pin exact expected head, worktree and allowed paths."
+    },
+    {
+      "id": "review-result",
+      "source": "artifact",
+      "how_to_verify": "Record read-only findings with supporting changed-line evidence."
+    },
+    {
+      "id": "execution-consent",
+      "source": "human",
+      "how_to_verify": "Owner confirms agent tool access, quotas and execution scope."
+    },
+    {
+      "id": "patch-result",
+      "source": "git",
+      "how_to_verify": "Read back actual changed files and final SHA rather than agent summary."
+    },
+    {
+      "id": "test-result",
+      "source": "local_test",
+      "how_to_verify": "Capture independent test command, exit code and relevant logs."
+    }
+  ],
+  "failure_modes": [
+    "Stop and preserve worktree on quota exhaustion or child process loss.",
+    "Never silently grant wider tool permissions after a failed attempt."
+  ]
+}
