@@ -1,6 +1,6 @@
 # SDD — Hermes GPT integration, observability and multi-agent recovery
 
-**Version:** 0.5 (2026-11-22)  
+**Version:** 0.6 (2026-11-22)  
 **Status:** review proposal + isolated read-only monitor and control-plane fixes; not a production activation.  
 **Parent:** docs/autopilot/ARCHITECTURE.md, PR #1, base snapshot 7e9100901819ee44c16b4ddcb79a6bcb7909f591.  
 **Ownership:** this SDD and observability code are in a stacked feature branch; concurrent skill-harness branch is not modified.  
@@ -280,6 +280,26 @@ Choose a single code owner/reviewer for each critical path. The integration cont
 ### Why the worker stopped: source-proven Windows hypotheses
 
 Prior Hermes v0.22.5 issue #147613 observed a worker at admission sequence 15 with no prompt delivery while Python waited indefinitely in `get_version_info -> git subprocess.run(timeout=3) -> reader thread join`. PR #151449 proposes to skip live Git version lookup in Windows managed workers but was **open** as checked; don't call that an accepted upstream fix. Separate issues show missing `prompt.request` frame (#146955), native NumPy import hang (#148389) and gateway event-loop lag/receipt losses under concurrent workers (#152364). These are *specific tested investigation paths*, not evidence of current local user's process. A future observer should distinguish `worker bound`, `prompt acknowledged`, `model request emitted`, `first useful progress`, and `external effect reconciled` as separate durable milestones.
+
+### ADR-005 — standards-aligned traces but separate source of truth
+
+As of 2026-11-22 the official OpenTelemetry GenAI semantic conventions use `gen_ai.operation.name=invoke_agent` for agent invocation and `execute_tool` for instrumented tool calls. Span context is propagated across process boundaries with W3C `traceparent`; for asynchronously decoupled work, use span links where parentage alone misrepresents causality. See:
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/client-invoke-agent.md
+- https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md
+- https://opentelemetry.io/docs/concepts/context-propagation/
+- https://opentelemetry.io/docs/specs/otel/trace/api/
+
+**Do not turn tracing into task authority.** A traced model invocation can succeed without required tests, and a span without errors can still conceal an unknown external effect. Map Hermes `task/attempt/fence/request_id` into a versioned application event envelope and propagate OTel trace/span IDs as *correlation metadata*. Consumers independently authenticate event producers and derive terminal state from canonical Kanban + effect receipt + verifier, not from span duration or success flag. Trace attributes must be allowlisted and bounded; capture raw prompts, tool arguments, browser CDP URLs and sensitive responses only by explicit owner consent and with separate retention.
+
+Temporal's official documentation similarly warns that retries can re-execute Activities and expects external effects to be idempotent: https://docs.temporal.io/activities ; https://docs.temporal.io/durable-execution. Adopting Temporal later would not eliminate the need for provider-specific idempotency keys, reservation and reconciliation. The current single-host prototype is **not** a distributed transaction manager.
+
+### Cross-component conformance ADR-006 — one 32-scenario negative-test registry
+
+`docs/autopilot/INTEGRATION_CONFORMANCE_V1.json` is a **versioned, machine-readable proposal** with 32 fail-closed acceptance scenarios across CDP transport, Kanban worker start/heartbeat, approvals, external effects, independent CI proof, browser ownership, PR coordination, resource budgets and observer failure. Each case defines an expected abstract decision, reason code, forbidden automatic action, and required evidence type. `tests/autopilot/test_conformance_manifest.py` validates registry structure **only**; its success does not imply any case has passed an integration test.
+
+Each implementing PR should map supported scenarios to actual executable unit/integration tests and record `test_id, scenario_id, exact_sha, runner, result, artifact_digest`. A global acceptance dashboard should mark scenarios as **not implemented**, **test defined**, **test executed pass/fail**, **live canary observed**, never silently promote a manifest entry to PASS. For 30-agent simulation prioritize C02 stale fence, C10/C14 unresolved effects across attempts, C17/C18 contradictory evidence, C22 external CDP ownership, C26 PR inventory drift, C27 CI queued with no runner, C29 DAG budget inheritance, and C31 observer disconnected while worker remains live.
+
+**Measured observation in this audit:** with 27 PRs active, several GitHub workflow matrix jobs were `queued` with `runner_name=null`; this indicates **no execution had started**, not that tests failed and not proof of which capacity/quota condition caused the wait. Track `CI_RUNNER_UNASSIGNED` separately from `CI_FAILED`, `CI_CANCELLED_SUPERSEDED` and `CI_PASSED_EXACT_SHA`. Be careful that frequent documentation commits can cancel previous CI runs in workflows configured with `cancel-in-progress`.
 
 ## L. Immediate priorities and ownership
 
