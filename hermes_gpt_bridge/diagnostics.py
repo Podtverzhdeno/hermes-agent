@@ -41,6 +41,14 @@ _KINDS = frozenset({
     "operator.approval_pending", "operator.approval_granted", "operator.approval_denied",
 })
 _TERMINAL = frozenset({"run.completed", "run.failed", "run.cancelled"})
+_REASON_CODES = frozenset({
+    "UNKNOWN", "NETWORK_TIMEOUT", "TRANSPORT_LOST", "PROVIDER_RATE_LIMIT",
+    "PROVIDER_QUOTA", "AUTH_FAILURE", "USER_CANCELLED", "TOOL_FAILED",
+    "WORKER_CRASH", "LEASE_EXPIRED", "SESSION_REVOKED", "TAB_DETACHED",
+    "SERVICE_WORKER_SUSPENDED", "VERIFICATION_FAILED", "APPROVAL_DENIED",
+    "OUTCOME_AMBIGUOUS", "STORAGE_UNAVAILABLE",
+})
+
 
 
 class TraceError(ValueError):
@@ -93,6 +101,8 @@ class Event:
             v = raw.get(k)
             if v is not None and (not isinstance(v, str) or not _STABLE_ID.fullmatch(v)):
                 raise TraceError(loc + f"invalid {k}")
+        if raw.get("reason_code") is not None and raw["reason_code"] not in _REASON_CODES:
+            raise TraceError(loc + "unknown reason code (must be a normalized enum)")
         if type(raw["seq"]) is not int or raw["seq"] < 1:
             raise TraceError(loc + "seq must be a positive integer")
         stamp = raw["observed_at"]
