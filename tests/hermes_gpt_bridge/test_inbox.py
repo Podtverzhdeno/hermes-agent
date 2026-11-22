@@ -39,6 +39,25 @@ class InboxTests(unittest.TestCase):
         return self.inbox.ingest(data, identity=emitter,
                                  signature_hex=signature(data) if sign is None else sign)
 
+    def test_health_reports_storage_not_business_success(self):
+        h0 = self.inbox.health()
+        self.assertTrue(h0.quick_check_ok)
+        self.assertEqual(h0.row_count, 0)
+        self.assertEqual(h0.last_offset, 0)
+        self.assertIsNone(h0.last_observed_at)
+        self.put(frame(task_id="task.1", project_id="my_shelter"))
+        h1 = self.inbox.health()
+        self.assertTrue(h1.quick_check_ok)
+        self.assertEqual(h1.journal_mode, "wal")
+        self.assertEqual(h1.row_count, 1)
+        self.assertGreater(h1.db_bytes, 0)
+        self.assertEqual(h1.last_observed_at, NOW.isoformat())
+
+    def test_task_context_is_untrusted_metadata_until_ledger_binding(self):
+        self.put(frame(task_id="task.1", project_id="my_shelter"))
+        ev = self.inbox.read_run("run1")[0].event
+        self.assertEqual((ev.task_id, ev.project_id), ("task.1", "my_shelter"))
+
     def test_insert_and_utc_collector_timestamp(self):
         p = frame()
         receipt = self.put(p)
@@ -139,6 +158,53 @@ class InboxTests(unittest.TestCase):
     def test_local_wal_mode(self):
         with sqlite3.connect(self.path) as db:
             self.assertEqual(db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+    def test_full_inbox_rejects_new_event_but_accepts_safe_redelivery(self):
+        bounded = EventInbox(self.path, {"worker.1": KEY}, clock=lambda: NOW,
+                             max_records=2)
+        p1, p2, p3 = frame(1), frame(2), frame(3)
+        def submit(p):
+            return bounded.ingest(p, identity="worker.1", signature_hex=signature(p))
+        submit(p1)
+        submit(p2)
+        with self.assertRaisesRegex(InboxError, "capacity exhausted"):
+            submit(p3)
+        self.assertTrue(submit(p1).duplicate)
+        self.assertEqual(len(bounded.read_run("run1")), 2)
+
+    def test_disk_capacity_fails_closed(self):
+        bounded = EventInbox(self.path, {"worker.1": KEY}, clock=lambda: NOW,
+                             max_storage_bytes=4096)
+        with self.assertRaisesRegex(InboxError, "storage capacity exhausted"):
+            bounded.ingest(frame(1), identity="worker.1", signature_hex=signature(frame(1)))
+
+    def test_inbox_capacity_configuration_strict(self):
+        for value in (True, -1, 0, 10000000):
+            with self.subTest(value=value), self.assertRaises(InboxError):
+                EventInbox(self.path, {"worker.1": KEY}, max_records=value)
+
+    def test_online_backup_restores_consistent_wal_snapshot(self):
+        self.put(frame())
+        backup = Path(self.dir.name) / "backup.db"
+        count = self.inbox.backup_to(backup)
+        self.assertEqual(count, 1)
+        restored = EventInbox(backup, {"worker.1": KEY}, clock=lambda: NOW)
+        self.assertEqual(len(restored.read_run("run1")), 1)
+        self.assertTrue(restored.health().quick_check_ok)
+
+    def test_backup_refuses_overwrite_without_corruption(self):
+        self.put(frame())
+        backup = Path(self.dir.name) / "backup.db"
+        self.assertEqual(self.inbox.backup_to(backup), 1)
+        before = backup.read_bytes()
+        self.put(frame(2))
+        with self.assertRaises(InboxError):
+            self.inbox.backup_to(backup)
+        self.assertEqual(backup.read_bytes(), before)
+
+    def test_backup_refuses_unavailable_directory(self):
+        with self.assertRaises(InboxError):
+            self.inbox.backup_to(Path(self.dir.name) / "missing" / "backup.db")
 
     def test_concurrent_80_distinct_events(self):
         records = [(i, frame(i, emitter=f"worker.{1 + i % 2}"), f"worker.{1 + i % 2}")
