@@ -204,3 +204,95 @@ Critically, the community browser extension is primarily a **Hermes client and c
 **Regression suite names found in the community source (not run here):** `tests/browser-control-worker-approval.test.mjs`, `tests/browser-control-approval-binding.test.mjs`, `tests/browser-control-snapshot-toctou.test.mjs`, `tests/continuity-replay-persistence.test.mjs`, `tests/gateway-restart.test.mjs`, `tests/e2e-phase6-browser-control-reconnect.mjs`, `tests/e2e-controller-lifecycle.mjs`, `tests/e2e-gateway-failure-diagnostics.mjs`, plus companion-plugin control and lifecycle tests. Adapt only after validating exact compatible versions; a passing upstream community suite cannot certify this fork.
 
 **Validation matrix** before unblocking deployment: fork 0.6.0 → declared plugin floor mismatch (BLOCKED); upstream compatible runtime + community plugin 0.4.1 → inspect installed manifest, permissions, profile-scoped plugin enablement, controller registration, session/event replay, tool/approval fence, network-loss recovery, logged-redacted errors and release build SHA (UNVERIFIED); custom local GPT extension → exact source absent (UNKNOWN). Keep each category explicit in operational dashboards rather than a single green "extension connected".
+
+---
+
+## D-08 — Failure-model-first architecture: effect reservations, audit evidence and backpressure
+
+**Decision date:** 2026-11-22. **Classification:** design decision, pending compatible upstream/local runtime; no claim of installed implementation.
+
+### D-08A — Confirmed API regressions from source review
+
+1. **PR #5 cache failure re-entry (P0):** `gateway/idempotency.py` blob `bf98f9ff6422dc0a318c0e9ba35a572ae2932690`, `execute()` uses `finally` to clear `_inflight` on exceptions and records only successes in `_completed`. A repeated same-key write after an exception may execute again. Required: durable UNKNOWN tombstone, no blind rerun, independent downstream reconciliation and regression that raises after a simulated write and verifies effect call count remains one. [PR review](https://github.com/Podtverzhdeno/hermes-agent/pull/5#issuecomment-7078151801).
+2. **PR #6 session-history fail-open (P0):** `gateway/platforms/api_server.py` blob `6a5335c49e5df0ee06395a447024106675f91751`, lines ~694–706, converts `SessionDB.get_messages_as_conversation()` exception for a supplied session ID into `history=[]` and launches the agent. Must return an explicit transient `session_history_unavailable`, **zero agent invocations**, not run with erased context; apply before streaming starts. [PR review](https://github.com/Podtverzhdeno/hermes-agent/pull/6#issuecomment-7078147362).
+3. **PR #6 potentially shared idempotency namespace:** cache key is `chat: + Idempotency-Key` or `responses: + Idempotency-Key`, not principal-scoped. This is a **conditional** security problem if a multi-tenant authentication proxy or multi-profile namespace is added; current one-token gateway cannot be assumed multi-principal. Do not enable such expansion until authenticated principal identity and cross-principal tests are implemented.
+4. **PR #6 stream truthiness:** `stream=body.get("stream", False)` accepts non-boolean truthy values; a submitted string `"false"` selects SSE. PR #11's strict-bool preflight is the appropriate invariant, but #11 is stacked on #4; require tested combined endpoint behavior.
+5. **Reported failure vs delivery success:** `run_agent.py` in baseline exposes explicit `completed=False`, `failed=True`, `interrupted=True` results; present them as failed/interrupted/incomplete. An SSE `[DONE]` **only closes a transport stream**; it is not independently verified successful work. The APIs must not infer tool outcomes from connection close, worker stop, or a final assistant message.
+
+### D-08B — The distributed atomicity limit
+
+There is **no general distributed transaction spanning a GPT model call, MV3 service worker, SQLite, a GitHub write and an unrelated website**. An atomic SQLite insert is not an atomic external operation. Adopt a durable **intent → dispatch → receipt → verification** protocol and design explicitly for the unknown gap.
+
+| Step | Operation owner | Durable invariant | Loss/crash interpretation |
+|---|---|---|---|
+| 1. Accept | Authenticated gateway | Task/run/attempt stable, input digest and RBAC checked | No acceptance receipt → inspect authoritative task store |
+| 2. Claim | Scheduler/ledger | Compare-and-swap lease epoch and resource-owner fence | Old worker may observe but cannot issue new effects |
+| 3. Reserve | Privileged effect dispatcher | Unique action ID + payload digest + scope + approval + idempotency key committed **before** external call | Reservation without authenticated receipt is `OUTCOME_UNKNOWN` |
+| 4. Dispatch | Same dispatcher | At most one active issuer under fence for this resource | HTTP timeout does not show that provider rejected call |
+| 5. Record receipt | Authenticated adapter | Downstream response ID and origin stored; declared state remains unverified | Missing ACK → no automatic replay of non-idempotent write |
+| 6. Read back | Independent verifier | Read-only provider lookup at exact downstream ID/revision, with access scope | Verified / not executed / ambiguous classified separately |
+| 7. Settle | Task authority | Terminal CAS binds task, run and exact effect receipt evidence | LLM/worker `completed` report cannot settle without proof |
+| 8. Publish | Observer | Redacted trace with subject SHA and authoritative watermark | Gaps/collector failure become UNKNOWN, never green |
+
+Where the downstream provider supports documented idempotency, reuse an **unchanged** key for the same business operation across attempts, not a new key on retry. Where it does not, require read-before-retry/human reconciliation; arbitrary `sleep` and retry loops are forbidden. If no trusted independent read-back exists, remain quarantined and surface the uncertainty. Handle clock rollback with source-local increasing sequence and lease epoch rather than client wall clock alone.
+
+### D-08C — Agent fan-out and ownership when 32–64 agents operate
+
+- One coordinator owns **task truth**, one issuer owns an **external side effect**, one canonical observer schema, and one integration owner owns each shared file / PR domain. These are different roles; do not let every observer run a scheduler.
+- Each task has **one active execution fence** even if many agents review it; fan-out occurs into read-only subtasks or separately scoped effect keys. Each agent writes to its own PR branch; shared files are integrated only by an assigned owner using exact-parent SHA, not "last commit wins".
+- Queue bounded by both `max_workers` and `max_effects_in_flight` per provider/tenant. Excess work yields `QUEUED_BACKPRESSURE` with evidence; no silent drop, unlimited task creation or unbounded retries.
+- Expiring heartbeat detects *suspected* liveness loss, not completion or safe side-effect replay. On expiry, increment the fence and **reconcile outstanding effects before another actor can write**.
+- Worker crash, MV3 suspension and network disconnect are separate failure classes. The browser side panel can observe/report; durable admission, retries, terminal proof and authoritative workflow identity must remain outside a volatile content script or service worker.
+- Use canary isolation for extension origin/profile, tab lease, frame/document generation and activity ownership. A newly loaded tab, document generation, role or origin is a **different authority context**; old approval never carries over.
+
+### D-08D — Evidence-based priority decision, not unsupported precision
+
+Priority is lexicographic: **(a) ability to cause a duplicate or unauthorized effect or false completion**, then (b) recoverability/correct root cause, then (c) throughput/UX, then (d) implementation cost. These are engineering judgments, not measured probabilities or a fabricated statistical ranking.
+
+| Candidate | Critical failure it prevents | Value | Evidence grade | Decision |
+|---|---|---|---|---|
+| Durable unknown-effect tombstone, principal-scoped idempotency, verified read-back | Duplicate external writes on timeout / restart | **P0 safety** | Source defect #5; official Temporal Activity retry/idempotency guidance | Implement before autonomous writes |
+| Fail closed on missing session history and incompatible gateway methods | Agent executes with erased context or wrong API contract | **P0 safety** | Source defect #6; plugin >=0.22 vs fork 0.6.0 | Implement before extension canary |
+| Merge causality tests of #17 and #23 | Failure masked by stop / cross-source ACK falsely closes unknown effect | **P0 safety** | Reproduced logically from reviewed conditions in both branches | Combined HEAD + all tests |
+| One complete SHA-pinned PR scanner and integration HOLD notifier | Dozens of agents silently overwrite same code | **P0 release integrity** | 24 PRs and four scanner proposals; source review #22 | Choose #22, migrate unique checks, no duplicate watcher |
+| Trace propagation and redacted outcome metrics | Can't tell rate-limit, browser sleep, API failure or lost receipt apart | **P1 diagnosis** | OpenTelemetry GenAI execute-tool + agent conventions | Add privacy-reviewed end-to-end telemetry |
+| Native/managed durable workflows (Temporal-like if warranted) | Recovery complexity on many workers and restarts | **P1 scaling** | Temporal durable execution docs | Prototype only; do **not** run alongside another scheduler |
+| Browser UI polish / fast auto-retry | Cosmetic latency | **P3** | No evidence that it solves causal failures | Defer until P0 gates pass |
+
+Do not introduce Temporal, Kafka, Redis, Postgres or OpenTelemetry collectors merely to satisfy architecture enthusiasm. Start with a single transactionally correct ledger and explicit trace/event schema; choose external services only when measured capacity, multi-host ownership, operational support and rollback plans justify them.
+
+### D-08E — Standards / source constraints guiding the design
+
+- [Chrome MV3 worker lifecycle](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/) requires survival of unexpected worker termination. Background script globals are not a task ledger; `storage.session` is not an atomic multi-writer database.
+- [OpenTelemetry GenAI tool execution](https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/) defines model/agent/tool spans and trace linkage. Do not put prompts, API keys, CDP URLs, raw DOM or user text into trace attributes by default. A `gen_ai.tool.call.id` sent by the model is not an authenticated effect receipt.
+- [Temporal Activity/idempotency](https://docs.temporal.io/activities) and [durable execution](https://docs.temporal.io/durable-execution) explicitly treat activities as retriable; the business effect needs idempotency and reconciliation. Durable scheduling **alone** cannot guarantee unique writes.
+- [SQLite WAL semantics](https://www.sqlite.org/wal.html) permit readers during a writer transaction, but do not grant unlimited concurrent writers or guarantee absence of `SQLITE_BUSY`; test contention and checkpoint space exhaustion for 32–64 workers.
+- [OpenAI Responses background mode](https://developers.openai.com/api/docs/guides/background) supports response IDs with polling/webhooks for independently verified model lifecycle. It is an **API workflow, not web ChatGPT account orchestration**, and has distinct privacy/retention properties ([data controls](https://developers.openai.com/api/docs/guides/your-data)). Preserve the provider response ID for reconciliation. Do not treat model `completed` as an externally executed GitHub/browser business effect.
+
+### D-08F — Failure-injection harness, pass/fail specification
+
+Use a deterministic fake provider and isolated temporary journal. No live GitHub write, GPT subscription, external CDP or credentials.
+
+| Injection point | Expected durable outcome | Must not occur |
+|---|---|---|
+| Kill worker before reservation commits | Not dispatched; requeue under new fence possible | False external-effect success |
+| Kill after reservation, before provider call | UNKNOWN until trusted determination of not-issued | Blind same-key write without reconciliation |
+| Provider applies write then drops ACK | Quarantined UNKNOWN and read-back required | Duplicate write on same-key API retry |
+| Two workers claim one resource concurrently | Exactly one fence winner | Two dispatchers making effects |
+| ACK arrives from another telemetry source | Unverified external outcome | Cross-source ACK clears prior reservation |
+| Agent reports FAILED then worker.stop arrives | Retain FAILED reason and source | STOPPED_UNCONFIRMED masks failure |
+| New attempt begins while old write unresolved | Prior unknown effect visible in diagnosis | Reset to RECENT_TELEMETRY |
+| Database history load raises `SQLITE_BUSY` | 503, error code + no agent call | Empty-history agent invocation |
+| Browser MV3 service worker suspended | Replay continuity / pending status unknown | Implicit task cancellation or success |
+| Two panels share a watermark storage record | No missing/high-water mark loss under concurrent save | Stale storage overwrites and dropped replay cursor |
+| 429, quota, model context exhausted | Distinct reason + scoped retry policy | Retry despite explicit non-retryable/quota stop |
+| CI cancelled/queued/skipped on exact SHA | HOLD/UNKNOWN | Green release indicator |
+| 64 read-only agents, 1 integrator | Bounded queue, single integration owner | PR collision auto-merged |
+
+**SLO gates** (safety invariants, not fabricated performance metrics): in all deterministic failure injections **zero confirmed duplicate external writes**, **zero unauthorized effects**, **zero false `VERIFIED_SUCCESS`**, **zero unscoped approval replays**. Record observation coverage and queue latency histograms; set p95/p99 operational thresholds only after a measured baseline on the owner's infrastructure. A green isolated unittest is not a valid load-test result.
+
+### D-08G — Co-existence and ownership contract for other agents
+
+Every agent's new PR description must include `exact_parent_sha`, changed-file owners, an explicit dependency graph, causal invariants preserved, test commands and outputs, fixture provenance, resolved review comments and unresolved risks. Request rebase when parent HEAD advances. If two PRs edit a same authority file, stop autonomous merging and nominate **one** integration owner. Do not duplicate the observer, task scheduler, effect store or browser-owner process. If Local_WorkSpace access is terminated, continue **source-only** reviews and label runtime visibility UNKNOWN; never infer live health from GitHub PR checks.
+
+**Scope limitation:** these are design gates and source-reviewed defects. They do **not** constitute working patch for #5/#6, live patch of the installed GPT extension, scheduled monitor activated on main, authenticated downstream receipt, verified upstream migration or production rollout.
