@@ -145,6 +145,35 @@ class TestHarnessValidation(unittest.TestCase):
         with self.assertRaisesRegex(SkillHarnessError, "invalid Git blob"):
             validate_harness(profile, "my-skill")
 
+    def test_unhashable_nested_fields_are_validation_errors(self):
+        examples = [
+            ("risk", {"risk": []}),
+            ("source", {"evidence": [{"id": "remote-state",
+                                      "source": [],
+                                      "how_to_verify": "Read remote."},
+                                     {"id": "owner-approval", "source": "human",
+                                      "how_to_verify": "Verify owner."}]}),
+        ]
+        for label, changes in examples:
+            with self.subTest(label=label):
+                p = example()
+                p.update(changes)
+                with self.assertRaises(SkillHarnessError):
+                    validate_harness(p, "my-skill")
+        p = example()
+        with self.assertRaises(SkillHarnessError):
+            assess_evidence_shape(p, "git:one", [{"id": [], "revision": "git:one"}],
+                                  operation="inspect")
+
+    def test_deeply_nested_json_rejected_without_crashing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            (folder / "harness.json").write_text(
+                "[" * 3000 + "0" + "]" * 3000, encoding="utf-8"
+            )
+            with self.assertRaises(SkillHarnessError):
+                load_skill_harness(folder, "my-skill")
+
     def test_wrong_identity(self):
         with self.assertRaises(SkillHarnessError):
             validate_harness(example(), "different-skill")
