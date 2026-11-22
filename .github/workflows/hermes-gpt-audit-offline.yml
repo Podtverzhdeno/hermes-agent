@@ -1,0 +1,37 @@
+name: Hermes GPT Causal Audit (offline)
+
+on:
+  pull_request:
+    paths:
+      - 'hermes_observer/**'
+      - 'tests/hermes_observer/**'
+      - 'docs/gpt_bridge/CAUSAL_AUDITOR_*.md'
+      - '.github/workflows/hermes-gpt-audit-offline.yml'
+  push:
+    paths:
+      - 'hermes_observer/**'
+      - 'tests/hermes_observer/**'
+      - '.github/workflows/hermes-gpt-audit-offline.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-contract:
+    name: Offline contract / Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile readonly auditor
+        run: python -m py_compile hermes_observer/audit.py
+      - name: Dependency-free isolated fault tests
+        run: python -m unittest discover -s tests/hermes_observer -v
