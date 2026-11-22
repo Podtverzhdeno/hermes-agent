@@ -1,0 +1,40 @@
+name: Hermes GPT bridge offline contracts
+
+on:
+  pull_request:
+    paths:
+      - 'hermes_gpt_bridge/**'
+      - 'scripts/gpt_bridge_*'
+      - 'tests/hermes_gpt_bridge/**'
+      - '.github/workflows/hermes-gpt-bridge.yml'
+  push:
+    branches:
+      - 'feat/hermes-gpt-bridge-observability-20261122'
+    paths:
+      - 'hermes_gpt_bridge/**'
+      - 'scripts/gpt_bridge_*'
+      - 'tests/hermes_gpt_bridge/**'
+      - '.github/workflows/hermes-gpt-bridge.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-gpt-bridge-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-contracts:
+    name: Python 3.11 stdlib-only contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile bridge and CLIs
+        run: python -m compileall -q hermes_gpt_bridge scripts/gpt_bridge_trace_doctor.py scripts/gpt_bridge_inbox_report.py
+      - name: Run isolated, credential-free bridge tests
+        run: python -m unittest discover -s tests/hermes_gpt_bridge -v
