@@ -1,0 +1,292 @@
+{
+  "schema_version": 1,
+  "generated_for": "Podtverzhdeno/hermes-agent",
+  "snapshot_date": "2026-11-22",
+  "snapshot_open_pr_count": 32,
+  "scope": "ADVISORY_COORDINATION_ONLY",
+  "approved_for_execution": false,
+  "approved_for_merge": false,
+  "authoritative_run_state": "HERMES_NATIVE_RUNS_AND_KANBAN_AFTER_VERIFIED_MIGRATION",
+  "existing_fork_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+  "candidate_upstream_release": "v0.23.3",
+  "candidate_upstream_commit": "caafe5389ae585ef77387a962aee05b1bcf17029",
+  "model": "Proposal for human owner arbitration. Candidate PR IDs are not assigned worker ownership or reviewed code. All gates start NOT_VERIFIED.",
+  "invariants": [
+    "one_human_approved_owner_per_write_domain",
+    "read_only_auditors_never_execute_external_effect",
+    "no_parallel_production_task_authorities",
+    "unknown_effect_requires_receipt_reconciliation_before_retry",
+    "legacy_browser_control_never_mistaken_for_new_native_runs",
+    "no_release_without_combined_SHA_required_CI_and_independent_human_review",
+    "every_event_producer_unique_per_incarnation_with_fence",
+    "offline_fixture_evidence_not_equivalent_to_live_hermes_state"
+  ],
+  "workstreams": [
+    {
+      "id": "W01_NATIVE_RUNS_MIGRATION",
+      "domain": "upstream_run_authority",
+      "candidate_prs": [
+        1,
+        10
+      ],
+      "release_dependencies": [],
+      "proposed_gates": [
+        "G0_LOCAL_HERMES_SOURCE",
+        "G1_PINNED_STABLE_PARITY",
+        "G2_DB_BACKUP_RESTORE",
+        "G3_ACTUAL_CAPABILITIES"
+      ],
+      "needed_evidence": [
+        "installed_version_sha",
+        "schema_migration_restore_test",
+        "exact_capabilities_probe",
+        "native_run_reconnect_fault_test"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W02_API_IDEMPOTENCY",
+      "domain": "gateway_api_singleflight",
+      "candidate_prs": [
+        4,
+        5,
+        6,
+        11
+      ],
+      "release_dependencies": [
+        "W01_NATIVE_RUNS_MIGRATION"
+      ],
+      "proposed_gates": [
+        "KEYED_SSE_ZERO_DISPATCH",
+        "UNKNOWN_EFFECT_TOMBSTONE",
+        "AUTH_SESSION_SCOPE",
+        "SAFE_500_ERROR",
+        "COMBINED_SHA_CI"
+      ],
+      "needed_evidence": [
+        "source_contract_choice",
+        "concurrent_100_requests",
+        "crash_after_external_effect_receipt",
+        "masked_provider_error"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W03_BROWSER_CDP",
+      "domain": "browser_lifecycle_privacy",
+      "candidate_prs": [
+        13,
+        15
+      ],
+      "release_dependencies": [],
+      "proposed_gates": [
+        "EXTERNAL_CDP_SURVIVES_CLEANUP",
+        "OWNED_BROWSER_CLOSES",
+        "CDP_SECRET_REDACTION",
+        "WINDOWS_CDP_E2E"
+      ],
+      "needed_evidence": [
+        "two_pr_combined_sha",
+        "live_browser_ownership_test",
+        "no_cdp_token_in_logs"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W04_EVENT_OBSERVABILITY",
+      "domain": "typed_causal_events",
+      "candidate_prs": [
+        8,
+        9,
+        12,
+        16,
+        17,
+        19,
+        21,
+        23,
+        25,
+        30
+      ],
+      "release_dependencies": [
+        "W01_NATIVE_RUNS_MIGRATION",
+        "W02_API_IDEMPOTENCY"
+      ],
+      "proposed_gates": [
+        "NATIVE_RUNS_SSE_AUTHORITATIVE",
+        "UNIQUE_PRODUCER_EPOCH",
+        "EVENT_GAP_AND_ACK",
+        "EXTERNAL_EFFECT_RECONCILIATION",
+        "NO_SENSITIVE_PAYLOAD"
+      ],
+      "needed_evidence": [
+        "one_chosen_contract",
+        "two_workers_same_seq_test",
+        "replay_under_disconnect",
+        "receipt_status_verification"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W05_ACP_PERMISSIONS",
+      "domain": "tool_authorization_policy",
+      "candidate_prs": [
+        3
+      ],
+      "release_dependencies": [
+        "W01_NATIVE_RUNS_MIGRATION"
+      ],
+      "proposed_gates": [
+        "SESSION_SCOPE_NEGATIVE_TESTS",
+        "EXPIRED_APPROVAL_REJECTED",
+        "PROMPT_INJECTION_NO_PRIVILEGE",
+        "FENCING_ON_EFFECT_GATE"
+      ],
+      "needed_evidence": [
+        "trusted_gateway_security_review",
+        "stale_grant_test",
+        "invalid_session_refusal"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W06_SKILL_HARNESS",
+      "domain": "skills_declarative_contracts",
+      "candidate_prs": [
+        2,
+        32
+      ],
+      "release_dependencies": [
+        "W05_ACP_PERMISSIONS"
+      ],
+      "proposed_gates": [
+        "ADVISORY_NOT_AUTHORITY",
+        "SCHEMA_CHECK",
+        "NO_SKILL_PRIVILEGE_ESCALATION"
+      ],
+      "needed_evidence": [
+        "policy_harness_integration",
+        "nonprivileged_skill_negative_test"
+      ],
+      "risk": "P1",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W07_PR_EVIDENCE_GATE",
+      "domain": "exact_git_sha_integration_evidence",
+      "candidate_prs": [
+        14,
+        18,
+        22,
+        24,
+        26,
+        27,
+        28,
+        29
+      ],
+      "release_dependencies": [],
+      "proposed_gates": [
+        "ONE_MAINTAINED_AUDITOR",
+        "EXACT_SHA_CHECK_RUNS",
+        "STACK_AND_RENAME_COLLISIONS",
+        "SKIPPED_REVIEW_NOT_GREEN",
+        "UNCERTAIN_SNAPSHOT_FAIL_CLOSED"
+      ],
+      "needed_evidence": [
+        "same_adversarial_fixture_on_candidates",
+        "independent_review",
+        "combined_sha_ci"
+      ],
+      "risk": "P1",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W08_ISOLATED_GPT_CONTROL_CENTER",
+      "domain": "gpt_frontend_isolated_cdp_native_runs_ui",
+      "candidate_prs": [],
+      "release_dependencies": [
+        "W01_NATIVE_RUNS_MIGRATION",
+        "W03_BROWSER_CDP",
+        "W04_EVENT_OBSERVABILITY",
+        "W05_ACP_PERMISSIONS"
+      ],
+      "proposed_gates": [
+        "LOCAL_SOURCE_DISCOVERY",
+        "EXCLUSIVE_CDP_WRITER_LEASE",
+        "TRANSPORT_DISCONNECT_NOT_RUN_STOP",
+        "NO_SHARED_BROWSER_CLOSE",
+        "USER_CONSENT_AND_E2E"
+      ],
+      "needed_evidence": [
+        "installed_manifest_or_no_plugin_design",
+        "windows_host_integrity",
+        "operator_ui_diagnosis",
+        "real_reconnect_without_retry"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    },
+    {
+      "id": "W09_RELEASE_VERIFICATION",
+      "domain": "integration_release_and_rollback",
+      "candidate_prs": [],
+      "release_dependencies": [
+        "W01_NATIVE_RUNS_MIGRATION",
+        "W02_API_IDEMPOTENCY",
+        "W03_BROWSER_CDP",
+        "W04_EVENT_OBSERVABILITY",
+        "W05_ACP_PERMISSIONS",
+        "W06_SKILL_HARNESS",
+        "W07_PR_EVIDENCE_GATE",
+        "W08_ISOLATED_GPT_CONTROL_CENTER"
+      ],
+      "proposed_gates": [
+        "PINNED_COMBINED_SHA",
+        "NO_REQUIRED_CI_MISSING",
+        "INDEPENDENT_SECURITY_REVIEW",
+        "REAL_30_50_100_AGENT_CHAOS",
+        "ROLLBACK_PROOF",
+        "EXPLICIT_OWNER_SIGNOFF"
+      ],
+      "needed_evidence": [
+        "exact_SHA_FULL_CI",
+        "credential_scoped_e2e",
+        "fault_injection_report",
+        "operator_approval_receipt"
+      ],
+      "risk": "P0",
+      "owner": null,
+      "owner_approved": false,
+      "chosen_candidate_pr": null,
+      "verification_status": "NOT_VERIFIED"
+    }
+  ]
+}

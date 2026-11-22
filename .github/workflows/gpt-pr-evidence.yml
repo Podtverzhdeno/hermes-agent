@@ -7,6 +7,8 @@ on:
       - 'scripts/hermes_capability_probe.py'
       - 'tests/integration/test_hermes_pr_gate.py'
       - 'tests/integration/test_hermes_capability_probe.py'
+      - 'tests/integration/test_hermes_workstream_registry.py'
+      - 'docs/sdd/GPT_WORKSTREAM_REGISTRY_A0_2026-11-22.json'
       - 'docs/sdd/GPT_HERMES_INTEGRATION_A0_2026-11-22.md'
       - '.github/workflows/gpt-pr-evidence.yml'
   workflow_dispatch:
@@ -32,6 +34,8 @@ jobs:
         run: python -m unittest discover -s tests/integration -p test_hermes_pr_gate.py -v
       - name: Python local capability probe contracts (offline)
         run: python -m unittest discover -s tests/integration -p test_hermes_capability_probe.py -v
+      - name: Advisory agent ownership registry invariants
+        run: python -m unittest discover -s tests/integration -p test_hermes_workstream_registry.py -v
 
   live-evidence:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'

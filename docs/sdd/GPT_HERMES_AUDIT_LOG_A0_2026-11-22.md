@@ -106,3 +106,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 ## Report evidence provenance and fake success prevention
 - A0 probe originally emitted the same machine-readable capability success for --snapshot offline fixture as for real loopback GET. This could mislead agents about installed runtime status. Report now mandates evidence_source OFFLINE_FIXTURE or LOCAL_LOOPBACK_GET, live_capabilities_observed separately, target_is_loopback=false for fixtures, and environment_e2e_verified=false universally (only a capabilities GET, not E2E).
 - Added no-network tests for distinct CLI provenance and mocked 302 redirect refusal + disabled proxy, alongside existing negative auth and URL tests. No real local Hermes connection has been made; source reports GET mode but not cryptographic attestation.
+
+## Draft multi-agent workstream dependency/ownership registry
+- Added machine-readable 9-workstream proposal from 32-open-PR snapshot (2026-11-22). All owners NULL, all candidate choice NULL, no write/merge authority; exact pinned fork + v0.23.3 stable SHA and observed candidate PRs. Defined dependency DAG and release proof fields. This is a coordination proposal, NOT a replacement for native Kanban or ownership assigned to other agents.
+- New offline no-network registry invariants (10 tests): unique IDs, dependency DAG, pinned SHA, no claimed owner/approval, release depends on all 8 other domains, no false active GPT UI; workflow separately runs them. Await exact-SHA CI before claiming green.
