@@ -64,7 +64,7 @@ Weights: correctness 30%, safety 25%, deployability 20%, 50-agent isolation 15%,
 | A. Official API + durable Hermes ledger | 5 | 4 | 4 | 5 | 4 | **89** |
 | B. Read-only MV3/native projection | 4 | 5 | 3 | 5 | 4 | **84** |
 | C. Owner-supervised CDP diagnostics | 3 | 3 | 3 | 2 | 2 | **55** |
-| D. Unbounded ChatGPT DOM as autonomous runner | 1 | 1 | 2 | 1 | 1 | **23** |
+| D. Unbounded ChatGPT DOM as autonomous runner | 1 | 1 | 2 | 1 | 1 | **24** |
 
 These scores don't measure operating cost. A + B are **complementary** rather than competing: A executes with trusted adapters/ledger, B displays observer projection. A remains optional if the owner does not approve API billing or data handling. B cannot substitute for A.
 
