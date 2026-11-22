@@ -194,6 +194,26 @@ Measure before choosing thresholds: false-positive/negative stop diagnosis on se
 | P1 | Structured operator diagnostic exporter (no prompt/secret data) | External extension support-diagnostics already demonstrates redaction |
 | P2 | Deduped incidents, per-stage resource budgets and causal timeline | Only after P0 correctness and real baseline measurement |
 
+## 8a. Broad CI forensic classification — do not certify a merge
+
+GitHub Actions full `Tests` on PR #22 SHA `4f5f3eedf6ca3c43ac9b5ef0eb0435d9e59b574d` reported **28 failed, 7,520 passed, 171 skipped**. Grouped from the exact job log:
+
+| Test family | Fail count | Observed error | Interpretation |
+|---|---:|---|---|
+| `tests/test_streaming.py` | 20 | OpenAI client initialization: missing credentials | Provider/test-fixture setup failure; **not** proof that a real provider call should be made in CI |
+| `tests/test_context_token_tracking.py` | 1 | Same missing-credentials error | Verify fake client construction and explicit dependency injection |
+| `tests/test_surrogate_sanitization.py` | 1 | Same missing-credentials error | Ensure sanitization tests do not need live credentials |
+| `tests/test_run_agent.py` | 1 | Same missing-credentials error | Mock provider boundary before client construction |
+| `tests/agent/test_auxiliary_client.py` | 1 | `assert None is not None` | Investigate vision/custom-endpoint fallback; exact functional cause unresolved |
+| `tests/test_codex_execution_paths.py` | 1 | Expected refresh recovery response differs | Review 401 refresh mocked contract and returned error; not necessarily a provider outage |
+| `tests/tools/test_file_read_guards.py` | 3 | Bounded 30-second test timeout | Distinguish deadlock, slow filesystem and test scheduling; instrument minimal offline fixture |
+
+Sum: **20+1+1+1+1+1+3=28**. On an older PR #22 commit, the broad suite also failed 28 tests (but with a different pass count). This repetition suggests a stable failure pattern but does **not** constitute a controlled baseline A/B, because the same commit and test environment were not run on default branch. GitHub API currently returned **zero `main` workflow runs**. Thus `CI_BASELINE_UNAVAILABLE` must remain explicit.
+
+**Safe investigation:** pin dependency lockfiles, retain exact failing testcase names and SHA, then run the same suite on a clean `main` worktree and the candidate using identical toolchain, with all outbound requests blocked and test-injected fake provider. Compare failures by testcase ID, not total alone. If a specific test needs a credential, fix its mocking/fixture boundaries; do **not** hide the problem by supplying a production API key or setting a dummy key that can trigger real external calls. For timeouts, isolate the file-read guard suite under controlled load and record OS, process state and per-case timing; do not inflate its 30-second watchdog without proof.
+
+Release gate remains **BLOCKED** while required named tests have failures, no matter how many local observer tests pass. The read-only collision guard's passing cases and the whole product's failing suite are distinct facts.
+
 ## 9. Evidence and source log
 
 2026-11-22 **verified sources**: GitHub fork main HEAD and PR file patches; #4 replay header behavior; #13/#15 browser cleanup and raw CDP endpoint logging; 30 open drafts; older broad Tests (28 failures) and 19/19 exact-head offline PR22 tests; official latest Hermes release v0.23.3 (2026-11-20 publication); external `abundantbeing/hermes-browser-extension` modules enumerated above; read-only local MCP root inventory (not Hermes). All technical proposals above labeled as implemented/proposed/unknown. PR22 is draft, no production merge or installed extension edit occurred.
