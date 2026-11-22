@@ -150,7 +150,7 @@ class ReadOnlyEventObserver:
     """Bounded process-local advisory sequence observer.
 
     No durable task state, no retries and no inferred worker-death decisions.
-    Duplicate replay outside bounded cache is 'stale_unverifiable', not success.
+    Duplicate replay outside bounded cache is `stale_unverifiable`, not success.
     Producer epochs must use distinct producer IDs; sequence starts at 1.
     """
 
