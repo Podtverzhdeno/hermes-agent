@@ -101,7 +101,7 @@ followup_gate: <objective test>
 
 ## 8. Выполненное и не выполненное на дату фиксации
 
-**Реально реализовано в GPT Companion PR #12:** безопасное хранилище неавторитетных событий, идемпотентность `event_id`, source-local sequence/failure detector, границы worker/gateway, обработка позднего backfill и clock skew, fake-completion guard, metadata allowlist, SQLite chain, Python CLI для разового расследования и локальный opt-in read-only polling watcher (не установлен и не запущен). Прогон 56 offline tests на Python 3.13.5; 100 source **синтетически**, не 100 действующих GPT-агентов.
+**Реально реализовано в GPT Companion PR #12:** безопасное хранилище неавторитетных событий, идемпотентность `event_id`, source-local sequence/failure detector, границы worker/gateway, обработка позднего backfill и clock skew, fake-completion guard, metadata allowlist, SQLite chain, Python CLI для разового расследования и локальный opt-in read-only polling watcher (не установлен и не запущен). Прогон 74 offline tests на Python 3.13.5; 100 source **синтетически**, не 100 действующих GPT-агентов.
 
 **Не реализовано и не объявляется существующим:** живое подключение к ChatGPT/browser/Hermes hooks, auth ingress, длительный watchdog, операторский сервер/дашборд, автофиксы, verified external effects, распределённый consensus, автоматическая синхронизация в Obsidian, сквозные prod тесты; локальная связь с владельцем через MCP не подтверждена.
 
@@ -116,3 +116,8 @@ followup_gate: <objective test>
 Завершить конкретный этап можно **только** при наличии: test evidence, exact revision, risk review, отрицательных сценариев, описания оставшихся ограничений и назначения следующего owner. Если отсутствует доступ к реальному источнику — этап `blocked_on_environment`, а не `done`. Любое превышение времени, количества попыток или бюджета — диагностируемый status, не повод незаметно увеличивать лимит.
 
 Этот файл — сохраняемое **в репозитории** задание для других агентов, а не утверждение, что одна чат-сессия или модель получила вечную память либо может работать круглосуточно без внешнего процесса.
+
+
+### Дополнение: незакрытые внешние эффекты между попытками
+
+Перед передачей новой попытки/агенту необходимо проверять `historical_unresolved_effects` из всех предыдущих attempts. Смена worker, контекста, ветки и task attempt не отменяет незавершённые действия. Удостоверяет эффект лишь доверенный Autopilot ledger/verifier после независимого провайдерского read-back. `TRACE_WINDOW_LIMIT_EXCEEDED` и `TRACE_INCOMPLETE` означают недостаточность данных, а не разрешение повторить write. `worker.stopped` одного из многих worker не означает завершение всего run.
