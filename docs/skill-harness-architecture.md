@@ -19,8 +19,11 @@ This pilot provides:
 3. Surfacing the validated manifest in skill_view() responses;
 4. A lookup-name/path guard and safer symlink boundaries for the skill reader
    and skill manager;
-5. Specialized manifests for an initial risk-weighted set of skills;
-6. A repository-wide inventory auditor and targeted tests.
+5. Thirteen individually scoped manifests for initial high-risk/high-value skills;
+6. A repository-wide inventory auditor (117 SKILL.md at baseline) and targeted tests;
+7. A validated skill_manage(write_harness) action with optimistic SHA-256 read-back;
+8. An enforced size ceiling for linked references viewed under a harness;
+9. Fail-closed agent-created skill scanning on denied, unresolved or missing scanners.
 
 All older skills remain loadable without a manifest. Their response reports
 harness_status=legacy and harness=null. Invalid existing manifests fail closed
@@ -28,9 +31,11 @@ at skill_view(). Neither status changes the core tool authorization model.
 
 ## Deliberate limitation: no enforcement yet
 
-`capabilities.tools`, `side_effects`, approval conditions, execution budgets and
+`capabilities.tools`, `side_effects`, approval conditions, tool-call budgets and
 lifecycle stages are **advisory metadata**. They are returned to the model,
-but the tool dispatcher does NOT currently enforce them. Do not market this
+but the tool dispatcher does NOT currently enforce them. The one implemented
+budget boundary is `max_reference_bytes` for skill_view(file_path=...) on a
+skill that declares a harness. Legacy skills retain their historical behavior. Do not market this
 as sandboxing, guaranteed approvals, timeout isolation or automatic rollback.
 Existing Hermes host-level permissions still determine what is permitted.
 
@@ -88,10 +93,30 @@ requires harness.yaml.** The existing SKILL.md format remains portable.
 | obsidian | Destructive edits/concurrency | canonical vault + writable subtree | readback and hashes |
 | google-workspace | Unrequested external messages | scope/account/resource ID | operation receipt |
 | native-mcp | Tool poisoning/overprivilege | server trust and schemas | read-only probe + inventory |
+| github-auth | Secret disclosure / wrong identity | scoped identity and safe credential store | redacted auth and read access checks |
+| github-repo-management | Irreversible admin changes | owner, branch rules, approval scope | before/after receipt and resource IDs |
+| pytorch-fsdp | Stale APIs / GPU cost / deadlock | torch version, ranks, baseline, checkpoints | measured per-rank tests and save/load |
 
 These are initial **hypotheses**, not proven quality gains. Compare against
 the baseline before expanding. Avoid mass-copying an identical manifest to
 all 100+ skills; each needs its own intent, risk profile and acceptance tests.
+
+## Security scanner and durable harness edits
+
+After the pilot, skill_manage(action="write_harness") validates the entire
+manifest against the canonical SKILL.md name. Updates require the existing
+manifest_sha256 returned by skill_view(), and mutations run the existing
+security scanner. This is intended to avoid accidental unreviewed changes;
+the underlying security scanner remains a heuristic and can miss attacks.
+
+For approved manifests, skill_view() checks the declared byte ceiling of
+linked references before reading them. It returns code=reference_too_large
+when the file is too large; this is a real guard, not merely a prose rule.
+
+Inventory at the initial fork revision: **117** Skills (74 bundled + 43
+optional), **0** per-skill harness manifests; 44 SKILL.md files were
+greater than 10 KiB. This first wave specializes 13 Skills, i.e. about 11%
+of baseline inventory. Avoid interpreting coverage as a quality metric.
 
 ## Workflow for a hardened v2
 
@@ -144,9 +169,12 @@ unsafe implicit account selection and unverifiable completion claims.
 
 - The guard scanner is regex-based; it is not a complete supply-chain
   assessment. Review known false positives and install-confirmation flows.
-- An agent-created skill may still be accepted on scanner "ask" results
-  without a synchronous approval gate. Address this separately before
-  treating self-written skills as trusted.
+- Agent-created skill mutation now **fails closed** on scanner "ask", block,
+  missing scanner or scanner exception, with rollback attempts. This does not
+  prove the scanner is complete: false negatives and TOCTOU remain.
+- The new `write_harness` action checks an existing file SHA-256 before overwrite,
+  but uses a best-effort compare-and-write, **not** an atomic cross-process CAS.
+  Concurrent writers must still serialize or use a host-level file lock.
 - Local filesystem containment checks can still have TOCTOU races; full
   mitigation needs descriptor-based filesystem operations, not just resolve().
 - External skill roots are currently considered trusted by configuration;
@@ -190,7 +218,10 @@ python -m scripts.audit_skill_harness --strict
 python -m scripts.audit_skill_harness --json
 python -m pytest tests/agent/test_skill_harness.py \
   tests/tools/test_skill_harness_integration.py \
-  tests/tools/test_skill_manager_path_boundaries.py -q
+  tests/tools/test_skill_manager_path_boundaries.py \
+  tests/tools/test_skill_manager_guard_fail_closed.py \
+  tests/tools/test_skill_manager_write_harness.py \
+  tests/skills/test_pytorch_fsdp_archives.py -q
 # Before merge:
 python -m pytest tests/ -q
 ```
