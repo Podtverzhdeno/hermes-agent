@@ -56,21 +56,58 @@ _CRITICAL = frozenset(("R3",))
 _EXTERNAL = frozenset(("R2", "R3"))
 
 
-def _canonical(value: Any) -> Any:
-    """Reject non-JSON, NaN, non-string dict keys and nonfinite/huge payloads."""
-    if value is None or type(value) in (str, bool, int):
+def _canonical(
+    value: Any, *, _depth: int = 0, _seen: set[int] | None = None,
+    _budget: list[int] | None = None,
+) -> Any:
+    """Return bounded JSON-shaped values; reject cycles, depth and size bombs.
+
+    Input is untrusted: tool arguments may originate from a model or remote
+    document. Do not exhaust recursion or CPU while preparing approvals.
+    """
+    if _depth > 32:
+        raise ValueError("action arguments exceed maximum nesting depth")
+    if _budget is None:
+        _budget = [0]
+    _budget[0] += 1
+    if _budget[0] > 10000:
+        raise ValueError("action arguments have too many nodes")
+    if value is None or type(value) is bool:
+        return value
+    if type(value) is str:
+        if len(value) > 65536:
+            raise ValueError("action argument string too long")
+        return value
+    if type(value) is int:
+        if value.bit_length() > 512:
+            raise ValueError("action argument integer too large")
         return value
     if type(value) is float:
         if not math.isfinite(value):
             raise ValueError("nonfinite action argument")
         return value
-    if type(value) in (list, tuple):
-        return [_canonical(item) for item in value]
-    if type(value) is dict:
+    if type(value) not in (list, tuple, dict):
+        raise ValueError("unsupported action argument type")
+    if _seen is None:
+        _seen = set()
+    identity = id(value)
+    if identity in _seen:
+        raise ValueError("cyclic action arguments are not allowed")
+    _seen.add(identity)
+    try:
+        if type(value) in (list, tuple):
+            return [
+                _canonical(item, _depth=_depth + 1, _seen=_seen, _budget=_budget)
+                for item in value
+            ]
         if not all(type(k) is str for k in value):
             raise ValueError("action arguments must use string keys")
-        return {key: _canonical(val) for key, val in value.items()}
-    raise ValueError("unsupported action argument type")
+        return {
+            key: _canonical(item, _depth=_depth + 1, _seen=_seen, _budget=_budget)
+            for key, item in value.items()
+        }
+    finally:
+        _seen.remove(identity)
 
 
 def _freeze(value: Any) -> Any:
