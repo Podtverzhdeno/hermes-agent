@@ -283,13 +283,11 @@ class HermesACPAgent(acp.Agent):
             # The previous process-global setter was unsafe when multiple
             # ACP sessions ran concurrently in the shared thread pool.
             try:
-                from contextlib import nullcontext
+                from tools import terminal_tool as _terminal_tool
 
-                approval_scope = nullcontext()
-                if approval_cb:
-                    from tools import terminal_tool as _terminal_tool
-                    approval_scope = _terminal_tool.scoped_approval_callback(approval_cb)
-                with approval_scope:
+                # Even a disconnected ACP client is an explicit scoped context:
+                # missing approval transport must NOT inherit CLI/global policy.
+                with _terminal_tool.scoped_approval_callback(approval_cb):
                     return agent.run_conversation(
                         user_message=user_text,
                         conversation_history=state.history,
