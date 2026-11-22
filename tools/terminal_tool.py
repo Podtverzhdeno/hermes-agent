@@ -34,6 +34,8 @@ import platform
 import time
 import threading
 import atexit
+from contextlib import contextmanager
+from contextvars import ContextVar
 import shutil
 import subprocess
 from pathlib import Path
@@ -103,6 +105,34 @@ _cached_sudo_password: str = ""
 _sudo_password_callback = None
 _approval_callback = None
 
+# ACP can run several sessions concurrently. A process-global approval callback
+# can route one session's permission request to another session's client.
+# Keep a per-execution override while preserving the CLI's process-wide default.
+_NO_APPROVAL_SCOPE = object()
+_approval_callback_scope: ContextVar = ContextVar(
+    "hermes_terminal_approval_callback", default=_NO_APPROVAL_SCOPE
+)
+
+
+@contextmanager
+def scoped_approval_callback(callback):
+    """Bind permission routing to a synchronous agent execution context.
+
+    None explicitly suppresses the global default. ACP workers must enter
+    this scope in the thread that actually executes the agent.
+    """
+    token = _approval_callback_scope.set(callback)
+    try:
+        yield
+    finally:
+        _approval_callback_scope.reset(token)
+
+
+def _effective_approval_callback():
+    callback = _approval_callback_scope.get()
+    return _approval_callback if callback is _NO_APPROVAL_SCOPE else callback
+
+
 
 def set_sudo_password_callback(cb):
     """Register a callback for sudo password prompts (used by CLI)."""
@@ -128,14 +158,20 @@ from tools.approval import (
 
 def _check_dangerous_command(command: str, env_type: str) -> dict:
     """Delegate to the consolidated approval module, passing the CLI callback."""
-    return _check_dangerous_command_impl(command, env_type,
-                                         approval_callback=_approval_callback)
+    return _check_dangerous_command_impl(
+        command, env_type,
+        approval_callback=_effective_approval_callback(),
+        enforce_callback=_approval_callback_scope.get() is not _NO_APPROVAL_SCOPE,
+    )
 
 
 def _check_all_guards(command: str, env_type: str) -> dict:
     """Delegate to consolidated guard (tirith + dangerous cmd) with CLI callback."""
-    return _check_all_guards_impl(command, env_type,
-                                  approval_callback=_approval_callback)
+    return _check_all_guards_impl(
+        command, env_type,
+        approval_callback=_effective_approval_callback(),
+        enforce_callback=_approval_callback_scope.get() is not _NO_APPROVAL_SCOPE,
+    )
 
 
 def _handle_sudo_failure(output: str, env_type: str) -> str:

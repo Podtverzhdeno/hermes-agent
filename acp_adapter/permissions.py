@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Callable
 
@@ -40,15 +41,20 @@ def make_approval_callback(
         timeout: Seconds to wait for a response before auto-denying.
     """
 
-    def _callback(command: str, description: str) -> str:
+    def _callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
+        # The terminal approval API supplies allow_permanent as a keyword.
+        # Suppress persistent approval when the policy requests one-time only.
         options = [
             PermissionOption(option_id="allow_once", kind="allow_once", name="Allow once"),
-            PermissionOption(option_id="allow_always", kind="allow_always", name="Allow always"),
-            PermissionOption(option_id="deny", kind="reject_once", name="Deny"),
         ]
+        if allow_permanent:
+            options.append(PermissionOption(
+                option_id="allow_always", kind="allow_always", name="Allow always"
+            ))
+        options.append(PermissionOption(option_id="deny", kind="reject_once", name="Deny"))
         import acp as _acp
 
-        tool_call = _acp.start_tool_call("perm-check", command, kind="execute")
+        tool_call = _acp.start_tool_call(f"perm-check-{uuid.uuid4().hex}", command, kind="execute")
 
         coro = request_permission_fn(
             session_id=session_id,
@@ -56,21 +62,28 @@ def make_approval_callback(
             options=options,
         )
 
+        future = None
         try:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             response = future.result(timeout=timeout)
-        except (FutureTimeout, Exception) as exc:
+        except Exception as exc:
+            # An unanswered permission prompt must not outlive its decision.
+            if future is not None:
+                future.cancel()
+            else:
+                coro.close()
             logger.warning("Permission request timed out or failed: %s", exc)
             return "deny"
 
-        outcome = response.outcome
+        outcome = getattr(response, "outcome", None)
         if isinstance(outcome, AllowedOutcome):
             option_id = outcome.option_id
             # Look up the kind from our options list
             for opt in options:
                 if opt.option_id == option_id:
                     return _KIND_TO_HERMES.get(opt.kind, "deny")
-            return "once"  # fallback for unknown option_id
+            logger.warning("ACP permission returned an unknown option_id; denying")
+            return "deny"  # fail closed on an unexpected or forged option
         else:
             return "deny"
 

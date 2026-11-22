@@ -416,7 +416,8 @@ Respond with exactly one word: APPROVE, DENY, or ESCALATE"""
 
 
 def check_dangerous_command(command: str, env_type: str,
-                            approval_callback=None) -> dict:
+                            approval_callback=None,
+                            enforce_callback: bool = False) -> dict:
     """Check if a command is dangerous and handle approval.
 
     This is the main entry point called by terminal_tool before executing
@@ -430,11 +431,12 @@ def check_dangerous_command(command: str, env_type: str,
     Returns:
         {"approved": True/False, "message": str or None, ...}
     """
-    if env_type in ("docker", "singularity", "modal", "daytona"):
+    if env_type in ("docker", "singularity", "modal", "daytona") and not enforce_callback:
         return {"approved": True, "message": None}
 
-    # --yolo: bypass all approval prompts
-    if os.getenv("HERMES_YOLO_MODE"):
+    # ACP-owned execution contexts may explicitly require an approval callback.
+    # Such a scope must never inherit ambient YOLO/non-interactive bypasses.
+    if os.getenv("HERMES_YOLO_MODE") and not enforce_callback:
         return {"approved": True, "message": None}
 
     is_dangerous, pattern_key, description = detect_dangerous_command(command)
@@ -442,16 +444,16 @@ def check_dangerous_command(command: str, env_type: str,
         return {"approved": True, "message": None}
 
     session_key = os.getenv("HERMES_SESSION_KEY", "default")
-    if is_approved(session_key, pattern_key):
+    if not enforce_callback and is_approved(session_key, pattern_key):
         return {"approved": True, "message": None}
 
     is_cli = os.getenv("HERMES_INTERACTIVE")
     is_gateway = os.getenv("HERMES_GATEWAY_SESSION")
 
-    if not is_cli and not is_gateway:
+    if not is_cli and not is_gateway and not enforce_callback:
         return {"approved": True, "message": None}
 
-    if is_gateway or os.getenv("HERMES_EXEC_ASK"):
+    if (is_gateway or os.getenv("HERMES_EXEC_ASK")) and not enforce_callback:
         submit_pending(session_key, {
             "command": command,
             "pattern_key": pattern_key,
@@ -469,8 +471,14 @@ def check_dangerous_command(command: str, env_type: str,
             ),
         }
 
+    if enforce_callback and approval_callback is None:
+        return {"approved": False, "message": "BLOCKED: ACP approval callback unavailable."}
+
     choice = prompt_dangerous_approval(command, description,
+                                       allow_permanent=not enforce_callback,
                                        approval_callback=approval_callback)
+    if enforce_callback and choice != "once":
+        return {"approved": False, "message": "BLOCKED: ACP requires an explicit one-time approval."}
 
     if choice == "deny":
         return {
@@ -522,7 +530,8 @@ def _format_tirith_description(tirith_result: dict) -> str:
 
 
 def check_all_command_guards(command: str, env_type: str,
-                             approval_callback=None) -> dict:
+                             approval_callback=None,
+                             enforce_callback: bool = False) -> dict:
     """Run all pre-exec security checks and return a single approval decision.
 
     Gathers findings from tirith and dangerous-command detection, then
@@ -531,12 +540,12 @@ def check_all_command_guards(command: str, env_type: str,
     other was shown to the user.
     """
     # Skip containers for both checks
-    if env_type in ("docker", "singularity", "modal", "daytona"):
+    if env_type in ("docker", "singularity", "modal", "daytona") and not enforce_callback:
         return {"approved": True, "message": None}
 
     # --yolo or approvals.mode=off: bypass all approval prompts
     approval_mode = _get_approval_mode()
-    if os.getenv("HERMES_YOLO_MODE") or approval_mode == "off":
+    if (os.getenv("HERMES_YOLO_MODE") or approval_mode == "off") and not enforce_callback:
         return {"approved": True, "message": None}
 
     is_cli = os.getenv("HERMES_INTERACTIVE")
@@ -545,7 +554,7 @@ def check_all_command_guards(command: str, env_type: str,
 
     # Preserve the existing non-interactive behavior: outside CLI/gateway/ask
     # flows, we do not block on approvals and we skip external guard work.
-    if not is_cli and not is_gateway and not is_ask:
+    if not is_cli and not is_gateway and not is_ask and not enforce_callback:
         return {"approved": True, "message": None}
 
     # --- Phase 1: Gather findings from both checks ---
@@ -578,11 +587,11 @@ def check_all_command_guards(command: str, env_type: str,
         rule_id = findings[0].get("rule_id", "unknown") if findings else "unknown"
         tirith_key = f"tirith:{rule_id}"
         tirith_desc = _format_tirith_description(tirith_result)
-        if not is_approved(session_key, tirith_key):
+        if enforce_callback or not is_approved(session_key, tirith_key):
             warnings.append((tirith_key, tirith_desc, True))
 
     if is_dangerous:
-        if not is_approved(session_key, pattern_key):
+        if enforce_callback or not is_approved(session_key, pattern_key):
             warnings.append((pattern_key, description, False))
 
     # Nothing to warn about
@@ -593,7 +602,7 @@ def check_all_command_guards(command: str, env_type: str,
     # When approvals.mode=smart, ask the aux LLM before prompting the user.
     # Inspired by OpenAI Codex's Smart Approvals guardian subagent
     # (openai/codex#13860).
-    if approval_mode == "smart":
+    if approval_mode == "smart" and not enforce_callback:
         combined_desc_for_llm = "; ".join(desc for _, desc, _ in warnings)
         verdict = _smart_approve(command, combined_desc_for_llm)
         if verdict == "approve":
@@ -624,7 +633,7 @@ def check_all_command_guards(command: str, env_type: str,
 
     # Gateway/async: single approval_required with combined description
     # Store all pattern keys so gateway replay approves all of them
-    if is_gateway or is_ask:
+    if (is_gateway or is_ask) and not enforce_callback:
         submit_pending(session_key, {
             "command": command,
             "pattern_key": primary_key,        # backward compat
@@ -644,9 +653,14 @@ def check_all_command_guards(command: str, env_type: str,
 
     # CLI interactive: single combined prompt
     # Hide [a]lways when any tirith warning is present
+    if enforce_callback and approval_callback is None:
+        return {"approved": False, "message": "BLOCKED: ACP approval callback unavailable."}
+
     choice = prompt_dangerous_approval(command, combined_desc,
-                                       allow_permanent=not has_tirith,
+                                       allow_permanent=not has_tirith and not enforce_callback,
                                        approval_callback=approval_callback)
+    if enforce_callback and choice != "once":
+        return {"approved": False, "message": "BLOCKED: ACP requires an explicit one-time approval."}
 
     if choice == "deny":
         return {

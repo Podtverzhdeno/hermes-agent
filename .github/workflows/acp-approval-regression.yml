@@ -1,0 +1,43 @@
+name: ACP Scoped Approval Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "acp_adapter/server.py"
+      - "acp_adapter/permissions.py"
+      - "tools/approval.py"
+      - "tools/terminal_tool.py"
+      - "tests/test_acp_approval_isolation.py"
+      - "tests/acp/**"
+      - ".github/workflows/acp-approval-regression.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acp-approval-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+      - name: Run scoped permission and existing ACP regressions
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q --tb=short             tests/test_acp_approval_isolation.py             tests/acp/test_permissions.py             tests/acp/test_server.py
