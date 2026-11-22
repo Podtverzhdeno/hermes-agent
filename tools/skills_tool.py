@@ -1167,6 +1167,24 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                     exc_info=True,
                 )
 
+        # Individual skill contracts travel with the skill directory.
+        # They only add an advisory execution/evidence checklist; no new
+        # executable tool privileges are introduced by this metadata.
+        # Malformed opt-in contracts fail closed rather than silently being
+        # ignored by the loader.
+        from agent.skill_harness import (
+            SkillHarnessError, format_harness_guidance, load_skill_harness,
+        )
+        try:
+            harness_profile = load_skill_harness(skill_dir, skill_name)
+        except SkillHarnessError as exc:
+            return json.dumps({
+                "success": False,
+                "name": skill_name,
+                "error": "Invalid skill harness: " + str(exc),
+                "readiness_status": "unsupported",
+            }, ensure_ascii=False)
+
         result = {
             "success": True,
             "name": skill_name,
@@ -1190,6 +1208,18 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
             if setup_needed
             else SkillReadinessStatus.AVAILABLE.value,
         }
+
+        if harness_profile is not None:
+            result["harness"] = {
+                "schema_version": harness_profile["schema_version"],
+                "skill": harness_profile["skill"],
+                "risk": harness_profile["risk"],
+                "routing": harness_profile["routing"],
+                "actions": harness_profile["actions"],
+                "required_evidence": harness_profile["evidence"],
+                "guidance": format_harness_guidance(harness_profile),
+                "enforcement": "advisory_only; external trusted tool guards required",
+            }
 
         setup_help = next((e["help"] for e in required_env_vars if e.get("help")), None)
         if setup_help:
