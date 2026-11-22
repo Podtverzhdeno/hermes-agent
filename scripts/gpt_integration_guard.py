@@ -40,6 +40,16 @@ class IncompleteScan(Exception):
     """Evidence is missing; never convert this into a clean result."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward an authentication header to an unexpected redirect target."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_SAFE_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def _get_json(repo: str, path: str, token: str | None) -> Any:
     if not _REPO.fullmatch(repo):
         raise ValueError("Invalid owner/repository selector")
@@ -50,7 +60,7 @@ def _get_json(repo: str, path: str, token: str | None) -> Any:
         headers["Authorization"] = f"Bearer {token}"
     req = urllib.request.Request(url, headers=headers, method="GET")
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with _SAFE_OPENER.open(req, timeout=15) as response:
             return json.load(response)
     except urllib.error.HTTPError as exc:
         # Do not print token, request headers, full response or provider payload.
