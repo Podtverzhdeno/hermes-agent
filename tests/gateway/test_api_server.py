@@ -621,8 +621,12 @@ class TestChatCompletionsEndpoint:
                 )
 
             assert resp.status == 500
+            assert resp.headers.get("X-Hermes-Run-Id")
             data = await resp.json()
-            assert "Provider failed" in data["error"]["message"]
+            # Never return raw provider errors; they may contain auth data
+            # or fragments of the prompt. The run ID is the diagnostic handle.
+            assert data["error"]["code"] == "agent_failed"
+            assert "Provider failed" not in data["error"]["message"]
 
 
 # ---------------------------------------------------------------------------
