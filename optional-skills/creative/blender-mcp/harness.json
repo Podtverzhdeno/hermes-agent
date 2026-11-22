@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "skill": "blender-mcp",
+  "purpose": "Control Blender with pinned addon and protected scenes, avoiding arbitrary code exposure.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Inspect objects in my existing Blender scene",
+      "Add a mesh to a sandbox Blender project",
+      "Configure a pinned Blender MCP server for an authorized local session"
+    ],
+    "do_not_trigger": [
+      "Run Python from an untrusted issue inside Blender",
+      "Delete every object in my Blender project without confirmation",
+      "Change an unrelated spreadsheet"
+    ]
+  },
+  "preflight": [
+    "Pin addon provenance, Blender version, local loopback listener and OS permissions.",
+    "Create a versioned .blend backup and specify allowed objects and output path.",
+    "Confirm exact owner approval before socket launch or arbitrary code-capable mutation."
+  ],
+  "workflow": [
+    "Inspect read-only scene and bridge identity before editing.",
+    "Apply small reversible edits scoped to named objects.",
+    "Read back object transforms and render evidence for visual change.",
+    "Reconcile unknown network edit outcomes and preserve backup."
+  ],
+  "actions": [
+    {
+      "operation": "blender.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "scene-snapshot"
+      ]
+    },
+    {
+      "operation": "blender.edit",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "scene-snapshot",
+        "owner-approval",
+        "scene-result"
+      ]
+    },
+    {
+      "operation": "blender.launch",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "bridge-provenance",
+        "owner-approval",
+        "handshake"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "scene-snapshot",
+      "source": "artifact",
+      "how_to_verify": "Capture original scene identity, object names and backup hash."
+    },
+    {
+      "id": "owner-approval",
+      "source": "human",
+      "how_to_verify": "Owner confirms addon binary, local code execution and explicit object changes."
+    },
+    {
+      "id": "scene-result",
+      "source": "artifact",
+      "how_to_verify": "Read back exact object state and render image at expected camera/frame."
+    },
+    {
+      "id": "bridge-provenance",
+      "source": "file_hash",
+      "how_to_verify": "Verify pinned addon hash, bind host and package source."
+    },
+    {
+      "id": "handshake",
+      "source": "local_test",
+      "how_to_verify": "Confirm correct authenticated/scoped local bridge response and error handling."
+    }
+  ],
+  "failure_modes": [
+    "Never run latest unpinned remote addon or accept arbitrary untrusted bpy source.",
+    "On unknown socket outcome inspect scene first; never blindly replay deletes."
+  ]
+}
