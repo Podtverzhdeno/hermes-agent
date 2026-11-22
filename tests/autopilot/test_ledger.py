@@ -237,3 +237,95 @@ def test_heartbeat_extends_lease(ctx):
     clock.advance(8)
     assert ledger.claim("A2") is None
     assert ledger.get(task)["status"] == "running"
+
+
+def test_expired_approval_is_closed_on_scheduler_tick(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "publish", "digest:1", clock() + 5)
+    clock.advance(6)
+    assert ledger.claim("A2") is None
+    assert ledger.get(task)["status"] == "blocked"
+    assert any(e["kind"] == "approval_expired" for e in ledger.history(task))
+
+
+def test_proven_not_executed_can_be_rereserved_but_acknowledged_cannot(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "write", "digest:A", clock() + 100)
+    ledger.decide_approval(task, "write", "digest:A", "owner", True)
+    new = ledger.claim("A2", lease_seconds=15)
+    ledger.reserve_effect(task, "A2", new["fence"], "write", "digest:A")
+    clock.advance(16)
+    assert ledger.claim("A3") is None
+    ledger.reconcile_effect(task, "write", "not_executed", "readback:absent")
+    retry = ledger.claim("A3")
+    assert retry
+    ledger.reserve_effect(task, "A3", retry["fence"], "write", "digest:A")
+    ledger.acknowledge_effect(task, "A3", retry["fence"], "write", "digest:A", "receipt:8")
+    with pytest.raises(LedgerConflict):
+        ledger.reserve_effect(task, "A3", retry["fence"], "write", "digest:A")
+    assert any(e["kind"] == "effect_rereserved" for e in ledger.history(task))
+
+
+def test_nonretryable_failure_with_uncertain_effect_never_resumes(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "write", "digest:A", clock() + 100)
+    ledger.decide_approval(task, "write", "digest:A", "owner", True)
+    new = ledger.claim("A2")
+    ledger.reserve_effect(task, "A2", new["fence"], "write", "digest:A")
+    ledger.fail(task, "A2", new["fence"], "POLICY_DENIED", retryable=False)
+    assert ledger.get(task)["status"] == "needs_reconciliation"
+    ledger.reconcile_effect(task, "write", "acknowledged", "readback:present")
+    assert ledger.get(task)["status"] == "failed"
+    assert ledger.claim("A3") is None
+
+
+def test_other_trusted_source_failure_vetoes_success(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.begin_verification(task, "A1", token)
+    ledger.record_evidence(task, "tests", "pytest", "git:abc123",
+                           "passed", "run:test1", trusted=True)
+    ledger.record_evidence(task, "ci", "github-linux", "git:abc123",
+                           "passed", "run:green", trusted=True)
+    ledger.record_evidence(task, "ci", "github-windows", "git:abc123",
+                           "failed", "run:red", trusted=True)
+    assert ledger.finalize(task, "A1", token) is False
+    assert ledger.get(task)["status"] == "verifying"
+
+
+def test_untrusted_observation_cannot_downgrade_trusted_evidence(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.begin_verification(task, "A1", token)
+    ledger.record_evidence(task, "ci", "github", "git:abc123",
+                           "passed", "run:trusted", trusted=True)
+    ledger.record_evidence(task, "ci", "github", "git:abc123",
+                           "failed", "untrusted:fake", trusted=False)
+    ledger.record_evidence(task, "tests", "pytest", "git:abc123",
+                           "passed", "run:pytest", trusted=True)
+    assert ledger.finalize(task, "A1", token)
+    assert any(e["kind"] == "evidence_ignored_untrusted" for e in ledger.history(task))
+    with pytest.raises(LedgerConflict):
+        ledger.record_evidence(task, "ci", "github", "git:abc123",
+                               "failed", "late:invalid", trusted=True)
+
+
+def test_unstructured_failure_message_is_not_logged(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    secret = "SENSITIVE_CANARY_NO_LOG"
+    ledger.fail(task, "A1", token, "unexpected: " + secret, retryable=False)
+    events = ledger.history(task)
+    import json
+    serialized = json.dumps(events)
+    assert secret not in serialized
+    assert "UNCLASSIFIED_FAILURE" in serialized
