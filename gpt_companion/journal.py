@@ -198,6 +198,15 @@ class EventJournal:
                 prior = chain
         return True
 
+    def list_runs(self, limit: int = 500) -> list[str]:
+        """List recent opaque run ids for a read-only observer; bounded by design."""
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("invalid run listing limit")
+        with self._db() as db:
+            rows = db.execute("""SELECT run_id FROM events
+                GROUP BY run_id ORDER BY MAX(position) DESC LIMIT ?""", (limit,)).fetchall()
+        return [row["run_id"] for row in rows]
+
     def assess(self, run_id: str, *, now: float | None = None,
                liveness_timeout: float = 120, progress_timeout: float = 300) -> dict[str, Any]:
         """Conservative diagnosis only. No autonomous retry or success claims."""
