@@ -480,6 +480,12 @@ class AutopilotLedger:
             ).fetchone()
             if pending_effect:
                 raise LedgerConflict("cannot pause with an unresolved external effect")
+            previous_action = db.execute(
+                "SELECT 1 FROM actions WHERE task_id=? AND action_key=?",
+                (task_id, action_key),
+            ).fetchone()
+            if previous_action:
+                raise LedgerConflict("effect key was already reserved; it cannot be approved again")
             old = db.execute(
                 "SELECT digest FROM approvals WHERE task_id=? AND action_key=?",
                 (task_id, action_key),
