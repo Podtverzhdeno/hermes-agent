@@ -163,7 +163,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 ## 8. План изменений по этапам
 
-**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py`, безопасный разовый CLI `python -m gpt_companion`, тесты и package discovery `pyproject.toml` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, scheduled observer и обещаний непрерывного мониторинга. Состояния журнала не равны статусам task ledger.
+**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py`, безопасный разовый CLI `python -m gpt_companion`, тесты и package discovery `pyproject.toml` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, установленного scheduled observer и обещаний непрерывного мониторинга. Состояния журнала не равны статусам task ledger.
 
 **P1 — после интеграции Autopilot:** version-pinned Hermes observer hook adapter, `local outbox → authenticated inbox`; schema negotiation, source authorization, heartbeat/progress probes, reconciliation poller для OpenAI Responses webhooks и GitHub; shadow mode только чтение и реальные fault-injection тесты. Перед кодом выяснить, какая Hermes версия запускается реально, какие hook имена поддерживает, где хранится gateway и какая auth схема.
 
@@ -202,7 +202,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **45 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **52 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -262,3 +262,11 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 ## 14. Долговременная передача задач между десятками агентов
 
 Контракт независимых инженерных агентов, owner/fence, инцидентная форма, правила передачи смены и фактически подтверждённые/неподтверждённые гарантии вынесены в [`GPT_COMPANION_AGENT_MANDATE.md`](./GPT_COMPANION_AGENT_MANDATE.md). Этот документ следует читать при каждом новом агентском запуске — **не** заменять его доверие устным отчётом предшественника.
+
+### ADR-021: Локальный read-only watcher, согласованное persist-before-notify (P0 implemented; not deployed)
+
+Создан `gpt_companion/watch.py`: только явный пользовательский запуск, by default один polling cycle, режим `--max-cycles 0` = непрерывный local polling до отмены. Обрабатывает один или до 500 последних `run_id`, пишет изменения diagnosis в *отдельную* SQLite WAL БД, предотвращает дубли одинаковых состояний после рестарта и при нескольких watcher-процессах. Не повторяет provider/API/tool actions, ничего не отправляет через сеть, не выполняет auto-repair. Время heartbeat не является реальным доказательством жизни worker без аутентификации и leases.
+
+**Семантика доставки:** переход записывается в SQLite **до** вывода JSON в stdout. Если процесс упадёт между commit и выводом, уведомление на stdout может потеряться, но запись останется в таблице `transitions`: это **at-most-once best-effort notification**, не exactly-once. Возможность подтверждённых внешних уведомлений требует отдельного outbox dispatcher с receipt и dedup у получателя. Source event journal и status watcher DB физически разделены; наблюдатель остаётся неавторитетным.
+
+Команда snapshot: `python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-history.sqlite3 --all`. Непрерывный режим **не активирован** и требует владельца процесса, автозапуска и безопасной остановки. Unit tests: restart dedup, concurrent watch CAS-like transaction, absence-of-run, unconfirmed effect, CLI snapshot, inventory 2 runs.
