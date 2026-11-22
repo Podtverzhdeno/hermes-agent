@@ -545,7 +545,8 @@ def verify_bundle(
             or manifest.get('schema') != 'hermes.pr.bundle.v1'
             or manifest.get('status') != 'FILES_WRITTEN_NOT_RUNTIME_VERIFIED'
             or not _sha40(manifest.get('snapshot_sha'))
-            or manifest.get('evidence_mode') not in
+            or not isinstance(manifest.get('evidence_mode'), str)
+            or manifest['evidence_mode'] not in
             {'github_api', 'offline_snapshot', 'unverified_input'}):
         raise IncompleteSnapshot('Unsupported or incomplete report manifest')
     paths = {
@@ -590,7 +591,10 @@ def verify_bundle(
                 or snapshot.get('default_head_sha') != manifest['snapshot_sha']
                 or snapshot.get('collected_at') != manifest.get('collected_at')):
             raise IncompleteSnapshot('Snapshot provenance mismatch')
-        if 'report' in observed and report.get('open_pr_count') != len(snapshot.get('pulls', [])):
+        pulls = snapshot.get('pulls')
+        if not isinstance(pulls, list):
+            raise IncompleteSnapshot('Bundle snapshot PR inventory malformed')
+        if 'report' in observed and report.get('open_pr_count') != len(pulls):
             raise IncompleteSnapshot('Report/snapshot PR counts disagree')
     return manifest
 
