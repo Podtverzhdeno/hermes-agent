@@ -289,6 +289,42 @@ class PRWatchTests(unittest.TestCase):
             self.assertEqual(saved['evidence_mode'], 'offline_snapshot')
             self.assertEqual(saved['snapshot_currentness'], 'UNVERIFIED_OFFLINE')
 
+    def test_windows_case_alias_across_independent_agent_paths(self):
+        a = pr(1, ['Gateway/State.py'])
+        b = pr(2, ['gateway/state.py'])
+        report = guard.analyze(snapshot(a, b))
+        aliased = [x for x in report['findings']
+                   if x['code'] == 'WINDOWS_PATH_ALIAS_ACROSS_PRS']
+        self.assertEqual(len(aliased), 1)
+        self.assertEqual(aliased[0]['severity'], 'blocker')
+        self.assertEqual(set(aliased[0]['paths']),
+                         {'Gateway/State.py', 'gateway/state.py'})
+        self.assertFalse(any(x['code'] == 'INDEPENDENT_WRITE_COLLISION'
+                             for x in report['findings']))
+
+    def test_unicode_normalization_alias_is_suspected_not_certified(self):
+        composed = 'docs/caf\u00e9.md'
+        decomposed = 'docs/cafe\u0301.md'
+        report = guard.analyze(snapshot(pr(1, [composed]), pr(2, [decomposed])))
+        self.assertIn('WINDOWS_PATH_ALIAS_ACROSS_PRS',
+                      [f['code'] for f in report['findings']])
+        self.assertEqual(report['runtime_verdict'], 'UNOBSERVED')
+
+    def test_within_one_pr_windows_alias_blocks_independent_checkout(self):
+        item = pr(1, ['Foo.py', 'foo.py'])
+        report = guard.analyze(snapshot(item))
+        self.assertIn('WINDOWS_PATH_ALIAS_IN_PR',
+                      [f['code'] for f in report['findings']])
+        self.assertEqual(report['integration_verdict'], 'HOLD_FOR_REVIEW')
+
+    def test_case_only_rename_requires_windows_checkout_review(self):
+        renamed = pr(1, ['gateway/modern.py'])
+        renamed['renamed_from_paths'] = ['gateway/Modern.py']
+        other = pr(2, ['gateway/Modern.py'])
+        report = guard.analyze(snapshot(renamed, other))
+        self.assertTrue(any(f['code'] == 'INDEPENDENT_WRITE_COLLISION'
+                            for f in report['findings']))
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
