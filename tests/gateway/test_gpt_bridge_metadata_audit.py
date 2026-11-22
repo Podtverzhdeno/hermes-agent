@@ -280,6 +280,36 @@ class AuditTests(unittest.TestCase):
         self.assertIn("EFFECT_FENCE_DIVERGENCE",
                       auditor.summarize().tasks[uid("task-one")]["diagnostic_flags"])
 
+
+    def test_global_effect_key_reuse_cross_task_is_diagnostic_not_retry(self):
+        auditor = CausalAuditor()
+        shared = "purchase-order-unique-id-927"
+        auditor.ingest(ev(1, kind="tool.effect.reserved", producer="worker-a",
+                          task="logical-task-A", effect_key=shared))
+        auditor.ingest(ev(1, kind="tool.effect.reserved", producer="worker-b",
+                          task="logical-task-B", effect_key=shared))
+        result = auditor.summarize().as_dict()
+        findings = [p for p in result["problems"] if p["code"] == "POSSIBLE_CROSS_TASK_EFFECT_KEY_REUSE"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["task_count"], 2)
+        self.assertNotIn(shared, json.dumps(result))
+        for task in result["tasks"].values():
+            self.assertIn("POSSIBLE_SHARED_EFFECT_KEY_CROSS_TASK", task["diagnostic_flags"])
+            self.assertFalse(task["automatic_retry_allowed"])
+
+    def test_single_logical_task_multiple_attempts_same_effect_key_is_not_global_collision(self):
+        auditor = CausalAuditor()
+        shared = "purchase-order-unique-id-927"
+        auditor.ingest(ev(1, kind="tool.effect.reserved", producer="worker-a",
+                          task="same-task", effect_key=shared))
+        auditor.ingest(ev(1, kind="tool.effect.reserved", producer="worker-b",
+                          task="same-task", effect_key=shared, fence=2))
+        result = auditor.summarize().as_dict()
+        self.assertNotIn("POSSIBLE_CROSS_TASK_EFFECT_KEY_REUSE", [p["code"] for p in result["problems"]])
+        flags = next(iter(result["tasks"].values()))["diagnostic_flags"]
+        self.assertIn("EFFECT_FENCE_DIVERGENCE", flags)
+        self.assertIn("MULTIPLE_EFFECT_RESERVATIONS_OBSERVED", flags)
+
     def test_completion_without_verifier_is_unverified(self):
         auditor = CausalAuditor()
         auditor.ingest(ev(1, kind="task.completed"))

@@ -318,6 +318,24 @@ class CausalAuditor:
                                         "missing_count": missing,
                                         "severity": "warning", "confidence": "unconfirmed"})
         report.problems.extend(self._causal_issues())
+        # Global operation keys are supposed to correlate the *business effect*,
+        # not merely one worker attempt. Multiple logical tasks reserving the
+        # same key can represent a legitimate replay OR a duplicate write race.
+        # This is an advisory suspicion, never authorization to cancel/retry.
+        effect_claims: dict[str, set[str]] = defaultdict(set)
+        for event in self.events.values():
+            if event["kind"] == "tool.effect.reserved":
+                effect_claims[event["effect_key"]].add(event["task_id"])
+        shared_effect_keys = {
+            key for key, tasks in effect_claims.items() if len(tasks) > 1
+        }
+        for key in sorted(shared_effect_keys):
+            report.problems.append({
+                "code": "POSSIBLE_CROSS_TASK_EFFECT_KEY_REUSE",
+                "effect_key_digest": "sha256:" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:20],
+                "task_count": len(effect_claims[key]),
+                "severity": "warning", "confidence": "unconfirmed",
+            })
         grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for e in self.events.values():
             grouped[e["task_id"]].append(e)
@@ -332,6 +350,8 @@ class CausalAuditor:
                 kind = e["kind"]
                 if kind.startswith("tool.effect."):
                     effect_groups[e["effect_key"]].append(e)
+                    if e["effect_key"] in shared_effect_keys:
+                        task_flags.add("POSSIBLE_SHARED_EFFECT_KEY_CROSS_TASK")
                 if kind == "task.completed":
                     observed_complete = True
                 if kind == "verifier.completed":
@@ -353,6 +373,10 @@ class CausalAuditor:
                 acks = [e for e in effect_events if e["kind"] == "tool.effect.acknowledged"]
                 unknowns = [e for e in effect_events if e["kind"] == "tool.effect.unknown"]
                 fences = {e["lease_fence"] for e in effect_events}
+                if len(reservations) > 1:
+                    # May reflect a valid reconciled retry, but the offline
+                    # slice alone cannot prove it. Do not silently coalesce.
+                    task_flags.add("MULTIPLE_EFFECT_RESERVATIONS_OBSERVED")
                 if len(fences) > 1:
                     task_flags.add("EFFECT_FENCE_DIVERGENCE")
                 if unknowns or (reservations and not acks):

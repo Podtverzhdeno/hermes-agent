@@ -362,3 +362,11 @@ These are **new test requirements**, not test results. Cross-PR review comment w
 ### ADR-GPT-020 — gateway source of truth over independent retries
 
 **ACCEPT:** upstream canonical session authority and durable admission/recovery APIs with a narrow authenticated observer adapter. **REJECT:** combining four in-memory gateway caches or keeping legacy keyed-stream preflight unconditional. **REJECT:** allowing SSE text or browser state to become authority for external effects. An integration branch must pass independent end-to-end fault-injection tests at the final merged HEAD; no individual draft PR proves combined behavior.
+
+## 16. Cross-task operation-key alias detection (implemented, metadata only)
+
+**New failure hypothesis:** Thirty agents may independently issue separate task IDs which reserve the same globally stable `effect_key` for one real external action. A per-task ledger slice appears internally consistent even when two tasks race. The offline observer now groups reserved effect keys *across tasks* and reports `POSSIBLE_CROSS_TASK_EFFECT_KEY_REUSE` with a SHA256 digest, task count and unconfirmed confidence; both tasks carry `POSSIBLE_SHARED_EFFECT_KEY_CROSS_TASK`. A second reservation within one task is separately flagged `MULTIPLE_EFFECT_RESERVATIONS_OBSERVED`, while different lease fences retain their existing `EFFECT_FENCE_DIVERGENCE` warning. Replays of the identical event ID remain deduplicated, and sharing one key with a legitimate reconciled retry is a **possibility** rather than a proven double commit.
+
+**Trust/response boundary:** This offline analysis cannot establish whether the external system committed twice, whether the operation is idempotent, or whether it was reconciled. It never authorizes cancellation, a retry or a success state. Only the authoritative owner can reserve/fence external operations; the observer flags evidence gaps and advises read-back of immutable receipts.
+
+**Verified locally:** Two targeted new tests cover cross-task collisions with redaction/no-auto-retry, and legitimate same-task repeated reservations with independent fence warning. Current total is **55 metadata tests + 16 PR gate tests = 71/71** on Python 3.13 isolated `-S`. GitHub CI on the exact new HEAD is a separate gate; 3.11/3.12/3.13 status must be rechecked.
