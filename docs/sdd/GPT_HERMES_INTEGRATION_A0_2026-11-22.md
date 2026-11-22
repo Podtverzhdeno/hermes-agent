@@ -229,3 +229,7 @@ Additional scalability decisions:
 ## 15. Аудитор: ветки разных форков и внедрение в отчет
 
 Имя Git-ветки не глобально уникально; вывод о stack/ancestry допускается только при совпадении origin repository + head_ref и base repository + base_ref. Если происхождение неизвестно, консервативно показывать unresolved dependency и запрещать merge. Содержимое полей статуса внешнего reviewer и observed_at offline snapshot — также недоверенные данные: экранировать Markdown/HTML, не интерпретировать как команды.
+
+## 16. ADR-A0-02 supersedes unconditional new event inbox
+
+**Critical upstream discovery (2026-11-22):** modern Hermes already exposes canonical Runs API (POST /v1/runs, GET status, GET SSE lifecycle events, stop/steer/approve/resolve-unknown), durable idempotency, session authority and native Kanban. See [ADR Runs API](GPT_HERMES_NATIVE_RUNS_API_ADR_A0_2026-11-22.md). Prefer native Runs state and SSE for GPT panel; a new event inbox is justified ONLY for extension-specific transport, external tool effect receipts and independent artifact evidence. The pre-upstream design sections on an independent canonical journal are **conditional research, NOT an approved duplicate production run store**. Test actual installed version/capabilities before coding. Legacy browser-extension control API is removed in modern upstream; CDP is distinct.

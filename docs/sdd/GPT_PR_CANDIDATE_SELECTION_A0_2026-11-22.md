@@ -91,3 +91,7 @@ https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
 | D8 | Rollback, canary и user acceptance | NOT RUN |
 
 Это не утверждение о готовом production. Каждому агенту присваивать единую зону ответственности, immutable baseline SHA и проверяемые артефакты. Обновление прогресса через SDD/PR и исходный task_id, а не многочисленные текстовые заявления «всё готово».
+
+## 8. Update: native Runs API affects choice of observers
+
+Current Hermes officially provides a native canonical Runs state/status/stream/approval/stop/resolve-unknown surface. PR #30 contains a read-only SSE run-event parser aligned to event/run_id/timestamp/seq. Before choosing an entirely independent SQLite event store (#9/#12/#21), first confirm if all common event types can be derived from native Runs+Kanban and whether the only additional events needed are extension transport and external tool receipt. See [native Runs ADR](GPT_HERMES_NATIVE_RUNS_API_ADR_A0_2026-11-22.md). Legacy API is not equivalent and no capability is inferred from docs alone.

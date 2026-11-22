@@ -53,3 +53,8 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 - Observed source audit discovered a false-stack risk: git branch names are not globally unique across forks. A0 now identifies branch owner by origin repository + head branch, and refuses ambiguous identical origins. Missing fork identity becomes conservative unknown rather than a fabricated causal dependency. Adds regression fixtures.
 - GitHub legacy status-context strings, file paths and offline snapshot observed_at are untrusted data; Markdown escaping now covers the complete presentation, not only file paths. Adds injection fixture.
 - These are source-level fixes; review exact new commit CI before claiming tested.
+
+## Upstream API compatibility pivot — native Runs API before new observer storage
+- Read primary current Hermes API docs and developer Programmatic Integration: POST /v1/runs, GET /v1/runs/{id}, SSE /events, /stop, /steer, /resolve-unknown and GET /v1/capabilities are already built into native session authority; legacy mode does NOT have the same dedup guarantees. They distinguish unknown, interrupted, cancelled, failed, partial and completed, and warn a 200 streamed response can still be an error.
+- Previous premise that Hermes GPT must own another run journal is superseded. Additional journal only for external tool-effect confirmations, extension transport metadata and independent verifier. Separate ADR records source-specific migration/fault gates. Not verified in stale installed fork.
+- PR #30 contains an offline native run SSE parser (not a live extension); candidate to reuse normalized event contract after migration. No auto-merge or production integration claimed.
