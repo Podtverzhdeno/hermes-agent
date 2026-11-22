@@ -11,8 +11,9 @@ def valid(content="hello", calls=None):
 
 
 def reject(data, reason, **kwargs):
+    expected = kwargs.pop("expected_request_id", "r_001")
     with pytest.raises(CDPProtocolError) as err:
-        parse_cdp_reply(data, expected_request_id="r_001", **kwargs)
+        parse_cdp_reply(data, expected_request_id=expected, **kwargs)
     assert err.value.code == reason
     # Failures are safe codes, never raw input that may include user secrets.
     assert "SENSITIVE_SECRET" not in str(err.value)
@@ -48,7 +49,7 @@ def test_wrong_or_old_request_is_rejected_not_matched_by_content():
 def test_exact_top_level_keys_required():
     reject({"request_id": "r_001", "content": "hi"}, "ENVELOPE_KEYS_INVALID")
     reject({**valid(), "secret_extra": "SENSITIVE_SECRET"}, "ENVELOPE_KEYS_INVALID")
-    reject([], "ENVELOPE_KEYS_INVALID")
+    reject([], "JSON_SCHEMA_INVALID")
 
 
 def test_duplicate_json_keys_are_rejected():
