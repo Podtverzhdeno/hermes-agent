@@ -127,6 +127,7 @@ def test_fingerprint_canonical_and_session_scoped():
 def _make_app(adapter):
     app = web.Application()
     app.router.add_post("/v1/chat/completions", adapter._handle_chat_completions)
+    app.router.add_post("/v1/responses", adapter._handle_responses)
     return app
 
 
@@ -203,3 +204,85 @@ async def test_endpoint_returns_no_internal_exception_details():
             )
             assert r.status == 500
             assert "secret token" not in await r.text()
+
+
+@pytest.mark.asyncio
+async def test_responses_retry_preserves_id_and_commits_once():
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    headers = {"Idempotency-Key": "resp-key"}
+    payload = {"model": "hermes-agent", "input": "hello", "store": True}
+    async with TestClient(TestServer(_make_app(adapter))) as client:
+        with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as run:
+            run.return_value = ({"final_response": "world"}, {
+                "input_tokens": 2, "output_tokens": 3, "total_tokens": 5,
+            })
+            first = await client.post("/v1/responses", json=payload, headers=headers)
+            assert first.status == 200
+            first_data = await first.json()
+            second = await client.post("/v1/responses", json=payload, headers=headers)
+            assert second.status == 200
+            second_data = await second.json()
+            assert first_data == second_data
+            assert first_data["id"].startswith("resp_")
+            assert run.call_count == 1
+            assert adapter._response_store.get(first_data["id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_responses_parallel_retry_runs_once():
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    gate = asyncio.Event()
+    async def delayed(**kwargs):
+        await gate.wait()
+        return {"final_response": "done"}, {}
+    async with TestClient(TestServer(_make_app(adapter))) as client:
+        with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as run:
+            run.side_effect = delayed
+            body = {"input": "hello"}
+            headers = {"Idempotency-Key": "pending-responses"}
+            a = asyncio.create_task(client.post("/v1/responses", json=body, headers=headers))
+            await asyncio.sleep(0)
+            b = asyncio.create_task(client.post("/v1/responses", json=body, headers=headers))
+            await asyncio.sleep(.01)
+            gate.set()
+            ra, rb = await asyncio.gather(a, b)
+            assert ra.status == rb.status == 200
+            assert await ra.json() == await rb.json()
+            assert run.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_conflict_and_endpoint_namespace():
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    headers = {"Idempotency-Key": "shared-across-paths"}
+    async with TestClient(TestServer(_make_app(adapter))) as client:
+        with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as run:
+            run.return_value = ({"final_response": "ok"}, {})
+            r1 = await client.post("/v1/responses", json={"input": "hello"}, headers=headers)
+            assert r1.status == 200
+            r2 = await client.post("/v1/responses", json={"input": "different"}, headers=headers)
+            assert r2.status == 409
+            assert (await r2.json())["error"]["code"] == "idempotency_key_conflict"
+            chat = await client.post("/v1/chat/completions", json={
+                "messages": [{"role": "user", "content": "hello"}],
+            }, headers=headers)
+            assert chat.status == 200  # Separate API operation namespace.
+            assert run.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_responses_agent_error_never_caches_false_success():
+    adapter = APIServerAdapter(PlatformConfig(enabled=True, extra={}))
+    async with TestClient(TestServer(_make_app(adapter))) as client:
+        with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as run:
+            run.return_value = ({"error": "provider returned secret value"}, {})
+            r = await client.post("/v1/responses",
+                                  json={"input": "hello"},
+                                  headers={"Idempotency-Key": "secret-failure"})
+            assert r.status == 500
+            assert "secret value" not in await r.text()
+            r2 = await client.post("/v1/responses",
+                                   json={"input": "hello"},
+                                   headers={"Idempotency-Key": "secret-failure"})
+            assert r2.status == 500
+            assert run.call_count == 2  # Failure isn't cached.
