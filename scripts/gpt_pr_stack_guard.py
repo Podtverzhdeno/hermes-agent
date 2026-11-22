@@ -93,7 +93,7 @@ def collect(repo, token=None):
         if not isinstance(ancestry,dict):
             raise IncompleteAudit('invalid pinned compare shape')
         p['parent_compare']={'parent_sha':parent['head_sha'],
-            'behind_by':ancestry.get('behind_by'), 'status':ancestry.get('status')}
+            'behind_by':ancestry.get('behind_by'), 'ahead_by':ancestry.get('ahead_by'), 'status':ancestry.get('status')}
     return {'schema_version':1,'repo':repo,
         'collected_at':datetime.now(timezone.utc).isoformat(), 'pulls':items}
 
@@ -145,7 +145,11 @@ def analyze(snapshot):
         proof=p.get('parent_compare')
         if not isinstance(proof,dict) or proof.get('parent_sha')!=parent['head_sha']:
             code='PARENT_ANCESTRY_UNVERIFIED'
-        elif type(proof.get('behind_by')) is not int or proof['behind_by']<0 or proof.get('status') not in ('ahead','behind','diverged','identical'):
+        elif (type(proof.get('behind_by')) is not int or proof['behind_by']<0 or
+              type(proof.get('ahead_by')) is not int or proof['ahead_by']<0 or
+              proof.get('status') not in ('ahead','behind','diverged','identical')):
+            code='INVALID_COMPARE_EVIDENCE'
+        elif (proof['status']=='identical' and (proof['behind_by']!=0 or proof['ahead_by']!=0)) or (proof['status']=='ahead' and (proof['behind_by']!=0 or proof['ahead_by']<=0)) or (proof['status']=='behind' and (proof['behind_by']<=0 or proof['ahead_by']!=0)) or (proof['status']=='diverged' and (proof['behind_by']<=0 or proof['ahead_by']<=0)):
             code='INVALID_COMPARE_EVIDENCE'
         elif proof['behind_by']>0:
             code='PARENT_ADVANCED_REBASE_REQUIRED'
