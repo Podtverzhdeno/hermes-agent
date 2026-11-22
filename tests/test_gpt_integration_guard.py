@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / 'scripts' / 'gpt_integration_guard.py'
 spec = importlib.util.spec_from_file_location('gpt_integration_guard', MODULE_PATH)
@@ -106,6 +107,46 @@ class IntegrationGateTests(unittest.TestCase):
                                 capture_output=True, text=True)
             self.assertEqual(cp.returncode, 3)
             self.assertIn('EVIDENCE_INCOMPLETE', cp.stderr)
+
+    def test_live_collection_fetches_pr_detail_for_changed_files(self):
+        # GitHub GET /pulls does not include the changed_files field.
+        sha = '4'*40
+        listing = {'number': 4, 'head': {'sha': sha, 'ref': 'branch'},
+                   'base': {'sha': 'a'*40, 'ref': 'main'}, 'draft': True}
+        detail = dict(listing, changed_files=1)
+
+        def fake_get(repo, path, token):
+            if path == 'branches/main':
+                return {'commit': {'sha': 'a'*40}, 'protected': False}
+            if path.startswith('pulls?'):
+                return [listing]
+            if path == 'pulls/4':
+                return detail
+            if path.startswith('pulls/4/files?'):
+                return [{'filename': 'gateway/platforms/api_server.py'}]
+            if path.startswith('commits/'):
+                return {'total_count': 0, 'check_runs': []}
+            raise AssertionError(path)
+
+        with mock.patch.object(mod, '_get_json', side_effect=fake_get):
+            report = mod.collect('Podtverzhdeno/hermes-agent')
+        self.assertEqual(report['prs'][0]['changed_files'], 1)
+        self.assertEqual(report['prs'][0]['head_sha'], sha)
+
+    def test_live_collection_rejects_head_shift_between_list_and_detail(self):
+        listing = {'number': 4, 'head': {'sha': '4'*40, 'ref': 'branch'},
+                   'base': {'sha': 'a'*40, 'ref': 'main'}}
+        def fake_get(repo, path, token):
+            if path == 'branches/main':
+                return {'commit': {'sha': 'a'*40}, 'protected': False}
+            if path.startswith('pulls?'):
+                return [listing]
+            if path == 'pulls/4':
+                return {**listing, 'head': {**listing['head'], 'sha': '5'*40}, 'changed_files': 1}
+            raise AssertionError(path)
+        with mock.patch.object(mod, '_get_json', side_effect=fake_get):
+            with self.assertRaises(mod.IncompleteScan):
+                mod.collect('Podtverzhdeno/hermes-agent')
 
     def test_repo_arg_cannot_override_host(self):
         with self.assertRaises(ValueError):
