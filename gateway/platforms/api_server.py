@@ -39,6 +39,16 @@ from gateway.platforms.base import (
     SendResult,
 )
 
+from gateway.gpt_bridge_diagnostics import (
+    IdempotencyCache as _IdempotencyCache,
+    IdempotencyInProgress,
+    IdempotencyPayloadMismatch,
+    IdempotencyOutcomeUnknown,
+    canonical_fingerprint,
+    scoped_idempotency_key,
+    log_bridge_event,
+)
+
 logger = logging.getLogger(__name__)
 
 # Default settings
@@ -166,7 +176,8 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Session-Id",
+    "Access-Control-Expose-Headers": "X-Hermes-Run-Id, X-Hermes-Session-Id",
 }
 
 
@@ -241,42 +252,13 @@ else:
     security_headers_middleware = None  # type: ignore[assignment]
 
 
-class _IdempotencyCache:
-    """In-memory idempotency cache with TTL and basic LRU semantics."""
-    def __init__(self, max_items: int = 1000, ttl_seconds: int = 300):
-        from collections import OrderedDict
-        self._store = OrderedDict()
-        self._ttl = ttl_seconds
-        self._max = max_items
-
-    def _purge(self):
-        import time as _t
-        now = _t.time()
-        expired = [k for k, v in self._store.items() if now - v["ts"] > self._ttl]
-        for k in expired:
-            self._store.pop(k, None)
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)
-
-    async def get_or_set(self, key: str, fingerprint: str, compute_coro):
-        self._purge()
-        item = self._store.get(key)
-        if item and item["fp"] == fingerprint:
-            return item["resp"]
-        resp = await compute_coro()
-        import time as _t
-        self._store[key] = {"resp": resp, "fp": fingerprint, "ts": _t.time()}
-        self._purge()
-        return resp
-
-
+# This per-process guard does not replace the durable cross-worker ledger.
 _idem_cache = _IdempotencyCache()
 
 
-def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
-    from hashlib import sha256
-    subset = {k: body.get(k) for k in keys}
-    return sha256(repr(subset).encode("utf-8")).hexdigest()
+def _make_request_fingerprint(body: Dict[str, Any], keys: List[str] = None) -> str:
+    """Preserved helper; hash every JSON field to avoid false cache matches."""
+    return canonical_fingerprint(body)
 
 
 class APIServerAdapter(BasePlatformAdapter):
@@ -508,7 +490,8 @@ class APIServerAdapter(BasePlatformAdapter):
                     self._session_db = SessionDB()
                 history = self._session_db.get_messages_as_conversation(session_id)
             except Exception as e:
-                logger.warning("Failed to load session history for %s: %s", session_id, e)
+                # Do not leak caller-controlled session IDs or sensitive exception text.
+                logger.warning("Failed to load session history (exception class: %s)", type(e).__name__)
                 history = []
         else:
             session_id = str(uuid.uuid4())
@@ -517,8 +500,11 @@ class APIServerAdapter(BasePlatformAdapter):
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
         model_name = body.get("model", "hermes-agent")
         created = int(time.time())
+        run_id = uuid.uuid4().hex
+        log_bridge_event(logger, run_id, "accepted", session_id=session_id)
 
         if stream:
+            log_bridge_event(logger, run_id, "stream_started", session_id=session_id)
             import queue as _q
             _stream_q: _q.Queue = _q.Queue()
 
@@ -557,39 +543,73 @@ class APIServerAdapter(BasePlatformAdapter):
 
             return await self._write_sse_chat_completion(
                 request, completion_id, model_name, created, _stream_q,
-                agent_task, agent_ref, session_id=session_id,
+                agent_task, agent_ref, session_id=session_id, run_id=run_id,
             )
 
         # Non-streaming: run the agent (with optional Idempotency-Key)
         async def _compute_completion():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
+            # An internal agent failure is not a successful response. It must
+            # not be placed in the idempotency success cache.
+            if result.get("error") and not result.get("final_response"):
+                raise RuntimeError("Hermes agent returned an execution error")
+            # Cache/replay the original session and completion identifiers.
+            return result, usage, session_id, completion_id, created
 
         idempotency_key = request.headers.get("Idempotency-Key")
-        if idempotency_key:
-            fp = _make_request_fingerprint(body, keys=["model", "messages", "tools", "tool_choice", "stream"])
-            try:
-                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_completion)
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
+        try:
+            if idempotency_key:
+                # Do not run the same physical operation twice on concurrent retries.
+                key = scoped_idempotency_key(
+                    idempotency_key, request.headers.get("Authorization", ""),
+                    provided_session_id,
                 )
-        else:
-            try:
-                result, usage = await _compute_completion()
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
+                fp = canonical_fingerprint(body)
+                result, usage, response_session, response_id, response_created = await _idem_cache.get_or_set(key, fp, _compute_completion)
+            else:
+                result, usage, response_session, response_id, response_created = await _compute_completion()
+        except IdempotencyInProgress:
+            log_bridge_event(logger, run_id, "rejected", reason_code="IN_PROGRESS",
+                             session_id=session_id)
+            return web.json_response(
+                _openai_error("A request with this Idempotency-Key is still running.",
+                              code="idempotency_in_progress"),
+                status=409, headers={"Retry-After": "1", "X-Hermes-Run-Id": run_id},
+            )
+        except IdempotencyOutcomeUnknown:
+            log_bridge_event(logger, run_id, "rejected", reason_code="OUTCOME_UNKNOWN",
+                             session_id=session_id)
+            return web.json_response(
+                _openai_error("Earlier execution has an uncertain outcome. Reconcile the external action before retrying.",
+                              code="idempotency_outcome_unknown"),
+                status=409, headers={"X-Hermes-Run-Id": run_id},
+            )
+        except IdempotencyPayloadMismatch:
+            log_bridge_event(logger, run_id, "rejected", reason_code="IDEMPOTENCY_CONFLICT",
+                             session_id=session_id)
+            return web.json_response(
+                _openai_error("Idempotency-Key reused with a different request body.",
+                              code="idempotency_payload_mismatch"),
+                status=422, headers={"X-Hermes-Run-Id": run_id},
+            )
+        except Exception as e:
+            # Avoid exposing exception text, which may contain secrets.
+            logger.error("GPT API run %s failed (exception class: %s)",
+                         run_id, type(e).__name__)
+            log_bridge_event(logger, run_id, "failed", reason_code="AGENT_ERROR",
+                             session_id=session_id)
+            return web.json_response(
+                _openai_error("Agent execution failed; quote X-Hermes-Run-Id to investigate.",
+                              err_type="server_error", code="agent_failed"),
+                status=500, headers={"X-Hermes-Run-Id": run_id},
+            )
 
+        session_id, completion_id, created = response_session, response_id, response_created
         final_response = result.get("final_response", "")
         if not final_response:
             final_response = result.get("error", "(No response generated)")
@@ -616,11 +636,16 @@ class APIServerAdapter(BasePlatformAdapter):
             },
         }
 
-        return web.json_response(response_data, headers={"X-Hermes-Session-Id": session_id})
+        log_bridge_event(logger, run_id, "completed", session_id=session_id)
+        return web.json_response(
+            response_data,
+            headers={"X-Hermes-Session-Id": session_id, "X-Hermes-Run-Id": run_id},
+        )
 
     async def _write_sse_chat_completion(
         self, request: "web.Request", completion_id: str, model: str,
         created: int, stream_q, agent_task, agent_ref=None, session_id: str = None,
+        run_id: str = None,
     ) -> "web.StreamResponse":
         """Write real streaming SSE from agent's stream_delta_callback queue.
 
@@ -639,6 +664,8 @@ class APIServerAdapter(BasePlatformAdapter):
             sse_headers.update(cors)
         if session_id:
             sse_headers["X-Hermes-Session-Id"] = session_id
+        if run_id:
+            sse_headers["X-Hermes-Run-Id"] = run_id
         response = web.StreamResponse(status=200, headers=sse_headers)
         await response.prepare(request)
 
@@ -685,13 +712,33 @@ class APIServerAdapter(BasePlatformAdapter):
                 }
                 await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
 
-            # Get usage from completed agent
+            # Never report a backend exception as an ordinary stop.
             usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            failure_code = None
             try:
                 result, agent_usage = await agent_task
                 usage = agent_usage or usage
-            except Exception:
-                pass
+                if result.get("error") and not result.get("final_response"):
+                    failure_code = "AGENT_ERROR"
+            except asyncio.CancelledError:
+                failure_code = "AGENT_CANCELLED"
+            except Exception as e:
+                logger.error("GPT SSE run %s failed (exception class: %s)",
+                             run_id, type(e).__name__)
+                failure_code = "STREAM_FAILED"
+
+            if failure_code:
+                log_bridge_event(logger, run_id, "failed",
+                                 reason_code=failure_code, session_id=session_id)
+                error_event = {
+                    "run_id": run_id, "code": failure_code,
+                    "message": "Agent execution failed; inspect the run ID.",
+                }
+                await response.write(
+                    ("event: hermes.error\n" + "data: " + json.dumps(error_event) + "\n\n").encode()
+                )
+                await response.write(b"data: [DONE]\n\n")
+                return response
 
             # Finish chunk
             finish_chunk = {
@@ -706,6 +753,7 @@ class APIServerAdapter(BasePlatformAdapter):
             }
             await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
             await response.write(b"data: [DONE]\n\n")
+            log_bridge_event(logger, run_id, "completed", session_id=session_id)
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
             # Client disconnected mid-stream.  Interrupt the agent so it
             # stops making LLM API calls at the next loop iteration, then
@@ -722,6 +770,8 @@ class APIServerAdapter(BasePlatformAdapter):
                     await agent_task
                 except (asyncio.CancelledError, Exception):
                     pass
+            log_bridge_event(logger, run_id, "client_disconnected",
+                             reason_code="SSE_CLIENT_GONE", session_id=session_id)
             logger.info("SSE client disconnected; interrupted agent task %s", completion_id)
 
         return response
