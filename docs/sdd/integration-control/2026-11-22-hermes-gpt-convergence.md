@@ -62,6 +62,18 @@ Safety invariants:
 
 **Interpretation:** path overlap is a review trigger, *not proof of an unresolved merge conflict*. After filtering proven parent-child ancestry, independent API candidates remain mutually incompatible until a single implementation is selected.
 
+### 2.2 Critical review of competing candidate implementations
+
+**P0: PR #5 / `feat/gpt-bridge-atomic-diagnostics-20261122` retains no uncertainty tombstone on a failed computation.** In `gateway/idempotency.py`, `IdempotencyCache.get_or_set()` registers an in-flight task, but its `execute()` `finally` handler deletes the `_inflight` key whether `compute_coro()` succeeded or failed. Only successful executions enter `_completed`. If an external effect occurred and a late network/agent exception is raised, the same key can launch another execution. This is a source-level failure of *safe retry semantics*, not proof of an observed duplicate. **Required correction:** retain a bounded durable outcome-unknown reservation with effect ID and reconciliation owner, never automatically rerun after uncertain mutation. Reproduction: stub persists side effect, throws before HTTP reply, then same-key retry; assert effect count = 1 and `OUTCOME_UNKNOWN` until trusted reconciliation. A process-local uncertain tombstone improves same-process behavior but cannot promise restart safety.
+
+**P0 for multi-principal use: PR #6 / `sdd/gpt-observability-2026-11-22` scopes `chat:` idempotency by raw client key but not authenticated principal.** The chat handler constructs `"chat:" + idem_key` and fingerprints body plus `provided_session_id`; this prevents cross-body duplicates but may return an existing cached payload/session to a distinct authorized caller who chooses the same key and identical body. If the deployment has only one shared principal this is a confinement limitation; if there are multiple logical principals/tenants it is a cross-principal replay risk. **Required correction:** derive identity from the authenticated principal (not user-provided Authorization text), bind to authenticated tenant and authorized session revision, and enforce session access *before* lookup/history. Test two authorized principals using the same key/request and assert no shared response/session. Also test unauthorized `X-Hermes-Session-Id` refuses access without disclosing whether the session exists.
+
+**P1 compatibility:** PR #4 candidate returns HTTP 422 on altered fingerprint while PR #6 uses 409. Publish one client contract and run both candidates against it before choosing. `409` is the proposed interoperability target; this is a design decision, not an already-shipped guarantee.
+
+**P1 resource bound:** Candidate #6 preserves the original unbounded `queue.Queue()` in its SSE path. Even when exception classification improves, a slow consumer can cause memory growth. Require bounded output buffer, backpressure policy, terminal failure/uncertainty reporting, and end-to-end slow-reader tests.
+
+**Cross-check rule:** A review finding names both *file revision* and *candidate branch*. Do not assume any of these flaws are already present on `main` unless separately observed there. A new candidate is eligible for acceptance only when the relevant regression fails before its fix and passes at its exact reviewed HEAD.
+
 ## 3. Source-of-truth and causality model
 
 ```text
