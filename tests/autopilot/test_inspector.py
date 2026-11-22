@@ -130,7 +130,8 @@ def test_sibling_project_isolation_and_truncation(subject):
     assert result["tasks_total"] == 2
     assert result["tasks_shown"] == 1
     assert result["tasks_truncated"]
-    assert all(x["goal"] == "Verify local build" for x in result["tasks"])
+    assert all("goal" not in x and "revision" not in x for x in result["tasks"])
+    assert all(x["revision_fingerprint"].startswith("sha256:") for x in result["tasks"])
 
 
 @pytest.mark.parametrize("limit", [-1, 0, 201])
