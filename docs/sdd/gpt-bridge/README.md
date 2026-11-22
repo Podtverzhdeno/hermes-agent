@@ -7,7 +7,7 @@
 This is **a hard distributed-systems project**: no agent may pronounce it “done” just because a standalone script or happy-path request succeeds. The deliverable is a causal explanation of each stage, explicit unknown outcomes after crashes, safe recovery from stop reasons, exact-SHA proof and independent reviewers under dozens of concurrent agents. Prefer high-quality authoritative sources and source-level reproductions to unverified quantity claims. No access to a model's hidden reasoning is assumed.
 
 **Required reading, ordered:**
-1. `EXTENSION_CAUSAL_INCIDENT_PROTOCOL_2026-11-22.md` — canonical identities, evidence types, state machines, browser/API modes, incident taxonomy and 30-agent chaos cases.
+1. `EXTENSION_CAUSAL_INCIDENT_PROTOCOL_2026-11-22.md` — canonical identities, evidence types, state machines, browser/API modes (including upstream native `/v1/runs` and `/v1/capabilities`), incident taxonomy and 30-agent chaos cases.
 2. `ENGINEERING_DECISION_SCORECARD_2026-11-22.md` — safety gates first; weights and sensitivity behind prioritization.
 3. `GUARD_CONVERGENCE_AND_EXTENSION_ADR_2026-11-22.md` — how to converge #14/#18/#22 into ONE integration scanner rather than duplicate monitors.
 4. `HERMES_GPT_INTEGRATION_GUARD_SDD_2026-11-22.md` — actual PR #22 read-only scanner behavior, exact limitations, test gates and GitHub Actions mode.
@@ -15,7 +15,7 @@ This is **a hard distributed-systems project**: no agent may pronounce it “don
 
 ## Confirmed baseline and blocked reality
 
-- Fork `Podtverzhdeno/hermes-agent` `main` HEAD `7e9100901819ee44c16b4ddcb79a6bcb7909f591` (2026-04-01); current upstream considerably newer (v0.23.3 release 2026-11-20 observed).
+- Fork `Podtverzhdeno/hermes-agent` `main` HEAD `7e9100901819ee44c16b4ddcb79a6bcb7909f591` (2026-04-01); current upstream considerably newer (v0.23.3 release 2026-11-20 observed). Native upstream Runs supports 202 admission, read-only status/SSE, scoped stop/approval/unknown reconciliation; the fork's support is not yet confirmed.
 - GitHub PR count was observed increasing from 12 to 22 to 30 during this audit; the number is not a continuous monitor and must be re-read before action.
 - Read-only scanner #22 has Python offline regressions and CI; scheduler/scheduled reports cannot run on main until workflow review/merge.
 - Full Hermes CI has 28 failures on prior PR22 candidate; no `main` baseline runs were returned by GitHub API at inspection. Do not suppress with live API keys or attribute without A/B comparison.
