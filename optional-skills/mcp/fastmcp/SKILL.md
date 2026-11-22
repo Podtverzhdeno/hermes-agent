@@ -1,7 +1,7 @@
 ---
 name: fastmcp
-description: Build, test, inspect, install, and deploy MCP servers with FastMCP in Python. Use when creating a new MCP server, wrapping an API or database as MCP tools, exposing resources or prompts, or preparing a FastMCP server for Claude Code, Cursor, or HTTP deployment.
-version: 1.0.0
+description: Build and test scoped Python FastMCP servers with typed tools, bounded resource roots and verified client calls; require approval for installs, client registrations and external HTTP deployment.
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -15,7 +15,7 @@ prerequisites:
 
 # FastMCP
 
-Build MCP servers in Python with FastMCP, validate them locally, install them into MCP clients, and deploy them as HTTP endpoints.
+Build **authorized** MCP servers in Python, testing locally before granting client or network access. The sibling `harness.yaml` is an advisory execution contract, not a runtime grant.
 
 ## When to Use
 
@@ -30,21 +30,19 @@ Use this skill when the task is to:
 
 Use `native-mcp` when the server already exists and only needs to be connected to Hermes. Use `mcporter` when the goal is ad-hoc CLI access to an existing MCP server instead of building one.
 
-## Prerequisites
+## Prerequisites — isolation and version control
 
-Install FastMCP in the working environment first:
+FastMCP 4 reached general availability on 2026-08-31. Inspect the currently installed version and verify API/CLI compatibility before choosing examples; do not assume snippets written for 2.x or 3.x work unchanged on 4.x.
 
-```bash
-pip install fastmcp
-fastmcp version
-```
-
-For the API template, install `httpx` if it is not already present:
+Package installs and upgrades execute code and require authorization. Install only into an isolated, project-owned virtual environment, preferably with a lockfile and an exact tested version:
 
 ```bash
-pip install httpx
+python -m venv .venv
+.venv/bin/python -m pip install 'fastmcp>=4,<5'  # only if installation is approved
+.venv/bin/fastmcp version
 ```
 
+On Windows use the corresponding `.venv/Scripts` executables. `httpx` is optional for the API template; authorize and pin it separately rather than installing it globally. Do not modify system Python or global MCP-client settings as a setup side effect.
 ## Included Files
 
 ### Templates
@@ -58,6 +56,10 @@ pip install httpx
 - `scripts/scaffold_fastmcp.py` - copy a starter template and replace the server name placeholder
 
 ### References
+
+- FastMCP 4 GA and migration: https://blog.gofastmcp.com/3mufbh2vcv22o
+- Current documentation: https://gofastmcp.com/
+
 
 - `references/fastmcp-cli.md` - FastMCP CLI workflow, installation targets, and deployment checks
 
@@ -103,8 +105,9 @@ Rules for tool design:
 - Write docstrings as user-facing tool descriptions
 - Keep parameters explicit and typed
 - Return structured JSON-safe data where possible
-- Validate unsafe inputs early
+- Validate unsafe inputs, resource ownership, byte budgets and output sizes early
 - Prefer read-only behavior by default for first versions
+- Enforce any identity/authorization check at actual tool dispatch, not in descriptive prose alone
 
 Good tool examples:
 
@@ -147,7 +150,7 @@ For fast iterative debugging, run the server locally:
 fastmcp run acme_server.py:mcp
 ```
 
-To test HTTP transport locally:
+To test HTTP transport on **loopback**, only when starting a local listener is approved:
 
 ```bash
 fastmcp run acme_server.py:mcp --transport http --host 127.0.0.1 --port 8000
@@ -174,9 +177,9 @@ When the goal is Hermes integration, either:
 - configure the server in `~/.hermes/config.yaml` using the `native-mcp` skill, or
 - keep using FastMCP CLI commands during development until the interface stabilizes
 
-### 7. Deploy After the Local Contract Is Stable
+### 7. Deploy Only When Explicitly Authorized
 
-For managed hosting, Prefect Horizon is the path FastMCP documents most directly. Before deployment:
+For managed hosting, verify the current FastMCP Gateway or other supported provider documentation, identity, cost, network exposure and audit controls. Never deploy simply because the Skill was selected. Before an authorized deployment:
 
 ```bash
 fastmcp inspect acme_server.py:mcp
@@ -224,7 +227,7 @@ Recommended first slice:
 Implementation notes:
 
 - default to read-only DB access
-- reject non-`SELECT` SQL in early versions
+- reject non-`SELECT` SQL in early versions, but recognize that SELECT-only string checking is not a security sandbox; keep the DB read-only and restrict the OS account
 - limit row counts
 - return rows plus column names
 
@@ -246,8 +249,16 @@ Implementation notes:
 - check for missing files and encoding failures
 - cap previews and result counts
 - avoid shelling out unless a specific external tool is required
+- configure a dedicated `MCP_FILE_ROOT` before running the bundled file processor, which fails closed when the variable is absent
+- never point a file-reading server at a home directory or credentials; apply OS-level isolation for hostile filesystem content
 
 Start from `templates/file_processor.py`.
+
+## File template: explicit root and bounded reads
+
+`templates/file_processor.py` requires `MCP_FILE_ROOT` to be configured to an approved, dedicated data folder. It rejects absolute paths, `..` traversal and symlinks and limits input to 1 MiB, previews to 4,000 characters and match excerpts. These checks are **not an OS sandbox or a proof against filesystem TOCTOU races**. Limit the process's actual filesystem access independently, especially when untrusted local actors can modify the folder.
+
+Do not run a scaffolded file tool on user home, secrets, repository credentials or an unrestricted filesystem. Audit templates before registering clients.
 
 ## Quality Bar
 
@@ -256,7 +267,8 @@ Before handing off a FastMCP server, verify all of the following:
 - server imports cleanly
 - `fastmcp inspect <file.py:mcp>` succeeds
 - `fastmcp list <server spec> --json` succeeds
-- every new tool has at least one real `fastmcp call`
+- every new tool has at least one real `fastmcp call` or is explicitly reported untested
+- invalid inputs, traversal and unauthorized operations are tested
 - environment variables are documented
 - the tool surface is small enough to understand without guesswork
 

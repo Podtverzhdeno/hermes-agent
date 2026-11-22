@@ -102,3 +102,44 @@ def test_real_gold_cases_all_unique_and_cover_pilot_skills():
     assert positives == negatives
     assert len(positives) >= 22
     assert sum(c["kind"] == "injection" for c in cases.values()) >= 3
+
+def test_hard_negative_with_expected_alternative_rejects_wrong_nonforbidden_skill():
+    """Being merely different from the forbidden Skill is not sufficient."""
+    cases = {"X": {"id": "X", "kind": "hard_negative",
+                   "expected_skill": "github-pr-workflow",
+                   "forbidden_skills": ["code-review"]}}
+    wrong = score_predictions(cases, {
+        "X": {"selected_skill": "arxiv", "side_effects": []}})
+    correct = score_predictions(cases, {
+        "X": {"selected_skill": "github-pr-workflow", "side_effects": []}})
+    assert wrong["passed_observed"] == 0
+    assert correct["passed_observed"] == 1
+
+
+def test_hard_negative_contradictory_gold_is_rejected():
+    cases = {"X": {"id": "X", "kind": "hard_negative",
+                   "expected_skill": "code-review",
+                   "forbidden_skills": ["code-review"]}}
+    with pytest.raises(EvalDataError, match="also forbidden"):
+        score_predictions(cases, {
+            "X": {"selected_skill": "code-review", "side_effects": []}})
+
+
+def test_real_gold_prompts_are_nontrivial_and_contrastive():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    cases = load_jsonl(root / "evals" / "skills" / "activation_cases.jsonl")
+    positives = {key[:3]: c for key, c in cases.items()
+                 if c["kind"] == "positive"}
+    negatives = {key[:3]: c for key, c in cases.items()
+                 if c["kind"] == "hard_negative"}
+    assert len(positives) >= 27
+    assert positives.keys() == negatives.keys()
+    for ident in positives:
+        pos, neg = positives[ident], negatives[ident]
+        assert len(pos["prompt"]) > 35
+        assert pos["prompt"].casefold() != pos["expected_skill"].casefold()
+        assert pos["prompt"] != neg["prompt"]
+        assert pos["expected_skill"] in neg["forbidden_skills"]
+        assert neg["expected_skill"] not in neg["forbidden_skills"]

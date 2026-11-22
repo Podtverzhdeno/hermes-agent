@@ -1,0 +1,23 @@
+# Advisory only: this file requests no real tool permission.
+schema_version: 1
+skill: 1password
+activation:
+  when: ["Read a named 1Password item or inject a secret into a specifically authorized command","Configure the approved 1Password service-account or desktop integration for a named vault"]
+  not_when: ["Use a general environment variable that requires no 1Password vault access","Change an unrelated local .env file without invoking 1Password"]
+capabilities:
+  tools: ["op","terminal","1Password CLI"]
+  side_effects: external_write
+  approval_required: ["Read an actual secret, one-time code or credential outside an explicitly granted vault and item","Run a process with injected secrets or configure a new 1Password token, vault permission or auth method"]
+lifecycle:
+  preflight: ["Pin exact 1Password account, vault, item, field and destination of any secret","Check principal permissions, session persistence, logs, shell output and expiry without printing values"]
+  execute: ["Prefer metadata-only account check before authorization-specific secret reads","Resolve op:// references only inside the narrow approved child process; do not capture secret values in terminal output"]
+  verify: ["Confirm destination process status and resource identity without revealing any secret bytes","Check no secret was written to shell history, chat, logs, ttys or unrelated env files"]
+  recover: ["On failed sign-in do not auto-switch to a broader service account","Revoke accidental exposures and recommend credential rotation rather than retrying unreviewed commands"]
+budget:
+  max_tool_calls: 25
+  max_reference_bytes: 65536
+evidence:
+  required: ["Account and vault/item reference redacted to allowed metadata","Authorized command receipt and explicit confirmation that secret values were not echoed"]
+output:
+  format: "Per-secret-operation audit without actual credentials"
+  acceptance: ["Never reveal raw secret or OTP through a tool result","No blanket service-account access, credential echo or unapproved injection"]

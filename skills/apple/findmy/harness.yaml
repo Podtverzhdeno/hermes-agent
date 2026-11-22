@@ -1,0 +1,23 @@
+# Individual advisory contract; never grants host permissions.
+schema_version: 1
+skill: findmy
+activation:
+  when: ["Show the location of an explicitly authorized user's own Apple device or registered item","Inspect one Find My item in the signed-in macOS session and return location with uncertainty"]
+  not_when: ["Track someone else's devices or location without appropriate rights","Give directions to a public address without accessing Find My account"]
+capabilities:
+  tools: ["osascript","screencapture","vision_analyze","peekaboo"]
+  side_effects: local_write
+  approval_required: ["Capture and retain sensitive location screenshots or read registered device location","Install screen automation software or enable ongoing location monitoring"]
+lifecycle:
+  preflight: ["Confirm ownership/authorization of a specific item and current signed-in Apple identity","Define one-shot capture, screenshot privacy, retention and accessibility permissions"]
+  execute: ["Prefer on-device view only, capture bounded named windows and redact unrelated items","Use private temporary files with restrictive permissions and no background infinite polling"]
+  verify: ["Identify exact device/item label and timestamp without guessing coordinates","Verify screenshot cleanup, no unrelated tracking and any geolocation uncertainty"]
+  recover: ["Stop on absent permissions, ambiguous item ownership or changing account identity","Delete captured local sensitive images when no longer required"]
+budget:
+  max_tool_calls: 20
+  max_reference_bytes: 131072
+evidence:
+  required: ["Authorized device/item, capture time and observed location confidence","Local privacy cleanup status and explicit last-seen vs current distinction"]
+output:
+  format: "Single-item location result with freshness and privacy accounting"
+  acceptance: ["No covert or indefinite location tracking","No public disclosure of location screenshots or unrelated devices"]

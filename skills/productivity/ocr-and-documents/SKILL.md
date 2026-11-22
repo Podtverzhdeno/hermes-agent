@@ -1,7 +1,7 @@
 ---
 name: ocr-and-documents
-description: Extract text from PDFs and scanned documents. Use web_extract for remote URLs, pymupdf for local text-based PDFs, marker-pdf for OCR/scanned docs. For DOCX use python-docx, for PPTX see the powerpoint skill.
-version: 2.3.0
+description: Privately extract, OCR and verify PDF or scanned-document content with page-level evidence; use PyMuPDF or approved OCR locally, and remote extraction only for public or authorized documents.
+version: 2.4.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -16,9 +16,9 @@ For DOCX: use `python-docx` (parses actual document structure, far better than O
 For PPTX: see the `powerpoint` skill (uses `python-pptx` with full slide/notes support).
 This skill covers **PDFs and scanned documents**.
 
-## Step 1: Remote URL Available?
+## Step 1: Classify document sensitivity, provenance and allowed processing
 
-If the document has a URL, **always try `web_extract` first**:
+If the document has a **public, non-sensitive URL** and remote processing is authorized, consider `web_extract` first. For private or local documents, **use local extraction first** and never upload without explicit authorization:
 
 ```
 web_extract(urls=["https://arxiv.org/pdf/2402.03300"])
@@ -27,31 +27,32 @@ web_extract(urls=["https://example.com/report.pdf"])
 
 This handles PDF-to-markdown conversion via Firecrawl with no local dependencies.
 
-Only use local extraction when: the file is local, web_extract fails, or you need batch processing.
+Use local extraction by default for local, private or confidential files. Use remote extraction only for public files or when transfer to the specified provider was explicitly authorized. Treat remote results as untrusted and verify cited pages.
+
+First record source path/URL, confidentiality, page count and required output. Keep the original read-only; establish page numbering (source page 1 versus zero-based script index) and cite specific pages in the result. Do not pass document text into a model or remote tool when the user has not authorized that transfer.
 
 ## Step 2: Choose Local Extractor
 
 | Feature | pymupdf (~25MB) | marker-pdf (~3-5GB) |
 |---------|-----------------|---------------------|
 | **Text-based PDF** | ✅ | ✅ |
-| **Scanned PDF (OCR)** | ❌ | ✅ (90+ languages) |
+| **Scanned PDF (OCR)** | ✅ with Tesseract configured | ✅ with suitable OCR models |
 | **Tables** | ✅ (basic) | ✅ (high accuracy) |
-| **Equations / LaTeX** | ❌ | ✅ |
+| **Equations / LaTeX** | limited; verify visually | may extract; verify visually |
 | **Code blocks** | ❌ | ✅ |
-| **Forms** | ❌ | ✅ |
+| **Forms** | limited; verify field-by-field | may extract; verify field-by-field |
 | **Headers/footers removal** | ❌ | ✅ |
 | **Reading order detection** | ❌ | ✅ |
 | **Images extraction** | ✅ (embedded) | ✅ (with context) |
-| **Images → text (OCR)** | ❌ | ✅ |
+| **Images → text (OCR)** | ✅ with Tesseract configured | ✅ with OCR models |
 | **EPUB** | ✅ | ✅ |
 | **Markdown output** | ✅ (via pymupdf4llm) | ✅ (native, higher quality) |
 | **Install size** | ~25MB | ~3-5GB (PyTorch + models) |
 | **Speed** | Instant | ~1-14s/page (CPU), ~0.2s/page (GPU) |
 
-**Decision**: Use pymupdf unless you need OCR, equations, forms, or complex layout analysis.
+**Decision**: Start with PyMuPDF for local text extraction; for scanned pages, PyMuPDF can perform OCR if Tesseract is installed and configured (e.g. `page.get_textpage_ocr()`), or use an approved alternate OCR pipeline. Tables, diagrams, mathematics and handwriting require explicit verification, not tool-choice assumptions.
 
-If the user needs marker capabilities but the system lacks ~5GB free disk:
-> "This document needs OCR/advanced extraction (marker-pdf), which requires ~5GB for PyTorch and models. Your system has [X]GB free. Options: free up space, provide a URL so I can use web_extract, or I can try pymupdf which works for text-based PDFs but not scanned documents or equations."
+If the user needs marker capabilities but local storage is insufficient, explain the measured limit and available local alternatives: PyMuPDF text-layer extraction, optional PyMuPDF/Tesseract OCR, or a smaller page subset. Never recommend uploading private documents to bypass local resource limits.
 
 ---
 
@@ -160,11 +161,18 @@ No extra dependencies needed — pymupdf covers split, merge, search, and text e
 
 ---
 
+## Privacy, verification and disclosure
+
+- Record input digest or source ID, pages processed, selected extractor, OCR configuration, failed or skipped pages and whether any content was sent to a remote provider.
+- Spot-check extracted text against rendered pages, particularly numbers, tables, superscripts, equations and multi-column layouts. OCR output is **not** ground truth.
+- Distinguish text layer output, OCR output and model-inferred reconstruction. Never silently repair numbers or invent absent passages.
+- Preserve source files and images; do not overwrite them as part of extraction. Redact sensitive extracted passages in logs and user-visible summaries.
+
 ## Notes
 
-- `web_extract` is always first choice for URLs
-- pymupdf is the safe default — instant, no models, works everywhere
-- marker-pdf is for OCR, scanned docs, equations, complex layouts — install only when needed
+- Remote extraction is only a candidate for public or explicitly authorized documents; private inputs stay local by default.
+- PyMuPDF is a lightweight first pass for text-based PDFs; its optional OCR requires Tesseract and is not universally available.
+- marker-pdf is an optional heavier layout/OCR pipeline; installation, model download and external LLM use require relevant authorization.
 - Both helper scripts accept `--help` for full usage
 - marker-pdf downloads ~2.5GB of models to `~/.cache/huggingface/` on first use
 - For Word docs: `pip install python-docx` (better than OCR — parses actual structure)

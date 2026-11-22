@@ -20,6 +20,10 @@ PILOT_NAMES = frozenset((
     "arxiv", "ml-paper-writing", "obsidian", "google-workspace", "native-mcp",
     "pytorch-fsdp", "chroma", "faiss", "qdrant-vector-search", "dspy",
     "evaluating-llms-harness", "writing-plans", "hermes-agent",
+    "github-issues", "mcporter", "ocr-and-documents", "fastmcp", "notion",
+    "huggingface-hub", "xitter", "inference-sh-cli", "parallel-cli",
+    "1password", "himalaya", "webhook-subscriptions",
+    "agentmail", "findmy", "imessage",
 ))
 
 
@@ -65,7 +69,7 @@ def test_each_harness_is_valid_and_matches_skill(path):
 
 @pytest.mark.parametrize("name", [
     "github-auth", "github-code-review", "github-pr-workflow",
-    "github-repo-management",
+    "github-repo-management", "github-issues",
 ])
 def test_github_skills_have_no_credential_extraction_or_token_url_recipes(name):
     found = [
@@ -90,3 +94,43 @@ def test_codebase_inspection_never_installs_into_system_python():
     content = (REPO / "skills/github/codebase-inspection/SKILL.md").read_text(encoding="utf-8")
     assert "pip install --break-system-packages" not in content
     assert "pygount" in content
+
+def test_all_harnesses_have_concrete_negative_routing_examples():
+    """Never regress to an undefined exclusion; nearby skills must be distinguished."""
+    placeholders = {"undefined", "null", "none", "todo", "tbd", "n/a"}
+    for path in _manifests():
+        name = _canonical_name(path)
+        contract = load_skill_harness(path.parent, name)
+        exclusions = contract["activation"]["not_when"]
+        assert len(exclusions) >= 2, f"{path} has no meaningful adjacent-skill contrast"
+        assert not any(value.casefold().strip() in placeholders for value in exclusions), path
+        assert len(exclusions) == len(set(x.casefold() for x in exclusions)), path
+
+
+def test_github_issue_skill_uses_provider_auth_not_token_scraping():
+    content = (REPO / "skills/github/github-issues/SKILL.md").read_text(encoding="utf-8")
+    assert "gh auth status" in content
+    assert "gh issue view" in content
+    assert "gh issue create" in content
+    assert not any(line.lstrip().startswith(("grep ", "GITHUB_TOKEN=$(")) for line in content.splitlines())
+    assert not any(line.lstrip().startswith("curl ") and "Authorization:" in line for line in content.splitlines())
+
+
+def test_document_skill_requires_authorized_remote_processing():
+    content = (REPO / "skills/productivity/ocr-and-documents/SKILL.md").read_text(encoding="utf-8")
+    assert "private inputs stay local" in content
+    assert "page.get_textpage_ocr()" in content
+    assert "privacy" in content.lower()
+
+@pytest.mark.parametrize('skill_path', [
+    'skills/mlops/huggingface-hub',
+    'skills/social-media/xitter',
+    'optional-skills/devops/cli',
+    'optional-skills/research/parallel-cli',
+])
+def test_risky_external_skills_have_explicit_security_gates(skill_path):
+    body = (REPO / skill_path / 'SKILL.md').read_text(encoding='utf-8')
+    assert 'harness.yaml' in body
+    assert not re.search(r'(?i)curl[^\n]{0,100}\|\s*(?:bash|sh)\b', body)
+    assert 'ln -sf ~/.hermes/.env' not in body
+    assert 'authorization' in body.lower() or 'approval' in body.lower()

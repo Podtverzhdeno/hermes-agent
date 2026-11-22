@@ -5,13 +5,18 @@ Use this file when the task needs exact FastMCP CLI workflows rather than the hi
 ## Install and Verify
 
 ```bash
-pip install fastmcp
-fastmcp version
+# Installation is authorized and isolated in a project-owned environment:
+python -m venv .venv
+.venv/bin/python -m pip install 'fastmcp>=4,<5'
+.venv/bin/fastmcp version
 ```
 
-FastMCP documents `pip install fastmcp` and `fastmcp version` as the baseline installation and verification path.
+These are example version constraints; pin an exact validated version for reproducible deployments. On Windows use `.venv/Scripts` binaries. Installing packages is not an implicit step of viewing this Skill.
 
 ## Run a Server
+
+Launching a server executes code and may expose data; use approved local scope. The bundled file processor requires `MCP_FILE_ROOT` and will deny reads if unset; choose a non-sensitive root.
+
 
 Run a server object from a Python file:
 
@@ -72,6 +77,9 @@ fastmcp discover
 FastMCP documents name-based resolution for Claude Desktop, Claude Code, Cursor, Gemini, Goose, and `./mcp.json`.
 
 ## Install into MCP Clients
+
+Client installation modifies configuration and can persist credentials. Do it only with explicit authority for the client/target, and preserve the previous config for rollback.
+
 
 Register a server with common clients:
 

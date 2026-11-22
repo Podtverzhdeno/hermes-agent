@@ -42,6 +42,10 @@ jobs:
         run: |
           source .venv/bin/activate
           python -m scripts.audit_skill_harness --strict
+      - name: Triage all SKILL.md instructions for dangerous patterns
+        run: |
+          source .venv/bin/activate
+          python -m scripts.audit_skill_procedures --fail-on-critical
       - name: Run focused skill and compatibility tests
         run: |
           source .venv/bin/activate
@@ -52,6 +56,9 @@ jobs:
             tests/skills/test_legacy_skill_archives.py \
             tests/skills/test_pytorch_fsdp_archives.py \
             tests/skills/test_skill_eval_scorer.py \
+            tests/skills/test_fastmcp_file_template.py \
+            tests/skills/test_individualized_skill_procedures.py \
+            tests/skills/test_skill_procedure_audit.py \
             tests/tools/test_skill_harness_integration.py \
             tests/tools/test_skill_manager_path_boundaries.py \
             tests/tools/test_skill_manager_guard_fail_closed.py \

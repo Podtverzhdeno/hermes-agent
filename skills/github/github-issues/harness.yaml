@@ -1,0 +1,23 @@
+# Advisory-only per-skill contract; does not grant tools or permissions.
+schema_version: 1
+skill: github-issues
+activation:
+  when: ["Triage, create, update, label or comment on a GitHub issue in a specified repository","Investigate issue history or link an issue to a pull request"]
+  not_when: ["Review a pull-request diff and submit a GitHub PR review","Maintain local to-do tasks unrelated to GitHub issues"]
+capabilities:
+  tools: ["GitHub connector","gh","git"]
+  side_effects: external_write
+  approval_required: ["Create, edit, close, reopen, assign or comment unless explicitly requested","Bulk triage or modify project-wide label settings"]
+lifecycle:
+  preflight: ["Pin GitHub account, repository, issue ID and current state","Search for duplicates and record permitted mutations"]
+  execute: ["Prefer connected GitHub APIs or gh with the existing authenticated session","Apply only the smallest requested change; never extract credentials from files"]
+  verify: ["Read back canonical issue URL, state, labels and comment IDs","Distinguish failed, pending and duplicate operations"]
+  recover: ["On timeout query current issue state before retrying","Avoid blind bulk close or overwrite when authority is uncertain"]
+budget:
+  max_tool_calls: 35
+  max_reference_bytes: 131072
+evidence:
+  required: ["Repository, canonical issue URL and identity used","Before/after state and confirmed mutation receipt"]
+output:
+  format: "Per-issue triage and change ledger with verification"
+  acceptance: ["No token scraping or credential echo","No unrequested closing, assignment or externally visible comment"]

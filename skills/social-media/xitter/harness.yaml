@@ -1,0 +1,23 @@
+# Individual advisory-only contract; not a runtime grant or sandbox.
+schema_version: 1
+skill: xitter
+activation:
+  when: ["Read a specific X account timeline or public post through an authorized X API client","Publish, reply, like or bookmark as the explicitly selected X user when requested"]
+  not_when: ["Create a LinkedIn or Mastodon update without any X account action","Discuss social media strategy without reading or mutating an X account"]
+capabilities:
+  tools: ["x-cli","X API"]
+  side_effects: external_write
+  approval_required: ["Create, delete, quote, like or repost as an X account","Configure write scopes, purchase API access or persist new account credentials"]
+lifecycle:
+  preflight: ["Confirm exact authorized account and intended user identity","Inspect token privileges, post ID, content, visibility, rate limit and billable implications"]
+  execute: ["Prefer read-only account verification and target ID lookups","Execute a single expressly requested action; never share a general Hermes secrets file with x-cli"]
+  verify: ["Read back the new post or target state and capture canonical post ID","Confirm which account acted and report usage or access failures"]
+  recover: ["On write timeout query account posts and ID before reposting","Stop on auth mismatch, missing scopes, quotas or suspected credential leakage"]
+budget:
+  max_tool_calls: 25
+  max_reference_bytes: 98304
+evidence:
+  required: ["Account identity, target post ID/URL and approved action","Read-back status or explicitly unresolved external write"]
+output:
+  format: "Per-action social API receipt and moderation-safe failure log"
+  acceptance: ["No reused global env-file symlink or credential echo","No automated posting or paid write without explicit intent"]
