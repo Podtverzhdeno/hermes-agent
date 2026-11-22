@@ -16,6 +16,7 @@ Severity = Literal["info", "warning", "critical"]
 class Effect:
     action_key: str
     status: str
+    receipt_ref: str | None = None
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,12 @@ def diagnose(snapshot: Snapshot, *, progress_slo_seconds: float = 900.0) -> Diag
     # An externally reserved effect is never safe to replay just because a
     # task/session died or a connector stopped responding.
     uncertain = tuple(sorted(e.action_key for e in s.effects if e.status == "reserved"))
+    recognized_effect_states = frozenset({"reserved", "acknowledged", "not_executed"})
+    unknown_effects = tuple(sorted(e.action_key for e in s.effects
+                                   if e.status not in recognized_effect_states))
+    receipt_missing = tuple(sorted(e.action_key for e in s.effects
+                                   if e.status in {"acknowledged", "not_executed"}
+                                   and not e.receipt_ref))
     if uncertain or s.status == "needs_reconciliation":
         return Diagnosis(
             "EXTERNAL_EFFECT_UNCERTAIN", "critical",
@@ -91,11 +98,31 @@ def diagnose(snapshot: Snapshot, *, progress_slo_seconds: float = 900.0) -> Diag
             "observed", "Block retries; reconcile each action against its provider receipt.",
             uncertain,
         )
+    if unknown_effects:
+        return Diagnosis("EFFECT_STATE_UNKNOWN", "critical",
+                         "An external action has an unrecognized outcome state.",
+                         "unknown", "Fail closed and inspect the trusted effect-state mapping.",
+                         unknown_effects)
+    if receipt_missing:
+        return Diagnosis("EFFECT_RECEIPT_MISSING", "critical",
+                         "A resolved external action lacks an independent receipt reference.",
+                         "observed", "Block completion; obtain authenticated readback/proof.",
+                         receipt_missing)
 
     complete = {
         e.kind for e in s.evidence
-        if e.trusted and e.revision == s.revision and e.conclusion == "success"
+        if e.trusted and e.revision == s.revision and e.conclusion in {"success", "passed"}
     }
+    trusted_failures = {
+        e.kind for e in s.evidence
+        if e.trusted and e.revision == s.revision and e.conclusion in {"failed", "failure"}
+    }
+    conflicting = tuple(sorted(set(s.required_evidence) & complete & trusted_failures))
+    if conflicting:
+        return Diagnosis("CONFLICTING_VERIFICATION", "critical",
+                         "Trusted verification reports both passing and failing for one required kind.",
+                         "observed", "Block success and reconcile verifier receipts for the exact revision.",
+                         conflicting)
     missing = tuple(sorted(set(s.required_evidence) - complete))
     if s.status == "succeeded":
         if not s.required_evidence:
