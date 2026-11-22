@@ -7,14 +7,6 @@ on:
       - "tests/gateway/test_gpt_bridge_event_audit.py"
       - "docs/sdd/HERMES_GPT_*"
       - ".github/workflows/gpt-readonly-audit.yml"
-  push:
-    branches:
-      - "feat/gpt-readonly-run-audit-20261122"
-    paths:
-      - "gateway/gpt_bridge_event_audit.py"
-      - "tests/gateway/test_gpt_bridge_event_audit.py"
-      - "docs/sdd/HERMES_GPT_*"
-      - ".github/workflows/gpt-readonly-audit.yml"
   workflow_dispatch:
 
 permissions:
