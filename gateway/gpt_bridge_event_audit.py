@@ -406,6 +406,16 @@ def parse_sse_frames(text: str) -> list[SafeEvent]:
                 raise InvalidTelemetry("Malformed JSON SSE event") from None
             # Frame 'id' is only used if payload lacks an explicit seq.
             event = normalize_run_event(payload, sse_id=frame_id)
+            if frame_id is not None:
+                # Native upstream puts the same seq in the SSE id and JSON.
+                # A mismatch is corrupt replay evidence: never silently
+                # prefer either side and present an invented event timeline.
+                try:
+                    frame_seq = int(frame_id)
+                except (ValueError, TypeError, OverflowError):
+                    raise InvalidTelemetry("Invalid SSE frame cursor") from None
+                if str(frame_seq) != frame_id or frame_seq != event.seq:
+                    raise InvalidTelemetry("SSE cursor contradicts event sequence")
             events.append(event)
             if len(events) > _MAX_FRAMES:
                 raise InvalidTelemetry("Too many SSE events")
