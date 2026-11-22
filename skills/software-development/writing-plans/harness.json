@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "skill": "writing-plans",
+  "purpose": "Build bounded implementation plans with dependencies and testable acceptance.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Create an implementation plan with files, owners and tests",
+      "Break this feature into ordered development tasks",
+      "Prepare a task plan in a local project document"
+    ],
+    "do_not_trigger": [
+      "Execute the plan and deploy it immediately",
+      "Read weather forecasts for next week",
+      "Approve a GitHub merge without review"
+    ]
+  },
+  "preflight": [
+    "Confirm requirements, current code revision and non-goals.",
+    "List allowed output file and identify whether creating a plan is authorized."
+  ],
+  "workflow": [
+    "Decompose into dependency-ordered tasks with unique file ownership.",
+    "Associate each task with acceptance evidence, rollback and budget.",
+    "Cross-check coverage of constraints, conflicting dependencies and unresolved decisions.",
+    "Write only authorized plan file and verify its content hash."
+  ],
+  "actions": [
+    {
+      "operation": "plan.draft",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "plan-content"
+      ]
+    },
+    {
+      "operation": "plan.save",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "plan-content",
+        "saved-plan"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "plan-content",
+      "source": "artifact",
+      "how_to_verify": "Review full task graph, scope and acceptance checks for contradictions."
+    },
+    {
+      "id": "saved-plan",
+      "source": "file_hash",
+      "how_to_verify": "Confirm output path and content hash from filesystem read-back."
+    }
+  ],
+  "failure_modes": [
+    "Do not mark implementation complete from an approved plan alone.",
+    "If tasks form a cycle or ownership conflict, block execution and revise plan."
+  ],
+  "skill_git_blob": "92a8d0172af3ac35fa18590080956c1be8ef76de"
+}

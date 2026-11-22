@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "skill": "github-repo-management",
+  "purpose": "Safely manage GitHub repository resources across read-only and high-impact operations.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Inspect settings and branch rules for my GitHub repository",
+      "Create a private repository under my authorized organization",
+      "Prepare a release for my repository after checks pass"
+    ],
+    "do_not_trigger": [
+      "Leave a line comment on a pull request",
+      "Install a Python package into the host",
+      "Read Gmail messages without GitHub"
+    ]
+  },
+  "preflight": [
+    "Pin owner namespace and the exact repository before interacting.",
+    "Verify acting identity, current settings, required rulesets and backup scope.",
+    "Separate read-only inspection, remote mutation and critical admin privileges."
+  ],
+  "workflow": [
+    "Capture before-state and expected changes.",
+    "Prepare an exact action preview and owner authorization for remote writes.",
+    "Call only the scoped provider tool with authorization and retry budget.",
+    "Read back new settings or resource ID and record any unknown result."
+  ],
+  "actions": [
+    {
+      "operation": "repo.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "repo-state"
+      ]
+    },
+    {
+      "operation": "repo.clone",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "repo-state",
+        "local-checkout"
+      ]
+    },
+    {
+      "operation": "repo.create",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "repo-state",
+        "created-repo"
+      ]
+    },
+    {
+      "operation": "repo.admin",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "repo-state",
+        "owner-approval",
+        "admin-receipt"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "repo-state",
+      "source": "remote_api",
+      "how_to_verify": "Confirm exact repository owner/name, default branch and permissions."
+    },
+    {
+      "id": "local-checkout",
+      "source": "git",
+      "how_to_verify": "Verify exact local worktree and cloned HEAD without overwriting files."
+    },
+    {
+      "id": "created-repo",
+      "source": "remote_api",
+      "how_to_verify": "Read back created repository ID, visibility and owner."
+    },
+    {
+      "id": "owner-approval",
+      "source": "human",
+      "how_to_verify": "Confirm exact critical settings, workflow or secret operation."
+    },
+    {
+      "id": "admin-receipt",
+      "source": "remote_api",
+      "how_to_verify": "Read back critical setting or workflow state after the approved change."
+    }
+  ],
+  "failure_modes": [
+    "No credential scraping or secret literal in shell commands.",
+    "On unknown admin write, reconcile provider state before any retry."
+  ],
+  "skill_git_blob": "879246b5457ecce49f4225394e3f5e23086813eb"
+}

@@ -1,0 +1,77 @@
+{
+  "schema_version": 1,
+  "skill": "nano-pdf",
+  "purpose": "Edit PDFs only with approved data processing and visual page verification.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Fix the specified title on page three of this PDF",
+      "Edit one sentence in a PDF using the nano-pdf CLI",
+      "Verify a generated PDF edit against the original"
+    ],
+    "do_not_trigger": [
+      "Merge a GitHub pull request",
+      "Upload a confidential contract without owner permission",
+      "Modify adjacent PDF pages by guessing indexing"
+    ]
+  },
+  "preflight": [
+    "Pin source PDF hash, exact page map and untouched backup.",
+    "Inspect CLI/provider/privacy behavior and ask consent for external document transfer.",
+    "Confirm destination file and forbid in-place destructive editing."
+  ],
+  "workflow": [
+    "Prepare precise edit operation and verified target page.",
+    "Apply bounded edit only after required data-sharing consent.",
+    "Render changed page and neighbors, compare textual and visual artifacts.",
+    "Preserve original; report modified areas and output hash."
+  ],
+  "actions": [
+    {
+      "operation": "pdf.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "source-pdf"
+      ]
+    },
+    {
+      "operation": "pdf.edit",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "source-pdf",
+        "processing-consent",
+        "output-pdf",
+        "visual-verify"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-pdf",
+      "source": "file_hash",
+      "how_to_verify": "Record source page count, selected page and immutable hash."
+    },
+    {
+      "id": "processing-consent",
+      "source": "human",
+      "how_to_verify": "Owner approves exact external document transfer if the provider requires it."
+    },
+    {
+      "id": "output-pdf",
+      "source": "file_hash",
+      "how_to_verify": "Read back actual output PDF path, parseability and content hash."
+    },
+    {
+      "id": "visual-verify",
+      "source": "artifact",
+      "how_to_verify": "Compare changed and neighboring pages against approved edit manifest."
+    }
+  ],
+  "failure_modes": [
+    "Wrong-page edit requires restore, not blind page +1/-1 retry.",
+    "Never upload confidential PDFs by default or claim file size proves correctness."
+  ],
+  "skill_git_blob": "f9001cdaf7790f6ece9da10b70e26a888e2acfa6"
+}

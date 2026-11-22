@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "skill": "obsidian",
+  "purpose": "Read and update scoped vault notes without crossing allowed folders.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Find the architecture decision in my Obsidian vault",
+      "Update the agent notes in the approved project folder",
+      "Create a note documenting today's verified work"
+    ],
+    "do_not_trigger": [
+      "Change a shared Google Doc",
+      "Edit files outside the Obsidian vault",
+      "Browse a public Wikipedia page"
+    ]
+  },
+  "preflight": [
+    "Resolve the exact owner-authorized vault root and write allowlist.",
+    "Use scoped MCP or filesystem adapter that validates realpath and symlink boundaries.",
+    "Read exact existing file version before proposing an edit."
+  ],
+  "workflow": [
+    "Read and search only permitted vault paths.",
+    "For writes, preserve frontmatter, links and surrounding sections.",
+    "Apply a compare-and-swap style file revision check.",
+    "Read back file hash and record the updated path and revision."
+  ],
+  "actions": [
+    {
+      "operation": "vault.read",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "note-identity"
+      ]
+    },
+    {
+      "operation": "vault.edit",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "note-identity",
+        "note-hash"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "note-identity",
+      "source": "file_hash",
+      "how_to_verify": "Resolve vault-relative path and permitted root without traversal."
+    },
+    {
+      "id": "note-hash",
+      "source": "file_hash",
+      "how_to_verify": "Read back edited note content hash after a scoped write."
+    }
+  ],
+  "failure_modes": [
+    "If MCP is disconnected, mark synchronization pending and do not claim an edit.",
+    "If the note changed concurrently, stop instead of overwriting another agent."
+  ],
+  "skill_git_blob": "08e47fb084a5ea0236e7e3883dbce46afd583d9e"
+}

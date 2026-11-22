@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "skill": "fastmcp",
+  "purpose": "Build and validate scoped FastMCP servers without unreviewed exposure.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Design a FastMCP service with two typed read-only tools",
+      "Test a FastMCP server against a fake client",
+      "Prepare deployment of an authenticated MCP service"
+    ],
+    "do_not_trigger": [
+      "Connect to a known existing MCP server without programming",
+      "Enable arbitrary MCP tools with no approval",
+      "Create a spreadsheet formula"
+    ]
+  },
+  "preflight": [
+    "Pin SDK version, server package and threat model before coding.",
+    "Specify transport, advertised tools, secrets, allowed hosts and identity."
+  ],
+  "workflow": [
+    "Implement schemas with strict validation and least-privilege tool surfaces.",
+    "Exercise local fake-client handshake, denial and timeout tests.",
+    "Document bind address and executable package integrity.",
+    "Only deploy or start server after exact operator confirmation."
+  ],
+  "actions": [
+    {
+      "operation": "fastmcp.design",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "server-contract"
+      ]
+    },
+    {
+      "operation": "fastmcp.build",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "server-contract",
+        "implementation-tests"
+      ]
+    },
+    {
+      "operation": "fastmcp.launch",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "server-contract",
+        "launch-consent",
+        "handshake"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "server-contract",
+      "source": "artifact",
+      "how_to_verify": "Document tools, network binds, authentication and permitted resources."
+    },
+    {
+      "id": "implementation-tests",
+      "source": "local_test",
+      "how_to_verify": "Run deterministic tool-schema and denial tests in isolated environment."
+    },
+    {
+      "id": "launch-consent",
+      "source": "human",
+      "how_to_verify": "Owner confirms executable version and operational privilege/host exposure."
+    },
+    {
+      "id": "handshake",
+      "source": "local_test",
+      "how_to_verify": "Prove authenticated client handshake and denied unauthorized tools."
+    }
+  ],
+  "failure_modes": [
+    "Do not expose unauthenticated server to the public network.",
+    "Never promote an MCP tool output into trusted policy authority."
+  ],
+  "skill_git_blob": "5b4ea82d1df2b5bfbdcfa58abf667b7c1b26fb0d"
+}

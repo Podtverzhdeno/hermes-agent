@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "skill": "subagent-driven-development",
+  "purpose": "Coordinate bounded implementation and independent review of work items.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Implement this decomposed plan with specialist agents",
+      "Run separate builder and reviewer passes for each task",
+      "Parallelize independent code tasks with final integration"
+    ],
+    "do_not_trigger": [
+      "Answer a single factual question from memory",
+      "Start unlimited unsupervised agents",
+      "Deploy an unreviewed change to production"
+    ]
+  },
+  "preflight": [
+    "Confirm a bounded plan with dependency ordering and no overlapping write ownership.",
+    "Assign unique worktrees, role scopes, retry and token budgets.",
+    "Choose durable Kanban for work that must survive the current process."
+  ],
+  "workflow": [
+    "Dispatch only independent units with exact output contracts.",
+    "Inspect completed artifacts rather than trusting agent summaries.",
+    "Run independent specification then code-quality review.",
+    "Integrate only verified changes and preserve a recoverable checkpoint."
+  ],
+  "actions": [
+    {
+      "operation": "agents.plan",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "task-plan"
+      ]
+    },
+    {
+      "operation": "agents.execute",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "task-plan",
+        "integration-diff",
+        "independent-review"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "task-plan",
+      "source": "artifact",
+      "how_to_verify": "Dependency graph with ownership, budgets and acceptance tests."
+    },
+    {
+      "id": "integration-diff",
+      "source": "git",
+      "how_to_verify": "Confirm each accepted patch in final integrated head."
+    },
+    {
+      "id": "independent-review",
+      "source": "human",
+      "how_to_verify": "Record reviewer signoff or explicit findings and rework status."
+    }
+  ],
+  "failure_modes": [
+    "If a child disappears, use durable task state; do not infer success from silence.",
+    "Do not retry an unknown external side effect or spawn unbounded replacements."
+  ],
+  "skill_git_blob": "1bf92d6c38b75a7b0f1e586a0ca3144c94e9a957"
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "skill": "arxiv",
+  "purpose": "Retrieve and cite primary academic papers with verified metadata.",
+  "risk": "read_only",
+  "routing": {
+    "trigger": [
+      "Find peer-reviewed or preprint papers about retrieval augmented generation",
+      "Retrieve the arXiv abstract for paper 2402.03300",
+      "Compare recent arXiv papers on model evaluation"
+    ],
+    "do_not_trigger": [
+      "Write a Python service that calls arXiv",
+      "Create a Gmail event",
+      "Edit my Obsidian vault directly"
+    ]
+  },
+  "preflight": [
+    "Record the search query, date and result ordering.",
+    "Confirm arXiv identifiers and distinguish preprint from peer-reviewed publication.",
+    "Use metadata rather than guessing dates, authors or links."
+  ],
+  "workflow": [
+    "Retrieve exact paper metadata and stable identifiers.",
+    "Cross-check title, authors, version and publication dates.",
+    "Read relevant sections before drawing substantive conclusions.",
+    "Cite direct source links and disclose retrieval gaps."
+  ],
+  "actions": [
+    {
+      "operation": "papers.search",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "query-record",
+        "paper-metadata"
+      ]
+    },
+    {
+      "operation": "papers.review",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "paper-metadata",
+        "source-citations"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "query-record",
+      "source": "artifact",
+      "how_to_verify": "Record search terms, date and API window or pagination."
+    },
+    {
+      "id": "paper-metadata",
+      "source": "remote_api",
+      "how_to_verify": "Validate arXiv ID, author, title, date and version from primary metadata."
+    },
+    {
+      "id": "source-citations",
+      "source": "citation",
+      "how_to_verify": "Reference primary paper URLs supporting each substantive claim."
+    }
+  ],
+  "failure_modes": [
+    "If an abstract is missing or withdrawn, label it explicitly.",
+    "Do not convert a preprint into a peer-reviewed claim without evidence."
+  ],
+  "skill_git_blob": "80f5056b0d1384218fd7405bbdae8cd62531ad61"
+}

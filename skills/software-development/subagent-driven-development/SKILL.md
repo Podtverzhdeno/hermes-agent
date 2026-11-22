@@ -1,7 +1,7 @@
 ---
 name: subagent-driven-development
 description: Use when executing implementation plans with independent tasks. Dispatches fresh delegate_task per task with two-stage review (spec compliance then code quality).
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent (adapted from obra/superpowers)
 license: MIT
 metadata:
@@ -11,6 +11,20 @@ metadata:
 ---
 
 # Subagent-Driven Development
+
+## Durable ownership and independent verification
+
+An in-process delegated child is a bounded execution helper, not a durable
+task queue. If work must survive a gateway exit, context expiration or
+worker replacement, use a persistent task system (modern Hermes Kanban
+where supported); do not infer success from silence. Assign one owner per
+writable file/worktree, pass exact task scope and revision to each worker,
+limit retries and model/tool budgets, and keep approval outside the
+implementing agent. The sibling harness.json separates plan vs execute;
+the latter requires a final integrated diff and genuinely independent
+review, not a second copy of the implementer's summary.
+
+
 
 ## Overview
 

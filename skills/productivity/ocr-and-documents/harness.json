@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "skill": "ocr-and-documents",
+  "purpose": "Extract document text safely with checked page coverage and no unsolicited uploads.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Extract text from the scanned PDF pages in this document",
+      "Check whether a PDF is digital text or requires OCR",
+      "Read an uploaded DOCX and preserve its headings"
+    ],
+    "do_not_trigger": [
+      "Send a private PDF to an unknown third-party website",
+      "Publish a document to social media",
+      "Launch a privileged GitHub workflow"
+    ]
+  },
+  "preflight": [
+    "Classify input file format, privacy and page count.",
+    "Prefer local text extraction before expensive OCR and verify source integrity.",
+    "Require exact owner consent for third-party uploads or model processing."
+  ],
+  "workflow": [
+    "Extract native text if available; inspect page completeness.",
+    "For scanned pages run approved OCR with language and image-resolution checks.",
+    "Compare extraction to a representative rendered page sample.",
+    "Return structured text with page anchors, uncertainty and source hash."
+  ],
+  "actions": [
+    {
+      "operation": "docs.extract-local",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "source-file",
+        "extracted-content"
+      ]
+    },
+    {
+      "operation": "docs.remote-ocr",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "source-file",
+        "data-consent",
+        "extracted-content"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "source-file",
+      "source": "file_hash",
+      "how_to_verify": "Record source document hash, format, page count and confidentiality tier."
+    },
+    {
+      "id": "data-consent",
+      "source": "human",
+      "how_to_verify": "Owner approves exact external processing provider and data scope."
+    },
+    {
+      "id": "extracted-content",
+      "source": "artifact",
+      "how_to_verify": "Compare page-anchored extracted text against original rendered source."
+    }
+  ],
+  "failure_modes": [
+    "Do not claim scan completeness from a single parsed text fragment.",
+    "Never upload restricted files to remote OCR or persist private images in logs."
+  ],
+  "skill_git_blob": "2fdf4ea4137d00bc6a01b21cd1319f886b8aab1a"
+}

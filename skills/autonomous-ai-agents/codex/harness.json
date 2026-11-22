@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "skill": "codex",
+  "purpose": "Delegate coding to a bounded Codex CLI process with pinned artifacts and scoped permissions.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Use Codex CLI to implement a feature in an isolated worktree",
+      "Ask Codex to review changes without applying them",
+      "Recover the outcome of a Codex CLI development run"
+    ],
+    "do_not_trigger": [
+      "Explain Codex licensing in general terms",
+      "Start an unlimited unattended process with all permissions",
+      "Create a calendar meeting instead of touching code"
+    ]
+  },
+  "preflight": [
+    "Verify exact Codex executable, version, provider identity and billing budget.",
+    "Pin target repo/worktree, branch SHA, allowed tools and review authority.",
+    "For hosted/remote or autonomous code execution, require exact owner authorization."
+  ],
+  "workflow": [
+    "Issue a bounded task brief and target revision to a fresh process.",
+    "Capture structured logs, process exit, proposed patch and tool actions.",
+    "Verify changed files and run targeted tests independent of agent prose.",
+    "Stop worker at budget/cancellation boundary; preserve safe state."
+  ],
+  "actions": [
+    {
+      "operation": "codex.review",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "code-snapshot",
+        "review-result"
+      ]
+    },
+    {
+      "operation": "codex.implement",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "code-snapshot",
+        "execution-consent",
+        "diff-result",
+        "test-result"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "code-snapshot",
+      "source": "git",
+      "how_to_verify": "Capture exact repo/branch and status before agent starts."
+    },
+    {
+      "id": "review-result",
+      "source": "artifact",
+      "how_to_verify": "Retain bounded read-only findings with exact file/line references."
+    },
+    {
+      "id": "execution-consent",
+      "source": "human",
+      "how_to_verify": "Owner approves process permissions, tool/network scope and cost budget."
+    },
+    {
+      "id": "diff-result",
+      "source": "git",
+      "how_to_verify": "Read back exact isolated worktree diff and final head SHA."
+    },
+    {
+      "id": "test-result",
+      "source": "local_test",
+      "how_to_verify": "Capture independent targeted test process exit and artifacts."
+    }
+  ],
+  "failure_modes": [
+    "On worker crash, reconcile actual worktree and external actions before restarting.",
+    "Do not infer success from a session end or fluent final message."
+  ],
+  "skill_git_blob": "6ccbcf960487e7e8bbb631a8b00e86b9871349ba"
+}

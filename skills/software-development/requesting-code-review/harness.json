@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "skill": "requesting-code-review",
+  "purpose": "Request independent code review with exact scope and closure of findings.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Get an independent review of my current implementation",
+      "Request a code review before final integration",
+      "Create a local review packet listing risks and tests"
+    ],
+    "do_not_trigger": [
+      "Make code changes without review",
+      "Publish an unapproved review comment to GitHub",
+      "Summarize an unrelated news article"
+    ]
+  },
+  "preflight": [
+    "Confirm exact baseline and changed head, owner of code and reviewer independence.",
+    "Define expected review severity, evidence and output location."
+  ],
+  "workflow": [
+    "Prepare diff, tests and known limitations for reviewer.",
+    "Request independent functional and security checks.",
+    "Reconcile findings with exact code changes and final SHA.",
+    "Write a bounded local review artifact and verify it exists."
+  ],
+  "actions": [
+    {
+      "operation": "review.prepare",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "review-scope"
+      ]
+    },
+    {
+      "operation": "review.record",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "review-scope",
+        "review-evidence"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "review-scope",
+      "source": "git",
+      "how_to_verify": "Record exact diff and test results supplied to reviewer."
+    },
+    {
+      "id": "review-evidence",
+      "source": "file_hash",
+      "how_to_verify": "Read back review artifact including findings, disposition and SHA."
+    }
+  ],
+  "failure_modes": [
+    "Reject self-review presented as independent assurance.",
+    "Unresolved blocking findings prevent final acceptance."
+  ],
+  "skill_git_blob": "fb942ec22026c1db335ee123ddb2f834a53d5902"
+}

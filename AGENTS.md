@@ -2,6 +2,21 @@
 
 Instructions for AI coding assistants and developers working on the hermes-agent codebase.
 
+## Specialized Skills and harness — owner acceptance directive
+
+For any edit to bundled or optional SKILL.md, skill loading/routing, Skills
+security, or skill evaluation, read
+docs/skills-harness/OWNER_DIRECTIVE.md and
+docs/skills-harness/ARCHITECTURE_AND_EVALS.md first. This is a high-complexity
+project requiring one independently tested per-skill contract and failure
+strategy for every modified Skill. Distinguish a static schema pass from
+behavioral model testing, real tool authorization and production operation.
+Never say a Skill's harness grants OS permissions; never call self-reported
+model evidence independent verification. Do not bypass approval/credential
+scope, skip negative fixtures or claim full coverage when unprofiled Skills
+remain. Draft PR #31 is isolated from the unfinished Autopilot PR.
+
+
 ## Development Environment
 
 ```bash

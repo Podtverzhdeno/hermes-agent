@@ -1,0 +1,56 @@
+{
+  "schema_version": 1,
+  "skill": "codebase-inspection",
+  "purpose": "Measure repository code metrics without changing project files.",
+  "risk": "read_only",
+  "routing": {
+    "trigger": [
+      "Count the lines of code by language in this repository",
+      "Show LOC and comment ratios excluding dependencies",
+      "Compare source file counts between two commits"
+    ],
+    "do_not_trigger": [
+      "Identify the cause of a failing test",
+      "Push the latest changes to GitHub",
+      "Write a PowerPoint presentation"
+    ]
+  },
+  "preflight": [
+    "Record the exact revision and repository root.",
+    "Prefer an existing installed analyzer; do not auto-install packages or mutate the repo.",
+    "Document ignore directories and generated-file exclusions."
+  ],
+  "workflow": [
+    "Run the metric collection in read-only mode.",
+    "Classify generated and vendored code separately.",
+    "Report units, exclusions, command version and reproducibility details."
+  ],
+  "actions": [
+    {
+      "operation": "metrics.scan",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "revision-scope",
+        "metric-output"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "revision-scope",
+      "source": "git",
+      "how_to_verify": "Confirm revision, tracked files and excluded folders."
+    },
+    {
+      "id": "metric-output",
+      "source": "artifact",
+      "how_to_verify": "Retain raw counts and tool version so totals can be reproduced."
+    }
+  ],
+  "failure_modes": [
+    "If pygount is absent, report a missing dependency and propose a safe install.",
+    "If repo changes during scan, mark measurements as non-comparable."
+  ],
+  "skill_git_blob": "ef992f333198521a0f0deb11413558d488004d48"
+}

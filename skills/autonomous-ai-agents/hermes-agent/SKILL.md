@@ -1,7 +1,7 @@
 ---
 name: hermes-agent
 description: Complete guide to using and extending Hermes Agent — CLI usage, setup, configuration, spawning additional agents, gateway platforms, skills, voice, tools, profiles, and a concise contributor reference. Load this skill when helping users configure Hermes, troubleshoot issues, spawn agent instances, or make code contributions.
-version: 2.0.0
+version: 2.1.0
 author: Hermes Agent + Teknium
 license: MIT
 metadata:
@@ -30,11 +30,33 @@ People use Hermes for software development, research, system administration, dat
 
 **Docs:** https://hermes-agent.nousresearch.com/docs/
 
+## Safety and version boundary
+
+This guide may cover Hermes features introduced after the user's installed
+fork. Before changing configuration or starting agents, check the exact
+installed version and source revision; do not copy flags from newer
+releases into an older runtime without compatibility checks.
+
+The sibling harness.json separates read-only diagnosis, bounded local
+configuration and high-impact agent launch. Running a gateway or child
+agent can grant terminal, network, files and secret access: require
+owner-approved process identity, scope, budget, timeout and cancellation
+plan. A prompt or Skill cannot grant permissions. Never use yolo/approval
+bypass as an "autopilot" shortcut, automatically paste secrets into
+a profile, or start unlimited child loops. Any command affecting global
+config or installations requires a backup and explicit consent.
+
+For durable multi-agent work on a compatible modern release, prefer
+the canonical Hermes Kanban lifecycle and independent evidence; do
+not treat an in-process delegate as crash-persistent. A worker exit
+is not proof of task success.
+
 ## Quick Start
 
 ```bash
 # Install
-curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+# Inspect and verify a pinned official release installer before running.
+# Do not pipe a mutable remote script directly to a shell in an automated task.
 
 # Interactive chat (default)
 hermes
@@ -67,7 +89,7 @@ hermes [flags] [command]
   --worktree, -w            Isolated git worktree mode (parallel agents)
   --skills, -s SKILL        Preload skills (comma-separate or repeat)
   --profile, -p NAME        Use a named profile
-  --yolo                    Skip dangerous command approval
+  --yolo                    UNSAFE: bypasses approval; never default in automation
   --pass-session-id         Include session ID in system prompt
 ```
 

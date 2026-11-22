@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "skill": "google-workspace",
+  "purpose": "Work with Google apps through scoped OAuth and verified API receipts.",
+  "risk": "external_write",
+  "routing": {
+    "trigger": [
+      "Search my Gmail for the project discussion",
+      "Add the meeting to my connected calendar",
+      "Create a Google document from this approved brief"
+    ],
+    "do_not_trigger": [
+      "Read a local Python repository without Google services",
+      "Send a message on Telegram",
+      "Create an Obsidian note on disk"
+    ]
+  },
+  "preflight": [
+    "Use the existing authenticated connector and least-privilege scopes; never print OAuth tokens.",
+    "Resolve exact account, document/calendar/message target and permission level.",
+    "Distinguish read from write, send and sharing operations before acting."
+  ],
+  "workflow": [
+    "Read the target and assemble an explicit change preview.",
+    "Obtain exact owner authorization for writes or messages.",
+    "Use API idempotency where available and reconcile unknown responses.",
+    "Verify created or changed Google resource ID with a read-back."
+  ],
+  "actions": [
+    {
+      "operation": "google.read",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "resource-state"
+      ]
+    },
+    {
+      "operation": "google.write",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "resource-state",
+        "write-receipt"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "resource-state",
+      "source": "remote_api",
+      "how_to_verify": "Read exact resource ID and revision before any write."
+    },
+    {
+      "id": "write-receipt",
+      "source": "remote_api",
+      "how_to_verify": "Read resource back and compare intended change with actual state."
+    }
+  ],
+  "failure_modes": [
+    "On expired OAuth, request reconnect without extracting credential contents.",
+    "On uncertain API response, read back before retrying writes."
+  ],
+  "skill_git_blob": "19ae3ab0646e676508d6ca71b017b2e07810f9e4"
+}

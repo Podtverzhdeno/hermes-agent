@@ -1,7 +1,7 @@
 ---
 name: arxiv
 description: Search and retrieve academic papers from arXiv using their free REST API. No API key needed. Search by keyword, author, category, or ID. Combine with web_extract or the ocr-and-documents skill to read full paper content.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -11,6 +11,20 @@ metadata:
 ---
 
 # arXiv Research
+
+## Primary-source and retrieval verification
+
+The sibling harness.json separates search from paper review. Record
+search query, pagination, query date and primary arXiv identifiers.
+Before citing a paper, confirm title, authors, version and submission/
+update dates directly from arXiv metadata; do not invent a DOI or infer
+peer review from appearance in arXiv. A preprint may have later versions,
+withdrawals or corrections. Verify the actual passage before presenting
+a substantive claim; if PDF parsing is partial, state that limitation.
+Semantic Scholar is a secondary discovery source, not proof of the
+paper's contents. Keep source links with each comparison.
+
+
 
 Search and retrieve academic papers from arXiv via their free REST API. No API key, no dependencies — just curl.
 

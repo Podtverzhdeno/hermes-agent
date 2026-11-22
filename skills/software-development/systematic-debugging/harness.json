@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "skill": "systematic-debugging",
+  "purpose": "Diagnose failures from reproduction through confirmed root cause.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Investigate why this test intermittently fails",
+      "Debug this crash and repair the underlying cause",
+      "Identify the root cause of a broken integration"
+    ],
+    "do_not_trigger": [
+      "Implement a new feature that has no observed failure",
+      "Explain a published paper's abstract",
+      "Label GitHub issues without debugging"
+    ]
+  },
+  "preflight": [
+    "Preserve the exact failing input and environment.",
+    "Separate observed facts from hypotheses and avoid changing code prematurely.",
+    "Identify the initial failing revision and a smallest reproducer."
+  ],
+  "workflow": [
+    "Reproduce the failure and record the trace.",
+    "Test alternative causes and isolate the responsible component.",
+    "Apply a bounded fix with a regression test.",
+    "Verify the original failure is gone without hiding new regressions."
+  ],
+  "actions": [
+    {
+      "operation": "debug.diagnose",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "reproducer",
+        "root-cause"
+      ]
+    },
+    {
+      "operation": "debug.fix",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "reproducer",
+        "root-cause",
+        "regression-suite"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "reproducer",
+      "source": "local_test",
+      "how_to_verify": "Capture deterministic failing command, input and observed output."
+    },
+    {
+      "id": "root-cause",
+      "source": "artifact",
+      "how_to_verify": "Record causal evidence and why plausible alternatives were excluded."
+    },
+    {
+      "id": "regression-suite",
+      "source": "local_test",
+      "how_to_verify": "Run targeted and related tests at the fixed revision."
+    }
+  ],
+  "failure_modes": [
+    "If reproduction is impossible, label the theory unverified and avoid broad patches.",
+    "If the fix changes unrelated behavior, stop and request scoped review."
+  ],
+  "skill_git_blob": "e74cb083caeed8c374928ad51004eb8de4795041"
+}

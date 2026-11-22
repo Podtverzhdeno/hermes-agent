@@ -1,7 +1,7 @@
 ---
 name: codebase-inspection
 description: Inspect and analyze codebases using pygount for LOC counting, language breakdown, and code-vs-comment ratios. Use when asked to check lines of code, repo size, language composition, or codebase stats.
-version: 1.0.0
+version: 1.1.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -27,8 +27,17 @@ Analyze repositories for lines of code, language breakdown, file counts, and cod
 ## Prerequisites
 
 ```bash
-pip install --break-system-packages pygount 2>/dev/null || pip install pygount
+# Read-only check: never modify the host Python installation automatically.
+python -c "import shutil; print(shutil.which('pygount') or 'MISSING: pygount')"
 ```
+
+If missing, mark the analysis blocked by a dependency and ask before
+installing anything. Do **not** use --break-system-packages, auto-install a
+package, or silently modify a global Python environment. An approved
+isolated virtual environment is preferable. This skill's default
+measurement action is read-only. On Windows, use the same Python
+availability check and run pygount from PowerShell or Git Bash; shell
+pipelines below are POSIX examples. Record the installed tool version.
 
 ## 1. Basic Summary (Most Common)
 

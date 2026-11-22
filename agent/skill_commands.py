@@ -89,6 +89,12 @@ def _build_skill_message(
     content = str(loaded_skill.get("content") or "")
 
     parts = [activation_note, "", content.strip()]
+    # The exact skill's harness rides along with slash/preloaded activation.
+    # It is quality guidance, never a capability grant or security policy.
+    harness = loaded_skill.get("harness")
+    if isinstance(harness, dict) and harness.get("guidance"):
+        parts.extend(["", str(harness["guidance"])])
+
 
     if loaded_skill.get("setup_skipped"):
         parts.extend(
