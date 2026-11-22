@@ -20,7 +20,8 @@ from typing import Iterable
 
 SCHEMA_VERSION = 1
 MAX_LINE_BYTES = 16_384
-MAX_EVENTS = 1_000_000
+MAX_EVENTS = 100_000
+MAX_TOTAL_BYTES = 64 * 1024 * 1024
 _STABLE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$")
 _HEX_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _FIELDS = frozenset({
@@ -120,10 +121,25 @@ class Event:
 
 
 def load_jsonl(path: str | Path, *, max_events: int = MAX_EVENTS) -> list[Event]:
-    """Read one metadata-only event per line with strict size/cap limits."""
+    """Read bounded metadata-only JSONL without allocating unbounded lines.
+
+    An attacker-controlled newline-free file must not allocate its full length
+    before the size check. The total input cap applies before parsing JSON.
+    """
+    if type(max_events) is not int or not 1 <= max_events <= MAX_EVENTS:
+        raise TraceError("max_events outside supported range")
     events: list[Event] = []
+    total_bytes = 0
     with Path(path).open("rb") as stream:
-        for line_num, raw in enumerate(stream, 1):
+        line_num = 0
+        while True:
+            raw = stream.readline(MAX_LINE_BYTES + 1)
+            if not raw:
+                break
+            line_num += 1
+            total_bytes += len(raw)
+            if total_bytes > MAX_TOTAL_BYTES:
+                raise TraceError("trace exceeds total input size limit")
             if len(raw) > MAX_LINE_BYTES:
                 raise TraceError(f"line {line_num}: input exceeds event size limit")
             if not raw.strip():
