@@ -1,409 +1,117 @@
 ---
 name: chroma
-description: Open-source embedding database for AI applications. Store embeddings and metadata, perform vector and full-text search, filter by metadata. Simple 4-function API. Scales from notebooks to production clusters. Use for semantic search, RAG applications, or document retrieval. Best for local development and open-source projects.
-version: 1.0.0
-author: Orchestra Research
+description: Build and test local Chroma RAG collections with stable embeddings, document metadata, tenant filters, persistence and measurable retrieval quality.
+version: 2.0.0
+author: Hermes Agent (curated from Orchestra Research)
 license: MIT
-dependencies: [chromadb, sentence-transformers]
 metadata:
   hermes:
-    tags: [RAG, Chroma, Vector Database, Embeddings, Semantic Search, Open Source, Self-Hosted, Document Retrieval, Metadata Filtering]
-
+    tags: [Chroma, RAG, Embeddings, Local-Index, Metadata, Privacy]
+    related_skills: [faiss, qdrant-vector-search, dspy]
 ---
 
-# Chroma - Open-Source Embedding Database
+# Chroma — reproducible document retrieval and safe persistence
 
-The AI-native database for building LLM applications with memory.
+## Activation
 
-## When to use Chroma
+Use when a task needs an embedded/local document collection, semantic
+retrieval, metadata filters or prototype RAG using Chroma. Avoid choosing
+Chroma automatically for a multi-node cluster or pure approximate vector
+benchmark; compare Qdrant, FAISS or existing infrastructure using actual
+requirements. Follow `harness.yaml` for ownership, collection lifecycle,
+data authorization, tests and recovery.
 
-**Use Chroma when:**
-- Building RAG (retrieval-augmented generation) applications
-- Need local/self-hosted vector database
-- Want open-source solution (Apache 2.0)
-- Prototyping in notebooks
-- Semantic search over documents
-- Storing embeddings with metadata
+## Preflight and trust
 
-**Metrics**:
-- **24,300+ GitHub stars**
-- **1,900+ forks**
-- **v1.3.3** (stable, weekly releases)
-- **Apache 2.0 license**
+Confirm the installed `chromadb` version and client mode:
+`Client` (ephemeral), `PersistentClient` (local disk), `HttpClient`
+(server), or an authorized managed service. Record the target data directory,
+collection, model, vector dimensions, similarity/distance choice, tenant
+scope and actual user write permissions.
 
-**Use alternatives instead**:
-- **Pinecone**: Managed cloud, auto-scaling
-- **FAISS**: Pure similarity search, no metadata
-- **Weaviate**: Production ML-native database
-- **Qdrant**: High performance, Rust-based
+A collection is persisted state, not merely a cache. Do not reset, overwrite,
+delete, migrate or silently share it. A remote embedding function may send
+private documents off device; get authorization before enabling it. For
+sensitive data, prefer explicit local embeddings and independently enforced
+storage and retrieval permissions.
 
-## Quick start
+## Minimal, isolated smoke test
 
-### Installation
-
-```bash
-# Python
-pip install chromadb
-
-# JavaScript/TypeScript
-npm install chromadb @chroma-core/default-embed
-```
-
-### Basic usage (Python)
+The following uses **explicit numeric test embeddings**, preventing an
+unplanned external embedding-model call. Run only in an authorized local test
+workspace; never point `path` at an existing production collection.
 
 ```python
 import chromadb
 
-# Create client
-client = chromadb.Client()
-
-# Create collection
-collection = client.create_collection(name="my_collection")
-
-# Add documents
-collection.add(
-    documents=["This is document 1", "This is document 2"],
-    metadatas=[{"source": "doc1"}, {"source": "doc2"}],
-    ids=["id1", "id2"]
+client = chromadb.PersistentClient(path="./.chroma-smoke")
+collection = client.get_or_create_collection(name="hermes_smoke")
+collection.upsert(
+    ids=["test-001"],
+    embeddings=[[1.0, 0.0]],
+    documents=["Document for authorized smoke test."],
+    metadatas=[{"tenant": "test", "source": "synthetic"}],
 )
-
-# Query
-results = collection.query(
-    query_texts=["document about topic"],
-    n_results=2
+result = collection.query(
+    query_embeddings=[[1.0, 0.0]],
+    n_results=1,
+    where={"tenant": "test"},
 )
-
-print(results)
+assert result["ids"][0] == ["test-001"]
 ```
 
-## Core operations
-
-### 1. Create collection
-
-```python
-# Simple collection
-collection = client.create_collection("my_docs")
-
-# With custom embedding function
-from chromadb.utils import embedding_functions
-
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key="your-key",
-    model_name="text-embedding-3-small"
-)
-
-collection = client.create_collection(
-    name="my_docs",
-    embedding_function=openai_ef
-)
-
-# Get existing collection
-collection = client.get_collection("my_docs")
-
-# Delete collection
-client.delete_collection("my_docs")
-```
-
-### 2. Add documents
-
-```python
-# Add with auto-generated IDs
-collection.add(
-    documents=["Doc 1", "Doc 2", "Doc 3"],
-    metadatas=[
-        {"source": "web", "category": "tutorial"},
-        {"source": "pdf", "page": 5},
-        {"source": "api", "timestamp": "2025-01-01"}
-    ],
-    ids=["id1", "id2", "id3"]
-)
-
-# Add with custom embeddings
-collection.add(
-    embeddings=[[0.1, 0.2, ...], [0.3, 0.4, ...]],
-    documents=["Doc 1", "Doc 2"],
-    ids=["id1", "id2"]
-)
-```
-
-### 3. Query (similarity search)
-
-```python
-# Basic query
-results = collection.query(
-    query_texts=["machine learning tutorial"],
-    n_results=5
-)
-
-# Query with filters
-results = collection.query(
-    query_texts=["Python programming"],
-    n_results=3,
-    where={"source": "web"}
-)
-
-# Query with metadata filters
-results = collection.query(
-    query_texts=["advanced topics"],
-    where={
-        "$and": [
-            {"category": "tutorial"},
-            {"difficulty": {"$gte": 3}}
-        ]
-    }
-)
-
-# Access results
-print(results["documents"])      # List of matching documents
-print(results["metadatas"])      # Metadata for each doc
-print(results["distances"])      # Similarity scores
-print(results["ids"])            # Document IDs
-```
-
-### 4. Get documents
-
-```python
-# Get by IDs
-docs = collection.get(
-    ids=["id1", "id2"]
-)
-
-# Get with filters
-docs = collection.get(
-    where={"category": "tutorial"},
-    limit=10
-)
-
-# Get all documents
-docs = collection.get()
-```
-
-### 5. Update documents
-
-```python
-# Update document content
-collection.update(
-    ids=["id1"],
-    documents=["Updated content"],
-    metadatas=[{"source": "updated"}]
-)
-```
-
-### 6. Delete documents
-
-```python
-# Delete by IDs
-collection.delete(ids=["id1", "id2"])
-
-# Delete with filter
-collection.delete(
-    where={"source": "outdated"}
-)
-```
-
-## Persistent storage
-
-```python
-# Persist to disk
-client = chromadb.PersistentClient(path="./chroma_db")
-
-collection = client.create_collection("my_docs")
-collection.add(documents=["Doc 1"], ids=["id1"])
-
-# Data persisted automatically
-# Reload later with same path
-client = chromadb.PersistentClient(path="./chroma_db")
-collection = client.get_collection("my_docs")
-```
-
-## Embedding functions
-
-### Default (Sentence Transformers)
-
-```python
-# Uses sentence-transformers by default
-collection = client.create_collection("my_docs")
-# Default model: all-MiniLM-L6-v2
-```
-
-### OpenAI
-
-```python
-from chromadb.utils import embedding_functions
-
-openai_ef = embedding_functions.OpenAIEmbeddingFunction(
-    api_key="your-key",
-    model_name="text-embedding-3-small"
-)
-
-collection = client.create_collection(
-    name="openai_docs",
-    embedding_function=openai_ef
-)
-```
-
-### HuggingFace
-
-```python
-huggingface_ef = embedding_functions.HuggingFaceEmbeddingFunction(
-    api_key="your-key",
-    model_name="sentence-transformers/all-mpnet-base-v2"
-)
-
-collection = client.create_collection(
-    name="hf_docs",
-    embedding_function=huggingface_ef
-)
-```
-
-### Custom embedding function
-
-```python
-from chromadb import Documents, EmbeddingFunction, Embeddings
-
-class MyEmbeddingFunction(EmbeddingFunction):
-    def __call__(self, input: Documents) -> Embeddings:
-        # Your embedding logic
-        return embeddings
-
-my_ef = MyEmbeddingFunction()
-collection = client.create_collection(
-    name="custom_docs",
-    embedding_function=my_ef
-)
-```
-
-## Metadata filtering
-
-```python
-# Exact match
-results = collection.query(
-    query_texts=["query"],
-    where={"category": "tutorial"}
-)
-
-# Comparison operators
-results = collection.query(
-    query_texts=["query"],
-    where={"page": {"$gt": 10}}  # $gt, $gte, $lt, $lte, $ne
-)
-
-# Logical operators
-results = collection.query(
-    query_texts=["query"],
-    where={
-        "$and": [
-            {"category": "tutorial"},
-            {"difficulty": {"$lte": 3}}
-        ]
-    }  # Also: $or
-)
-
-# Contains
-results = collection.query(
-    query_texts=["query"],
-    where={"tags": {"$in": ["python", "ml"]}}
-)
-```
-
-## LangChain integration
-
-```python
-from langchain_chroma import Chroma
-from langchain_openai import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-
-# Split documents
-text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000)
-docs = text_splitter.split_documents(documents)
-
-# Create Chroma vector store
-vectorstore = Chroma.from_documents(
-    documents=docs,
-    embedding=OpenAIEmbeddings(),
-    persist_directory="./chroma_db"
-)
-
-# Query
-results = vectorstore.similarity_search("machine learning", k=3)
-
-# As retriever
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-```
-
-## LlamaIndex integration
-
-```python
-from llama_index.vector_stores.chroma import ChromaVectorStore
-from llama_index.core import VectorStoreIndex, StorageContext
-import chromadb
-
-# Initialize Chroma
-db = chromadb.PersistentClient(path="./chroma_db")
-collection = db.get_or_create_collection("my_collection")
-
-# Create vector store
-vector_store = ChromaVectorStore(chroma_collection=collection)
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
-
-# Create index
-index = VectorStoreIndex.from_documents(
-    documents,
-    storage_context=storage_context
-)
-
-# Query
-query_engine = index.as_query_engine()
-response = query_engine.query("What is machine learning?")
-```
-
-## Server mode
-
-```python
-# Run Chroma server
-# Terminal: chroma run --path ./chroma_db --port 8000
-
-# Connect to server
-import chromadb
-from chromadb.config import Settings
-
-client = chromadb.HttpClient(
-    host="localhost",
-    port=8000,
-    settings=Settings(anonymized_telemetry=False)
-)
-
-# Use as normal
-collection = client.get_or_create_collection("my_docs")
-```
-
-## Best practices
-
-1. **Use persistent client** - Don't lose data on restart
-2. **Add metadata** - Enables filtering and tracking
-3. **Batch operations** - Add multiple docs at once
-4. **Choose right embedding model** - Balance speed/quality
-5. **Use filters** - Narrow search space
-6. **Unique IDs** - Avoid collisions
-7. **Regular backups** - Copy chroma_db directory
-8. **Monitor collection size** - Scale up if needed
-9. **Test embedding functions** - Ensure quality
-10. **Use server mode for production** - Better for multi-user
-
-## Performance
-
-| Operation | Latency | Notes |
-|-----------|---------|-------|
-| Add 100 docs | ~1-3s | With embedding |
-| Query (top 10) | ~50-200ms | Depends on collection size |
-| Metadata filter | ~10-50ms | Fast with proper indexing |
-
-## Resources
-
-- **GitHub**: https://github.com/chroma-core/chroma ⭐ 24,300+
-- **Docs**: https://docs.trychroma.com
-- **Discord**: https://discord.gg/MMeYNTmh3x
-- **Version**: 1.3.3+
-- **License**: Apache 2.0
-
-
+Reopen with a fresh `PersistentClient` and validate count, IDs,
+documents and filters after process restart. If a newer Chroma API changes
+this example, use the installed documentation; do not blindly downgrade a
+populated database.
+
+## Production ingestion workflow
+
+1. Identify source ownership, consent, version and sensitivity.
+2. Design chunking with file/section offsets, document hashes, metadata
+   fields and stable IDs for incremental **idempotent upserts**.
+3. Choose embedding model and dimension; record tokenizer, normalization
+   and model revision. Do not mix models in a collection unintentionally.
+4. Bound batch size, concurrency, retries and resource consumption.
+5. Keep a source-to-chunk manifest so deletions and corrections are
+   traceable. A batch failure should not be treated as all records inserted.
+6. Apply tenant/ACL filters at the query boundary. **Client-side filtering
+   after retrieving unrestricted candidates is not an isolation control.**
+7. Keep secrets out of payload metadata and logging.
+
+Do not imply that a metadata filter alone enforces end-user authorization:
+host application and storage-level access controls remain required.
+
+## Evaluation: retrieval quality and correctness
+
+Use labeled queries with document/relevance judgments:
+- Recall@k, MRR/nDCG where appropriate;
+- Answer grounding and citation-to-chunk fidelity separately from retrieval;
+- Latency distribution and index/storage footprint;
+- Source update/delete propagation and persistence round-trip;
+- Empty dataset, wrong dimension, duplicate ID, missing metadata and
+  malformed filter inputs;
+- Tenant isolation with documents from two distinct authorized tenants.
+
+Compare hybrid/keyword baselines separately when text-heavy queries are
+present. Avoid claiming a default embedding/model is universally best.
+
+## Failure handling and reporting
+
+On dimension mismatch, stage a **new collection** rather than mutating
+production vectors. On accidental duplicate ingest, reconcile by stable IDs.
+On corruption, restore only from a verified snapshot after inspecting current
+state; never silently wipe a collection. On remote connection failure, do not
+auto-switch to a different account or cloud endpoint.
+
+Report exact client/version, collection path/name, embedding model and
+dimension, chunking, filters, actual read/write tests, retrieval metrics,
+authorization scope and unresolved risks. Distinguish a synthetic smoke
+test from evaluation on real documents.
+
+Primary docs:
+- https://cookbook.chromadb.dev/core/
+- https://cookbook.chromadb.dev/core/collections/
+- https://github.com/chroma-core/chroma
+
+Historical examples: `references/legacy-full-2026.md`.
