@@ -766,6 +766,20 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
     """
     try:
         from agent.skill_utils import get_external_skills_dirs
+        from pathlib import PureWindowsPath
+
+        # A model-facing skill name is an identifier/relative category path,
+        # never an arbitrary filesystem path. Reject traversal *before* any
+        # SKILL.md can be read or credentials registered.
+        if (not isinstance(name, str) or not name or len(name) > 512
+                or name != name.strip() or "\\\\" in name
+                or Path(name).is_absolute() or PureWindowsPath(name).is_absolute()
+                or any(part in ("", ".", "..") for part in name.split("/"))
+                or any(ord(c) < 32 or ord(c) == 127 for c in name)):
+            return json.dumps({
+                "success": False,
+                "error": "Invalid skill identifier: use a relative skill name or category/name.",
+            }, ensure_ascii=False)
 
         # Build list of all skill directories to search
         all_dirs = []
