@@ -187,6 +187,8 @@ def parse_cdp_reply(
     calls = parsed["tool_calls"]
     if not isinstance(calls, list) or len(calls) > MAX_CALLS:
         raise CDPProtocolError("TOOL_CALLS_INVALID")
+    if isinstance(declared_tools, (str, bytes, dict)):
+        raise CDPProtocolError("TOOL_DECLARATION_INVALID")
     try:
         declared = tuple(declared_tools)
     except TypeError:
