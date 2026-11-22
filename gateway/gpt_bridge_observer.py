@@ -168,6 +168,7 @@ class ReadOnlyEventObserver:
         self._recent: OrderedDict[str, tuple[str, int, str]] = OrderedDict()
         self._recent_seq: dict[tuple[str, int], str] = {}
         self._unresolved: dict[str, set[str]] = {}
+        self._missing_parent_of: dict[str, str] = {}
 
     def ingest(self, raw: Mapping[str, Any]) -> Observation:
         try:
@@ -198,8 +199,6 @@ class ReadOnlyEventObserver:
             return Observation(False, "stale_unverifiable", producer, cursor.contiguous)
         if seq - cursor.contiguous > self.max_reorder:
             return Observation(False, "reorder_window_exceeded", producer, cursor.contiguous)
-        if len(self._recent) >= self.max_recent and event.get("causation_event_id") is not None and event["causation_event_id"] not in self._recent and sum(map(len, self._unresolved.values())) >= self.max_recent:
-            return Observation(False, "causal_capacity", producer, cursor.contiguous)
         # All structural/sequence checks complete: update advisory state now.
         self._producers.setdefault(producer, cursor)
         cursor.ahead[seq] = event_id
@@ -208,17 +207,29 @@ class ReadOnlyEventObserver:
             del cursor.ahead[cursor.contiguous]
         self._recent[event_id] = (producer, seq, digest)
         self._recent_seq[(producer, seq)] = event_id
-        while len(self._recent) > self.max_recent:
-            old_event_id, old_identity = self._recent.popitem(last=False)
-            self._recent_seq.pop(old_identity[:2], None)
-            # An evicted parent is not proof it never happened; retain only
-            # bounded, explicitly incomplete causal observation state.
-            self._unresolved.pop(old_event_id, None)
-        self._unresolved.pop(event_id, None)
+        # Parent arrival may resolve previously unknown links, but absence of a
+        # parent is never proof that it never happened on the source.
+        resolved_children = self._unresolved.pop(event_id, ())
+        for child_id in resolved_children:
+            self._missing_parent_of.pop(child_id, None)
         cause = event.get("causation_event_id")
         missing_parent = cause is not None and cause not in self._recent
         if missing_parent:
             self._unresolved.setdefault(cause, set()).add(event_id)
+            self._missing_parent_of[event_id] = cause
+        # Keep ONLY unresolved links for currently retained child events.
+        # Previously the observer could enter permanent causal_capacity under
+        # a stream of missing parents, despite having evictable old events.
+        while len(self._recent) > self.max_recent:
+            old_event_id, old_identity = self._recent.popitem(last=False)
+            self._recent_seq.pop(old_identity[:2], None)
+            parent_id = self._missing_parent_of.pop(old_event_id, None)
+            if parent_id is not None:
+                children = self._unresolved.get(parent_id)
+                if children is not None:
+                    children.discard(old_event_id)
+                    if not children:
+                        self._unresolved.pop(parent_id, None)
         gap = (cursor.contiguous + 1, min(cursor.ahead) - 1) if cursor.ahead else None
         return Observation(True, "gap_suspected" if gap else "observed", producer,
                            cursor.contiguous, gap, missing_parent)
