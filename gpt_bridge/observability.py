@@ -207,6 +207,21 @@ class ObservationStore:
                 if existing["payload"] != payload:
                     raise EventConflict("event_id has a different payload")
                 return int(existing["sequence"])
+            # A task identifier is globally unique in v1. Without this guard,
+            # diagnostics for separate runs could silently merge their effects.
+            prior_task = db.execute(
+                "SELECT run_id FROM observations WHERE task_id=? LIMIT 1", (task_id,)
+            ).fetchone()
+            if prior_task and prior_task["run_id"] != run_id:
+                raise EventConflict("task_id reused across runs")
+            # Producer sequence is scoped to one concrete process and fence;
+            # do not permit a second logical agent to claim the same identity.
+            prior_producer = db.execute(
+                "SELECT agent_id FROM observations WHERE task_id=? AND producer_id=? AND fence=? LIMIT 1",
+                (task_id, event["producer_id"], fence),
+            ).fetchone()
+            if prior_producer and prior_producer["agent_id"] != agent_id:
+                raise EventConflict("producer_id reused across agents")
             collision = db.execute(
                 "SELECT event_id FROM observations WHERE task_id=? AND producer_id=? AND fence=? AND source_seq=?",
                 (task_id, event["producer_id"], fence, source_seq),
