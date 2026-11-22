@@ -231,3 +231,17 @@ def test_same_event_id_and_seq_with_changed_payload_is_conflict():
     mutated = {**original, "kind": "task.completed"}
     assert observer.ingest(mutated).code == "event_id_collision"
     assert observer.snapshot()["recent_events"] == 1
+
+
+def test_bounded_memory_after_sixty_thousand_interleaved_worker_events():
+    """No unbounded event retention or cross-producer sequence confusion."""
+    observer = ReadOnlyEventObserver(max_producers=40, max_reorder=16, max_recent=8192)
+    for seq in range(1, 2001):
+        for worker in range(30):
+            outcome = observer.ingest(evt(producer=f"worker-{worker}", seq=seq))
+            assert outcome.accepted
+    status = observer.snapshot()
+    assert status["producers"] == 30
+    assert status["recent_events"] == 8192
+    assert status["out_of_order_events"] == 0
+    assert status["unresolved_causal_links"] == 0
