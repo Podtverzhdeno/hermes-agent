@@ -1,0 +1,22 @@
+schema_version: 1
+skill: github-repo-management
+activation:
+  when: ["Create, inspect or administer a specified GitHub repository", "Manage GitHub releases, Actions, remotes, branch rules or repository secrets"]
+  not_when: ["Only review a GitHub pull request", "Only modify a single source file inside an already selected repository"]
+capabilities:
+  tools: ["GitHub connector", "gh", "git"]
+  side_effects: external_write
+  approval_required: ["Create public resources, change visibility or permissions, delete or transfer repositories", "Change branch protection, secrets, releases or deployment workflows"]
+lifecycle:
+  preflight: ["Resolve exact host, connected account, owner/repository and effective permissions", "Read current target visibility, branch rules, resource IDs and uncommitted state"]
+  execute: ["Use a least-privilege GitHub connector or authenticated gh CLI", "Keep repository writes narrowly scoped and separate draft from publication"]
+  verify: ["Read back external state, URLs, identifiers and exact target SHA", "Check security implications and required CI or review constraints"]
+  recover: ["Before retrying ambiguous remote mutations, query whether they already occurred", "Never force-push or delete user work to mask an uncertain failure"]
+budget:
+  max_tool_calls: 36
+  max_reference_bytes: 196608
+evidence:
+  required: ["Repository and account identities", "Before/after status, resource URL and any authorized side effects"]
+output:
+  format: "Repository operation receipt with risk and verification record"
+  acceptance: ["No public exposure, release or permission change without authorization", "No credentials in command arguments, logs or outputs"]
