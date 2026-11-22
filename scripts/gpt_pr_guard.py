@@ -177,9 +177,13 @@ def _get_json(url: str, token: str | None) -> dict | list:
     try:
         with urlopen(request, timeout=20) as response:
             return json.load(response)
-    except (HTTPError, URLError, TimeoutError, ValueError) as exc:
-        # No full URLs, token, response bodies or headers in logs.
-        raise EvidenceError(f"GitHub evidence fetch failed ({type(exc).__name__})") from None
+    except HTTPError as exc:
+        # Include only the status code, not URL, token or body.
+        raise EvidenceError(f"GitHub HTTP {exc.code}") from None
+    except (URLError, TimeoutError) as exc:
+        raise EvidenceError(f"GitHub network unavailable ({type(exc).__name__})") from None
+    except ValueError:
+        raise EvidenceError("GitHub response JSON malformed") from None
 
 
 def _pages(url: str, token: str | None, key: str | None = None) -> list:
@@ -258,6 +262,25 @@ def collect_live_stable(repository: str, token: str | None, attempts: int = 3) -
     raise EvidenceError("Unreachable snapshot retry path")
 
 
+def evidence_reason(exc: BaseException) -> str:
+    """Safe machine-readable incident code, never echo raw source content."""
+    if isinstance(exc, EvidenceError):
+        msg = str(exc)
+        if "moved during scan" in msg:
+            return "SNAPSHOT_RACE"
+        if msg.startswith("GitHub HTTP "):
+            code = msg[len("GitHub HTTP "):]
+            return "GITHUB_HTTP_" + code if code.isdigit() else "GITHUB_HTTP_UNKNOWN"
+        if msg.startswith("GitHub network"):
+            return "GITHUB_NETWORK_UNAVAILABLE"
+        if "Pagination limit" in msg:
+            return "EVIDENCE_TRUNCATED"
+        return "INVALID_OR_INCOMPLETE_EVIDENCE"
+    if isinstance(exc, (OSError, json.JSONDecodeError)):
+        return "LOCAL_EVIDENCE_READ_FAILED"
+    return "UNEXPECTED_EVIDENCE_FAILURE"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -285,7 +308,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{f['severity'].upper()} {f['code']} PRs={f['prs']} {f['detail']}")
         return 2 if args.strict and not report["ready_for_merge"] else 0
     except (EvidenceError, OSError, json.JSONDecodeError) as exc:
-        print(f"EVIDENCE_UNKNOWN: {type(exc).__name__}: {exc}", file=sys.stderr)
+        reason = evidence_reason(exc)
+        incident = {"schema_version": 1, "status": "evidence_unknown",
+                    "reason_code": reason,
+                    "captured_at_utc": datetime.now(timezone.utc).isoformat(),
+                    "not_authorized_to_merge": True}
+        # Preserve a machine-readable incident artifact on a failed scan too.
+        # Do not serialize raw exceptions: paths/URLs may contain secrets.
+        if args.output:
+            try:
+                args.output.write_bytes(canonical_bytes(incident) + b"\n")
+            except OSError:
+                print("EVIDENCE_UNKNOWN: reason=REPORT_WRITE_FAILED", file=sys.stderr)
+        print(f"EVIDENCE_UNKNOWN: reason={reason}", file=sys.stderr)
         return 3
 
 
