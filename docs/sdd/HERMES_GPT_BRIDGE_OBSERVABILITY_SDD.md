@@ -1,6 +1,6 @@
 # Hermes ↔ GPT Bridge: observable, recoverable, multi-agent execution (SDD v0.1)
 
-**Date:** 2026-11-22. **Status:** design proposal + implementation gate; NOT a claim of production readiness.
+**Date:** 2026-11-22. **Status:** design proposal, separate proof-of-concept patches and offline diagnostics; NOT production-ready. **Architecture update:** modern upstream is the intended deployment base; the April fork is only a comparison/test fixture.
 **Owner area:** GPT interface/transport, observability, failure diagnosis. Other workstreams own `autopilot/ledger.py` and `agent/skill_harness.py`; do not duplicate them.
 **Base:** `Podtverzhdeno/hermes-agent` main at `7e9100901819ee44c16b4ddcb79a6bcb7909f591` (observed 2026-11-22). Separate in-progress branches: `feat/autopilot-durable-ledger-20261122` and `feat/skill-harness-contracts-20261122`.
 
@@ -29,43 +29,46 @@ For every accepted request, an operator can answer within a bounded time:
 
 **Invariants**: no silent terminal success on an exception; no execution without an identifiable run; no mutable side effects without idempotency/effect evidence; no two writers for one leased step; no unbounded retries; no sensitive prompt/cookie/token content in default logs.
 
-## 2. Architecture and boundaries
+## 2. Architecture and boundaries (superseded after upstream parity audit)
+
+**Important source-verification update, 2026-11-22:** original architecture assumed this April fork needs a new durable command ledger and scheduler. That assumption is **superseded**. Official NousResearch/hermes-agent v0.23.3 (released 2026-11-20) and pinned upstream main at `da8e7d71abe4ac165760cd813c0c18c53e697b90` already provide native run admission, scoped run idempotency, event SSE/status/stop/approval/unknown-resolution, Kanban task ownership and dispatch, turn leases, a delivery ledger, and lifecycle diagnostics. The fork's main remains at `7e9100901819ee44c16b4ddcb79a6bcb7909f591` (April 2026). This is verified in source, **not in the user's local installation**. Reference: [upstream-parity-and-pr-coordination-2026-11-22.md](../sdd/gpt-hermes-bridge/upstream-parity-and-pr-coordination-2026-11-22.md) on PR #5; it is on another unmerged branch and must not be treated as part of this branch.
 
 ```text
-GPT UI extension (optional) ─┐
-                            ├── Gateway ingress / protocol normalization
-OpenAI API/SDK client ──────┘          │
-                                      v
-                           Trace + command envelope
-                          [run_id, trace_id, step_id,
-                           attempt, deadline, idem_key]
-                                      │
-                           Durable command ledger*
-                          (atomic claim / CAS / lease)
-                                      │
-                           Scheduler / admission gates
-                      [quota, concurrency, permission, human]
-                                      │
-                          Hermes AIAgent + tools + LLM
-                                      │
-                             Effect verifier / outbox
-                                      │
-                           Checkpoint + result publication
-                                      │
-                           Diagnostics / incident log / UI
-
-* Reuse autopilot/ledger.py after its API and tests are reviewed; no
-  premature import of another agent's unmerged implementation.
+Authorized GPT extension or OpenAI-compatible client
+                  |
+             Capability discovery
+        GET /v1/capabilities + profile check
+                  |
+       Thin authenticated bridge/client
+       (browser lifecycle, ack, reconnection)
+                  |
+           POST /v1/runs (idem key)
+                  |
+  Native upstream Hermes run state + idempotency
+                  |
+     Existing turn lease / effect controls
+       / Kanban scheduler / delivery ledger
+                  |
+         Tools, models, external systems
+                  |
+ GET /v1/runs/{id} + /events + approvals/stop
+                  |
+    Read-only causal event auditor
+    (derived data, no state mutation)
+                  |
+       Operator: evidence + why stopped
 ```
 
-Event publication and effect commit require an outbox/reconciliation protocol; merely writing a log *after* calling a tool leaves a crash gap. Store command + intent before dispatch; record acknowledgment and observable external effect afterward. If the process dies between these, mark `OUTCOME_UNKNOWN`, not `FAILED` and never blindly replay.
+**One authoritative owner per domain**:
+- Native upstream `/v1/runs` is the authority for run admission, state, controls and run idempotency; inspect the deployed `GET /v1/capabilities` before trusting its availability or durability.
+- Native upstream Kanban is the authority for multi-agent work claims, dependencies, dispatch and review. `autopilot/ledger.py` in PR #1 is only an isolated prototype and MUST NOT become a competing scheduler.
+- GPT bridge owns browser/document identity, consent, capability/version handshake, UI send evidence, reconnection cursor and redacted diagnostics. The bridge MUST NOT independently reclassify a run as successful or approve an effect.
+- `gateway/gpt_bridge_event_audit.py` is a bounded, offline-only interpretation of existing SSE `event`, `seq` and optional status. It accepts no credentials and does not call tools, change statuses, or replay browser actions. It must not be used as execution truth.
+- The April-fork `gateway/platforms/api_server.py` and `gateway/gpt_bridge_diagnostics.py` edits in this draft PR are **NOT approved for merging** before upstream parity + conflict resolution with PRs #5/#6. Isolate worthwhile tests and privacy rules, not the stale handler implementation.
+- Historical unpacked Windows extension path / filenames and conditional CDP/MV3 risks are recorded in [HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md](HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md). Local source bytes and runtime behavior have not been verified.
+- Native EventStream is bounded; gaps and `replay.truncated` must be reported explicitly. SSE EOF/keepalive are **not** evidence of run completion; an authenticated status query is required.
 
-Core components and ownership:
-- `gateway/platforms/api_server.py`: HTTP input, auth, SSE lifecycle, error signaling. This branch may patch narrowly here.
-- `gateway/gpt_bridge_diagnostics.py`: structured, content-free operational events; a compatibility adapter, NOT source of durable truth.
-- `autopilot/ledger.py` (other branch): proposed durable execution store, pending review of exact schema and transaction guarantees.
-- Browser bridge (later): extension background/content-script/Native Messaging or trusted local process; no direct untrusted origin access to a CDP endpoint.
-- Operators: `hermes doctor`, future `hermes runs explain <run_id>` and `hermes runs resume <run_id>` only once backed by verified state.
+Do not publish new operators such as `hermes runs resume` unless that exact command is supported by the deployed Hermes version. Use existing, documented native run controls after checking their permissions. Crash uncertainty about remote side effects still requires effect verification: a local ledger commit alone cannot create exactly-once execution of arbitrary external actions.
 
 ## 3. Atomic event contract
 
@@ -247,7 +250,7 @@ Next operator record must include SHA, test command, result counts, and limitati
 
 **ADR-002 (accepted):** Diagnose with structured content-free run and step events; keep event types independent from proprietary models.
 
-**ADR-003 (provisional):** The existing `autopilot/ledger.py` branch should be the authoritative durable layer after code review. No duplicate ledger in this branch.
+**ADR-003 (SUPERSEDED by ADR-007):** Do not install the `autopilot/ledger.py` prototype as another run/task authority. Native modern upstream run and Kanban stores remain the single source of truth; build adapters for missing diagnostic data instead.
 
 **ADR-004 (accepted):** Use one GitHub feature branch per parallel agent area, PR-based integration and explicit ownership/rebase.
 
@@ -255,6 +258,14 @@ Next operator record must include SHA, test command, result counts, and limitati
 
 **ADR-006 (accepted):** A GPT integration may not infer a successful tool action merely from transport success or absence of exceptions.
 
+**ADR-007 (accepted after source audit):** Deploy against a pinned recent official upstream with its native `/v1/runs` and Kanban. The April-fork patch is a historical regression fixture, not the production target; any upstream migration requires compatibility tests and profile backup/restore.
+
+**ADR-008 (accepted):** Source-level native SSE diagnostics are read-only derived projections. Never elevate an incomplete event stream into a trusted terminal status. Maintain `run_id`, `seq`, `Last-Event-ID`, replay-truncation diagnostics and separate authoritative status.
+
+**ADR-009 (accepted):** Overlapping PRs #4/#5/#6 editing `gateway/platforms/api_server.py` must not merge blindly. They need one owner, upstream parity reconciliation, targeted transplant only, and CI-backed review.
+
 **Implementation snapshot (2026-11-22):** Branch now adds `gateway/gpt_bridge_diagnostics.py`, extends `gateway/platforms/api_server.py` with 409/422 rejection, `X-Hermes-Run-Id` and explicit `hermes.error` SSE event on execution failure, plus `tests/gateway/test_gpt_bridge_diagnostics.py`. Test results are **not yet verified** here; this note is not an assertion that the branch is deployable. The next commits also add 409 `idempotency_outcome_unknown` tombstones, browser-readable diagnostic headers, and non-stream result-error classification. These are per-process contract measures, not proof of durable effect safety.
+
+**Audit note:** Offline `gateway/gpt_bridge_event_audit.py` and `tests/gateway/test_gpt_bridge_event_audit.py` added as branch-isolated diagnostics and synthetic run-state contract tests. These are not a live monitor. 
 
 **Unresolved:** Exact extension deployment/package (Chrome MV3, VS Code, local native bridge, or API client), current process topology, production logs, user consent prompts for browser UI control, and security/compliance constraints. These must be established from actual workspace evidence rather than assumed.
