@@ -171,3 +171,15 @@ API workers should distinguish:
 - OpenTelemetry GenAI tool spans provide a model for instrumentation without logging sensitive arguments/results by default. The error.type attribute should remain low-cardinality. See https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md .
 
 The practical product objective should be stated as a measurable rollout gate: in a representative fault-injection suite, every accepted run has an explainable last trusted state and explicit unknown status on ambiguous effects; no false SUCCEEDED, no duplicate unapproved effect, no irreversible write on stale fence, and no release approval from stale CI evidence. This is a **proposed criterion**, not an achieved production SLO.
+
+
+
+## 12. Live GitHub stacked PR incident — exact parent drift
+
+Read-only connector queries around 2026-11-22T10:55Z, repeated against exact current refs, found:
+- PR #17 child HEAD f3e313f7dcbc36ff9a1399d78387e7d60730fefc vs PR #12 parent HEAD 5812f615d0deef4cab7fe9c29c30e0c5086f1fd4: GitHub compare returned status=diverged, behind_by=8, ahead_by=14. Therefore #17 lacks eight current parent commits at that snapshot. Invalidate any acceptance evidence that assumes it includes the latest #12; reconcile and run exact combined-head tests. A targeted GitHub PR #17 comment recorded this finding (comment id 7078121235). This does not prove a production failure or authorize merging.
+- PR #23 child HEAD fac05bb452f4aee70fc02d421376f85a64b9a4ee vs #12 parent HEAD 5812f615d0deef4cab7fe9c29c30e0c5086f1fd4: status=ahead, behind_by=0, ahead_by=1. No missing-parent ancestry evidence at that pinned pair; NOT a release pass.
+- PR #11 child HEAD b104938fea428669fa6f11a513d7c42de8254193 vs #4 parent HEAD f2373ed5551fe47168b014b08d63560a6bb0d68a: status=ahead, behind_by=0, ahead_by=6. NOT proof that the gateway can merge safely.
+- PR #10 targets the intentionally isolated snapshots/autopilot-ledger-6c0d2e-20261122 branch rather than an open PR. Its PR description explicitly documents that choice. PARENT_NOT_IN_SNAPSHOT means manual graph review for eventual integration, not an accusation of bad code.
+
+Open Draft PR count reached 30 in the later connector scan. These are deliberately *revision-pinned, time-local findings*. Re-run all comparisons after parent/child updates; do not promote stale findings into global status.
