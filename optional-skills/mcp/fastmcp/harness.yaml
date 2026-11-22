@@ -1,0 +1,23 @@
+# Advisory-only per-skill contract; does not grant tools or permissions.
+schema_version: 1
+skill: fastmcp
+activation:
+  when: ["Scaffold or implement Python MCP tools or resources using FastMCP","Validate typed MCP server schemas and local tool invocation before deployment"]
+  not_when: ["Only call an existing MCP server without changing its implementation","Configure Hermes MCP client discovery for a server that already exists"]
+capabilities:
+  tools: ["python","terminal","fastmcp"]
+  side_effects: external_write
+  approval_required: ["Install dependencies, register client configurations or open a network listener","Publish a public endpoint, connect production credentials or deploy changes"]
+lifecycle:
+  preflight: ["Check FastMCP and Python versions, intended protocol and transport","Define tool authorization, input validation, secrets policy and network scope"]
+  execute: ["Build small typed tool schemas and read-only defaults in an isolated workspace","Use tested templates and prevent untrusted prompt/resource content from becoming policy"]
+  verify: ["Inspect generated schema and invoke each tool with valid and invalid inputs","Check auth failure, transport isolation, cleanup and redacted errors"]
+  recover: ["On failed deployment leave existing client config unchanged","Close test servers and restore only agent-owned modifications"]
+budget:
+  max_tool_calls: 42
+  max_reference_bytes: 196608
+evidence:
+  required: ["Pinned runtime versions, schema inventory and invocation traces","Authorized deployment receipt or explicit local-only test result"]
+output:
+  format: "MCP server build and validation matrix with deployment boundaries"
+  acceptance: ["No unapproved server exposure or dependency installation","No unexecuted integration tests claimed as successful"]
