@@ -104,7 +104,7 @@ Score/10 = 2 × (0.30 impact + 0.25 reliability + 0.20 feasibility + 0.15 eviden
 
 ## 9. Phase gates and tests
 
-**Phase 0:** side-effect-free event schema and trace doctor in independent prototype, with deterministic tests. Tested offline: 43 unittest cases, including 100 synthetic isolated runs; this is NOT live 100-worker load validation or an integrated GitHub CI run. During testing fixed two reproducible logic classes: a non-string kind raised an uncontrolled exception, and false "reconnected" when only one of three browser channels recovered. Also corrected cross-emitter event-ID collision handling. All 43 final tests pass locally.
+**Phase 0:** side-effect-free event schema and trace doctor in independent prototype, with deterministic tests. Tested offline: 46 unittest cases, including 100 synthetic isolated runs; this is NOT live 100-worker load validation or an integrated GitHub CI run. During testing fixed two reproducible logic classes: a non-string kind raised an uncontrolled exception, and false "reconnected" when only one of three browser channels recovered. Also corrected cross-emitter event-ID collision handling. All 43 final tests pass locally.
 
 **Phase 1:** authenticated collector, bounded durable outbox/inbox, exact authorization, retention/redaction, collector offsets and restart recovery; integrate with shared Autopilot ledger without modifying its branch in parallel. Fault inject after event persist / before ack.
 
@@ -117,6 +117,12 @@ Score/10 = 2 × (0.30 impact + 0.25 reliability + 0.20 feasibility + 0.15 eviden
 ## 10. Incident runbook / change log contract
 
 Each incident: UTC collector time and offset, task/run/attempt/emitter/operation IDs, exact revision, last authenticated event, observed symptoms, competing hypotheses, confidence, side-effect ambiguity, permissible containment, owner decision, fix commit, regression test and rollback evidence. For critical ambiguity escalate to human; no fabricated "fixed" from lack of alerts. Every change to this SDD should state observed evidence vs proposed scope.
+
+## 10a. Diagnostic hardening: bounded ingestion (2026-11-22)
+
+**Observed and fixed:** Previous JSONL iteration materialized an entire line before checking its size; a crafted newline-free file could consume excessive memory even with an eventual size rejection. The offline trace doctor now uses bounded readline(MAX_LINE_BYTES + 1), caps total input at 64 MiB and caps events at 100,000, with explicit rejection of invalid overrides. Three regression tests were added. Local phase-0 test count increased to **46 passed**. This fixes an offline parser resource-exhaustion path; it does not implement a collector-level service quota.
+
+**Correction to completion claims:** Reported artifact/verification signals in a raw JSONL are not independently trusted. Event shape, SHA match and digest length are necessary conditions, never substitutes for authenticated collection and receipt validation.
 
 ## 11. References
 
