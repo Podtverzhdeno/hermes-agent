@@ -74,3 +74,17 @@ In a later strict pass, the observer's first version treated any event with the 
 **Repair:** map each retained unresolved child to its missing parent, remove both forward and reverse references whenever a child is evicted or its parent arrives, and never turn ordinary causal incompleteness into an artificial permanent ingestion halt. The observer still marks an absent parent as incomplete evidence, **not worker failure**. This is a local, non-durable telemetry policy.
 
 **Repro and validation:** new `test_many_missing_parents_never_starve_bounded_observer` streams 50 events with unknown parents through a two-event bounded cache and demands accepted events throughout, with at most two unresolved links. Full isolated observer set now **43/43 pytest tests passed** and `compileall` passed. Exact local Git blob SHA matched GitHub after patch: observer `1eca46bb647026c4c9fc43e6ec317c9e3d8cbce2`, tests `f660e0d3846dbf0afd113cb54b81ee5ecddd1f47`. **GitHub full-suite CI and actual browser/Windows run are separate acceptance gates**, not proven by these checks.
+
+## GitHub CI root-cause record: do not conflate isolated and full-suite verdicts
+
+**Evidence:** Tests workflow run [45015318217](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45015318217), exact candidate SHA `d60cca4ef2d279057b86c65ef6c504a9d7dbd09b`, job `137186336707`: **FAILED** after 176.01 s; 7,543 passed, 171 skipped, 28 failed, 119 warnings. All listed failure paths are outside `tests/gateway/test_gpt_bridge_observer.py`; this observation does **not prove** that the failures predate the PR because no clean same-environment main baseline has yet been reproduced.
+
+**Failure classes from raw Actions log:**
+- Multiple older `tests/test_streaming.py`, `test_run_agent.py`, `test_context_token_tracking.py`, `test_surrogate_sanitization.py` cases fail because the SDK initialization sees no OpenAI credentials. The test workflow explicitly clears `OPENAI_API_KEY` to avoid real provider calls. This is a **test isolation/fixture contract failure candidate**, not a request to add live API secrets.
+- `tests/test_codex_execution_paths.py` expects a mocked 401-refresh recovery but receives a missing-model validation error.
+- `tests/agent/test_auxiliary_client.py` vision fallback asserts a nonexistent selected fallback.
+- Three `tests/tools/test_file_read_guards.py` cases return a 30-second execution timeout under the full parallel run.
+
+**Safe remediation policy:** Never inject real provider credentials into public PR CI, never delete failures from the release-gating suite or relabel it green, and never claim zero regressions without comparing to a pinned baseline. Test suites should use explicit SDK mocks and limit resource contention. Our PR adds an additional **isolated observer contract** workflow `.github/workflows/gpt-bridge-observer-contract.yml` running the 43 observer cases with the same dependency profile and no network credentials. Its green status, when confirmed, is **component-only**, not production deployment approval. The general Tests workflow remains a separate, currently failed gate pending independent root-cause and upstream compatibility work.
+
+**Supply-chain false positive closed:** earlier risk scanner flagged syntactically co-located `subprocess.run(... input=...encode())` in test-only JSON stdin. We split encoding from the subprocess call, left the scanner unchanged, and observed succeeding `Supply Chain Audit` jobs on later exact SHAs. Future SHA must be checked again.
