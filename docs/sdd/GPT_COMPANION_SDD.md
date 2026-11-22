@@ -202,7 +202,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **42 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **45 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -250,3 +250,15 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 ### ADR-018: Heartbeat vs substantive progress у нескольких источников (P0 implemented)
 
 Таймер прогресса по worker-source больше не продлевается событиями gateway/observer, даже если они приходят «свежими» (`llm.response_received` от другого source). Иначе активная интеграция маскирует застывший полезный процесс. Тест `test_unrelated_gateway_events_cannot_mask_worker_stagnation`. Это консервативная эвристика: подтверждение успеха инструмента остаётся на независимом verifier, не на эвристике активности.
+
+### ADR-019: Проба 100 независимых источников (P0 synthetic smoke)
+
+Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_counted` использует 16 concurrent writer threads для приёма 100 независимых source-id, затем heartbeat 10 из 100: ожидаемый `PARTIAL_WORKER_OUTAGE` и точное число 90 stale источников без потери событий или нарушений SHA-chain. Это **не** 100 работающих LLM-агентов, не сквозная проверка API и не заявка на throughput/SLO; требуются отдельные multi-process + restart/fault-injection bench и реальные latency/lock метрики перед продакшн запуском.
+
+### ADR-020: Время wall-clock не является монотонным (P0 implemented)
+
+Секунды жизни и стадии вычисляются по `received_at` локального journal server, а не по клиентскому wall time. Изменение системного времени назад на >1 c внутри последовательности событий либо между последним событием и проверкой маркируется `CLOCK_SKEW_DETECTED`, следующая операция — `CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC`. Это предотвращает ошибочное объяснение сбоев как «worker умер» при сбое NTP/часов. Ограничение: нет настоящего monotonic-clock timestamp, переживающего перезапуск хоста, поэтому lease и budget гарантии должны оставаться у trusted Autopilot coordinator; измерение времени после рестарта требует независимого времени/boot ID.
+
+## 14. Долговременная передача задач между десятками агентов
+
+Контракт независимых инженерных агентов, owner/fence, инцидентная форма, правила передачи смены и фактически подтверждённые/неподтверждённые гарантии вынесены в [`GPT_COMPANION_AGENT_MANDATE.md`](./GPT_COMPANION_AGENT_MANDATE.md). Этот документ следует читать при каждом новом агентском запуске — **не** заменять его доверие устным отчётом предшественника.
