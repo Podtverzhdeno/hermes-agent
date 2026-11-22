@@ -93,6 +93,9 @@ The offline audit retains validated event metadata in memory until exit; it does
 | I-14 | Metadata snapshot does not prove who produced a receipt | all findings labelled untrusted/offline | authenticated ingestion/OS trust |
 | I-15 | An expired lease cannot authorize future external writes | **NOT enforced here** | scoped tool gateway fence check immediately before effect |
 | I-16 | A single authoritative commit includes task transition and audit outbox | **NOT enforced here** | Autopilot ledger or chosen upstream lifecycle owner |
+| I-17 | Empty observation is incomplete, never a clean health signal | `EMPTY_SNAPSHOT`, nonzero exit | trusted exporter + snapshot coverage proof |
+| I-18 | Contradictory terminal outcomes within one attempt cannot be silently accepted | critical contradiction; no attempt identity = incomplete | task transition CAS and attempt identity |
+
 
 **Causality rules:** wall time may differ or move backward; order by producer sequence and explicit `causation_event_id`. Same-producer `ack` sequence must exceed the related reservation's. Cross-producer acknowledgement must be reachable by an explicit causal chain in the supplied snapshot. An absent cross-producer edge makes the result incomplete or unknown, not success. Partial exports can falsely appear to lack parents/acknowledgements: show *incomplete evidence* rather than asserting a definitive remote state.
 
@@ -148,7 +151,7 @@ For 30+ agents, partition nonconflicting projects and limit global provider quot
 
 ## 9. Fault-injection evaluation plan (not a pass claim)
 
-**Implemented offline test groups:** exact duplicate vs collision; sequence gaps and 30-producer independence; out-of-order clocks, missing parents and causal cycles; malformed/deeply nested/duplicate-key JSON and null required occurrence timestamp; payload-field rejection and size limits; reserved/acked/unknown/reconciled effects; receipt and causal-link validation; cross-fence replay; misleading success with stale verifier; two claimants on same fence; stop reason observations; capped exports.
+**Implemented offline test groups:** exact duplicate vs collision; sequence gaps and 30-producer independence; out-of-order clocks, missing parents and causal cycles; malformed/deeply nested/duplicate-key JSON and null required occurrence timestamp; payload-field rejection and size limits; reserved/acked/unknown/reconciled effects; receipt and causal-link validation; cross-fence replay; misleading success with stale verifier; two claimants on same fence; stop reason observations; capped exports, empty snapshots, conflicting terminal states scoped to attempt identity.
 
 **Next release gates:**
 
