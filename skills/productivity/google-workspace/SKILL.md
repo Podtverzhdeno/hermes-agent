@@ -1,7 +1,7 @@
 ---
 name: google-workspace
 description: Gmail, Calendar, Drive, Contacts, Sheets, and Docs integration via Python. Uses OAuth2 with automatic token refresh. No external binaries needed — runs entirely with Google's Python client libraries in the Hermes venv.
-version: 1.0.0
+version: 1.1.0
 author: Nous Research
 license: MIT
 required_credential_files:
@@ -17,6 +17,23 @@ metadata:
 ---
 
 # Google Workspace
+
+## Safety and evidence boundary
+
+Use an owner-connected and least-privileged Google identity. OAuth
+tokens, client secret JSON, authorization codes and refresh tokens must
+never be pasted into conversations, logged, committed or returned in
+tool output. Read operations and external writes are separate actions.
+Email sends, Calendar changes, Drive sharing and document edits require
+authorization of the exact target, recipients and parameters. Prefer
+stable resource IDs, ETags and idempotency controls when supported.
+If an API response is ambiguous, read back the remote resource before
+retrying; never send the same message twice simply because a call timed
+out. The sibling harness.json requires a real resource readback for
+completed write claims. A successful setup is not proof of a completed
+business operation.
+
+
 
 Gmail, Calendar, Drive, Contacts, Sheets, and Docs — all through Python scripts in this skill. No external binaries to install.
 
