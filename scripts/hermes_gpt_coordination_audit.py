@@ -111,8 +111,12 @@ def collect(repo: str, base: str = "main", prs_only: bool = False,
         # commit. Re-read the PR after pagination; if HEAD or base moved,
         # discard this inventory instead of attributing mixed files to a SHA.
         latest = _get(api + "/pulls/%d" % number, token)
+        initial_base_sha = (pr.get("base") or {}).get("sha")
+        latest_base_sha = (latest.get("base") or {}).get("sha")
         if (latest.get("head", {}).get("sha") != sha or
-                latest.get("base", {}).get("ref") != base):
+                latest.get("base", {}).get("ref") != base or
+                (initial_base_sha is not None and
+                 latest_base_sha != initial_base_sha)):
             raise AuditError("PR moved during inventory: %d" % number)
         paths = [f.get("filename") for f in files]
         entries.append({"id": "PR-%d" % number, "head": sha, "files": paths,
@@ -151,6 +155,12 @@ def collect(repo: str, base: str = "main", prs_only: bool = False,
                 continue
             entries.append({"id": "BRANCH:" + name, "head": sha, "files": paths,
                             "title": "", "origin": repo, "draft": True})
+    # A changing base can invalidate all earlier PR file comparisons even
+    # if individual heads did not move. No global REST snapshot transaction
+    # exists, but we can detect common drift and fail closed.
+    latest_base = _get(api + "/branches/" + quote(base, safe=""), token)
+    if (latest_base.get("commit") or {}).get("sha") != base_sha:
+        raise AuditError("Base branch moved during inventory")
     return {"schema_version": 1, "source": "GITHUB_REST",
             "repo": repo, "base": base, "base_sha": base_sha,
             "collected_at": datetime.now(timezone.utc).isoformat(),
@@ -243,6 +253,11 @@ def main(argv=None) -> int:
         if args.snapshot:
             with open(args.snapshot, encoding="utf-8") as f:
                 snapshot = json.load(f)
+            if not isinstance(snapshot, dict):
+                raise AuditError("Snapshot must be an object")
+            # A locally supplied JSON file is NOT source-authenticated even
+            # if the file itself falsely claims source=GITHUB_REST.
+            snapshot["source"] = "OFFLINE_INPUT_UNVERIFIED"
         else:
             snapshot = collect(args.repo, args.base, args.prs_only,
                                os.environ.get("GITHUB_TOKEN"))
