@@ -4,19 +4,9 @@ on:
   push:
     branches:
       - fix/gpt-companion-terminal-causality-20261122-r01
-    paths:
-      - "gpt_companion/**"
-      - "tests/gpt_companion/**"
-      - "pyproject.toml"
-      - ".github/workflows/gpt-companion-contracts.yml"
   pull_request:
     branches:
       - feat/gpt-companion-event-observer-sdd-20261122
-    paths:
-      - "gpt_companion/**"
-      - "tests/gpt_companion/**"
-      - "pyproject.toml"
-      - ".github/workflows/gpt-companion-contracts.yml"
   workflow_dispatch:
 
 permissions:
