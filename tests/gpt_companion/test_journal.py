@@ -212,3 +212,51 @@ def test_invalid_observation_clock_fails_closed(context):
     for invalid in (float("nan"), float("inf"), float("-inf"), -1):
         with pytest.raises(ValueError, match="observation clock"):
             db.assess("run-1", now=invalid)
+
+
+def test_gateway_traffic_cannot_mask_known_dead_worker(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    db.ingest(event(1, "run.accepted", source="gateway"))
+    clock.jump(140)
+    db.ingest(event(2, "llm.response_received", source="gateway"))
+    result = db.assess("run-1")
+    assert result["state"] == "WORKER_UNRESPONSIVE"
+    assert result["stale_worker_sources"] == ["worker-A"]
+    assert result["worker_sources_count"] == 1
+
+
+def test_partial_outage_among_independent_workers_is_visible(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    db.ingest(event(1, "worker.started", source="worker-B"))
+    clock.jump(140)
+    db.ingest(event(2, "worker.heartbeat", source="worker-B"))
+    result = db.assess("run-1")
+    assert result["state"] == "PARTIAL_WORKER_OUTAGE"
+    assert result["stale_worker_sources"] == ["worker-A"]
+    assert result["worker_sources_count"] == 2
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("INCOMPATIBLE_HERMES_VERSION", "STOP_INTEGRATION_AND_NEGOTIATE_VERSION"),
+    ("MCP_SESSION_TERMINATED", "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX"),
+    ("OUTBOX_BACKPRESSURE", "PAUSE_PRODUCER_AND_CHECK_STORAGE_LIMIT"),
+    ("CORS_REJECTED", "CHECK_ALLOWED_EXTENSION_ORIGIN"),
+])
+def test_gateway_failure_codes_yield_specific_diagnostic(context, reason, expected):
+    db, _ = context
+    db.ingest(event(1, "run.reported_failed", reason_code=reason))
+    assert db.assess("run-1")["next_action"] == expected
+
+
+def test_unrelated_gateway_events_cannot_mask_worker_stagnation(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    clock.jump(360)
+    db.ingest(event(2, "worker.heartbeat", source="worker-A"))
+    db.ingest(event(1, "llm.response_received", source="gateway"))
+    result = db.assess("run-1")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["progress_age_seconds"] == 360
+    assert result["live_age_seconds"] == 0
