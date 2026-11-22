@@ -367,6 +367,23 @@ Example report (illustrative, **not real telemetry**):
 - **D-008 DEFER:** autonomous prompt self-optimization; without independent evaluation it can optimize away checks.
 - **D-009 OPEN:** independently running user's browser extension path/manifest and Local_WorkSpace connectivity require source verification; no fabricated integration claim.
 
+## 12.1 Upstream-drift analysis (observed on 2026-11-22)
+
+A direct comparison with `NousResearch/hermes-agent` (latest fetched GitHub file snapshots, **not yet an integration test**) shows material architecture drift:
+
+| Subsystem | Old fork | Current upstream snapshot | Recommendation |
+|---|---|---|---|
+| `tools/interrupt.py` | Process-global `threading.Event` | Set of per-thread interrupt IDs, lock, `acting_for_tid` ContextVar, explicit yield and reason tracking | Port/compare upstream approach with process/child propagation tests; avoid a second custom system |
+| `acp_adapter/server.py` | Basic concurrent executor, global permission setter, no per-session runtime turn guard | Session runtime locks, queued prompts, context-scoped interaction, more detailed streaming lifecycle | Review a selective upstream rebase instead of independently reimplementing queue semantics |
+| `tools/approval.py` | Noninteractive auto-approve and ambient YOLO bypass unless explicitly scoped | Context-aware interactive resolver and additional approval context | Audit current upstream trust model, then backport only reviewed necessary fixes |
+| ACP stop reporting | Executor error may be returned as `end_turn` | Some upstream paths also return `end_turn` following errors | Follow protocol v1/v2 semantics; do not label failure as success |
+
+Do not treat file-sha differences alone as proof of an upstream fix's correctness. Inspect upstream tests, deployment compatibility and current user extension bridge before applying. The isolated ACP draft PR #3 protects the old fork and remains draft; if upstream is rebased, reconcile rather than blindly stacking both designs.
+
+**ACP protocol compliance risk:** the fork's `acp_adapter/server.py` catches executor/agent errors and can return `PromptResponse(stop_reason="end_turn")`, making a failed execution look like a successful turn. ACP v1 defines `end_turn`, `max_tokens`, `max_turn_requests`, `refusal`, and `cancelled`; v2 adds `error`. A v1 implementation should surface a true RPC error for unexpected execution failure rather than invent an incompatible stop reason. Cancellation must remain `cancelled`. Version negotiation and log correlation are mandatory before changing this behavior.
+
+**Potential apparent hang:** after the worker has returned, unbounded asynchronous `session_update` or usage-update emission may delay the ACP prompt response. Independently measure `agent_finished`, `session_update_sent`, `client_acked` and `prompt_response_sent` spans; distinguish a blocked UI update from a still-running model. Avoid dropping final usage events without recording an observability gap. This scenario is consistent with an upstream issue report, but **not yet reproduced on the owner's installation**.
+
 ## 13. Primary sources (selection, not an exhaustive literature claim)
 
 - Chrome MV3 service-worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
