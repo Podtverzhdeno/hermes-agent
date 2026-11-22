@@ -224,6 +224,37 @@ class EventJournal:
             rows = db.execute("""SELECT event_json,received_at,sequence,source
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
+            # New attempts cannot erase old reservations. Keep previous attempts
+            # scoped by attempt; an ACK in a later attempt must not clear an
+            # earlier attempt's possibly executed external effect.
+            prior_effect_rows = db.execute("""SELECT attempt, event_json
+                FROM events WHERE run_id=? AND attempt<? AND
+                kind IN ('tool.effect_reserved', 'tool.effect_acknowledged',
+                         'tool.effect_not_executed') ORDER BY position""",
+                (run_id, a)).fetchall()
+        prior_reserved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        prior_resolved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        for item in prior_effect_rows:
+            old_event = json.loads(item["event_json"])
+            key = (item["attempt"], old_event["action_id"])
+            origin = (old_event["source"], old_event["sequence"])
+            if old_event["kind"] == "tool.effect_reserved":
+                prior_reserved.setdefault(key, []).append(origin)
+            else:
+                prior_resolved.setdefault(key, []).append(origin)
+        prior_unknown: list[dict[str, Any]] = []
+        for (attempt_no, action_id), reservations in sorted(prior_reserved.items()):
+            resolutions = prior_resolved.get((attempt_no, action_id), [])
+            # Identical events replay only once in the journal. Multiple
+            # reservations/resolutions, missing acknowledgements or impossible
+            # same-source causal order require independent reconciliation.
+            good_resolution = (
+                len(reservations) == 1 and len(resolutions) == 1 and
+                (reservations[0][0] != resolutions[0][0] or
+                 reservations[0][1] < resolutions[0][1])
+            )
+            if not good_resolution:
+                prior_unknown.append({"attempt": attempt_no, "action_id": action_id})
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Server receipt timestamps can jump backward after NTP/time changes.
         # In that case time-based liveness diagnosis is unreliable.
@@ -322,7 +353,10 @@ class EventJournal:
             key=lambda e: e["sequence"], reverse=True)
         reason = next((e["reason_code"] for e in failure_reports
                        if "reason_code" in e), "UNKNOWN")
-        if reserved and live_age >= liveness_timeout:
+        if prior_unknown:
+            # A new attempt is not a clean slate for earlier unknown writes.
+            state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_PREVIOUS_ATTEMPT_EFFECTS"
+        elif reserved and live_age >= liveness_timeout:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
@@ -352,10 +386,16 @@ class EventJournal:
             state, next_action = "RECENT_TELEMETRY", "CONTINUE_OBSERVING"
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
+                # Bounded display; count remains authoritative for diagnostics,
+                # not a trusted proof that a real external write was absent.
+                "prior_attempt_unresolved_effect_count": len(prior_unknown),
+                "prior_attempt_unresolved_effects": prior_unknown[:50],
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
                 "reported_reason_code": reason if state == "REPORTED_FAILED" else None,
                 "diagnostic_flags": sorted(
                     (["MISSING_SEQUENCES"] if missing else []) +
+                    (["PRIOR_ATTEMPT_EFFECT_UNKNOWN"] if prior_unknown else []) +
+                    (["PRIOR_EFFECT_LIST_TRUNCATED"] if len(prior_unknown) > 50 else []) +
                     (["CLOCK_REGRESSION"] if clock_reversed else []) +
                     (["EVENT_CAUSALITY_CONFLICT"] if contradictory else []) +
                     (["CROSS_SOURCE_TERMINALS"] if cross_source_terminal else []) +
