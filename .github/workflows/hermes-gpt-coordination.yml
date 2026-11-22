@@ -7,6 +7,13 @@ on:
       - 'tests/coordination/**'
       - 'docs/sdd/hermes-gpt-integration/**'
       - '.github/workflows/hermes-gpt-coordination.yml'
+  push:
+    branches:
+      - 'feat/gpt-integration-collision-gate-20261122'
+    paths:
+      - 'scripts/hermes_gpt_coordination_audit.py'
+      - 'tests/coordination/**'
+      - '.github/workflows/hermes-gpt-coordination.yml'
   workflow_dispatch:
 
 permissions:
