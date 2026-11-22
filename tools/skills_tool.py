@@ -772,7 +772,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         # never an arbitrary filesystem path. Reject traversal *before* any
         # SKILL.md can be read or credentials registered.
         if (not isinstance(name, str) or not name or len(name) > 512
-                or name != name.strip() or "\\" in name
+                or name != name.strip() or "\\" in name or ":" in name
                 or Path(name).is_absolute() or PureWindowsPath(name).is_absolute()
                 or any(part in ("", ".", "..") for part in name.split("/"))
                 or any(ord(c) < 32 or ord(c) == 127 for c in name)):
@@ -843,6 +843,23 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                 },
                 ensure_ascii=False,
             )
+
+        # A local name or configured external directory must never resolve
+        # into a different tree via a symlink. Reject before reading even
+        # SKILL.md, and certainly before registering credential passthrough.
+        try:
+            resolved_skill = skill_md.resolve(strict=True)
+            is_in_allowed_root = any(
+                resolved_skill.is_relative_to(search_root.resolve(strict=True))
+                for search_root in all_dirs if search_root.exists()
+            )
+        except (OSError, ValueError):
+            is_in_allowed_root = False
+        if not is_in_allowed_root:
+            return json.dumps({
+                "success": False,
+                "error": "Skill path escapes configured skill roots.",
+            }, ensure_ascii=False)
 
         # Read the file once — reused for platform check and main content below
         try:
