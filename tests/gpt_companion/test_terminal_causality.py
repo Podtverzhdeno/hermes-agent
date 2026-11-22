@@ -14,13 +14,13 @@ def journal(tmp_path):
     return EventJournal(tmp_path / "causal-events.sqlite3", clock=lambda: 1000.0)
 
 
-def emit(journal, seq, kind, *, source="worker", **fields):
+def emit(journal, seq, kind, *, source="worker", attempt=1, **fields):
     payload = {
         "schema_version": 1,
-        "event_id": f"evt-{source}-{seq}",
+        "event_id": f"evt-{attempt}-{source}-{seq}",
         "source": source,
         "run_id": "run-causal",
-        "attempt": 1,
+        "attempt": attempt,
         "sequence": seq,
         "kind": kind,
         **fields,
@@ -144,3 +144,61 @@ def test_clock_regression_does_not_authorize_effect_retry(journal):
     assert result["unresolved_effects"] == ["write-1"]
     assert "CLOCK_REGRESSION" in result["diagnostic_flags"]
     assert result["next_action"] == "MONITOR_NO_BLIND_RETRY"
+
+
+def test_previous_attempt_uncertain_write_survives_new_attempt(journal):
+    emit(journal, 1, "tool.effect_reserved", attempt=1, action_id="write-v1")
+    emit(journal, 1, "worker.started", attempt=2)
+    result = journal.assess("run-causal")
+    assert result["attempt"] == 2
+    assert result["state"] == "NEEDS_RECONCILIATION"
+    assert result["next_action"] == "RECONCILE_PREVIOUS_ATTEMPT_EFFECTS"
+    assert result["prior_attempt_unresolved_effect_count"] == 1
+    assert result["prior_attempt_unresolved_effects"] == [
+        {"attempt": 1, "action_id": "write-v1"}]
+    assert "PRIOR_ATTEMPT_EFFECT_UNKNOWN" in result["diagnostic_flags"]
+
+
+def test_prior_attempt_matching_claimed_resolution_no_longer_unmatched(journal):
+    emit(journal, 1, "tool.effect_reserved", attempt=1, action_id="write-v1")
+    emit(journal, 2, "tool.effect_acknowledged", attempt=1, action_id="write-v1")
+    emit(journal, 1, "worker.started", attempt=2)
+    result = journal.assess("run-causal")
+    assert result["state"] == "RECENT_TELEMETRY"
+    assert result["prior_attempt_unresolved_effect_count"] == 0
+    # This is only telemetry: a claimed ACK never certifies an external effect.
+    assert "SUCCEEDED" not in result["state"]
+
+
+def test_invalid_prior_effect_causal_order_remains_unknown(journal):
+    emit(journal, 1, "tool.effect_acknowledged", attempt=1, action_id="write-v1")
+    emit(journal, 2, "tool.effect_reserved", attempt=1, action_id="write-v1")
+    emit(journal, 1, "worker.started", attempt=2)
+    assert journal.assess("run-causal")["state"] == "NEEDS_RECONCILIATION"
+
+
+def test_latest_attempt_ack_cannot_clear_previous_attempt_write(journal):
+    emit(journal, 1, "tool.effect_reserved", attempt=1, action_id="same-id")
+    emit(journal, 1, "tool.effect_acknowledged", attempt=2, action_id="same-id")
+    assert journal.assess("run-causal")["prior_attempt_unresolved_effect_count"] == 1
+
+
+def test_prior_attempt_effect_display_is_bounded(journal):
+    for attempt in range(1, 53):
+        emit(journal, 1, "tool.effect_reserved", attempt=attempt,
+             action_id=f"action-{attempt}")
+    emit(journal, 1, "worker.started", attempt=53)
+    result = journal.assess("run-causal")
+    assert result["state"] == "NEEDS_RECONCILIATION"
+    assert result["prior_attempt_unresolved_effect_count"] == 52
+    assert len(result["prior_attempt_unresolved_effects"]) == 50
+    assert "PRIOR_EFFECT_LIST_TRUNCATED" in result["diagnostic_flags"]
+
+
+def test_prior_attempt_reservation_with_only_other_attempt_failure_is_unknown(journal):
+    emit(journal, 1, "tool.effect_reserved", attempt=1, action_id="write-v1")
+    emit(journal, 1, "run.reported_failed", attempt=2, reason_code="AUTH_DENIED")
+    result = journal.assess("run-causal")
+    assert result["state"] == "NEEDS_RECONCILIATION"
+    assert result["reported_reason_code"] is None
+    assert result["prior_attempt_unresolved_effect_count"] == 1
