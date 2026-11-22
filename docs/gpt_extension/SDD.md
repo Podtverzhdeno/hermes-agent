@@ -177,7 +177,7 @@ Safety precedence:
 4. Connector down, progress silence, queue eligibility and pending verification.
 5. No observed blocker never asserts running health or successful completion.
 
-A local isolated run of python -m unittest discover -s tests/gpt_extension -q passed 22/22 synthetic tests including empty required-evidence contract, wrong SHA, uncertain reserved effect, expiry, connector outage and ambiguous progress. This does **not** prove Hermes integration, real-model execution or GitHub CI success. A future trusted snapshot reader and permission service are required; this module cannot enforce external authorizations.
+A local isolated run of python -m unittest discover -s tests/gpt_extension -q passed **43/43** synthetic tests (27 task + 16 CDP), including empty required-evidence contract, wrong SHA, uncertain/unknown effect state, missing effect receipt, conflicting trusted pass/fail results, Autopilot `passed` evidence label, lease expiry, connector outage and UI canary false-success. This does **not** prove Hermes integration, real-model execution or GitHub CI success. A future trusted snapshot reader and permission service are required; this module cannot enforce external authorizations.
 
 ## 11. Planned integration in distinct ownership lanes
 
@@ -291,3 +291,17 @@ References:
 - https://github.com/Podtverzhdeno/hermes-agent/pull/15
 
 **This amendment records a substantive self-review correction: an earlier design treated the draft Autopilot ledger as the future single production source of truth without first verifying current upstream Kanban. That conclusion has been withdrawn.**
+
+
+## 17. Diagnostic contract hardening after independent ledger source review
+
+The initial pure task classifier was re-reviewed against the existing unactivated Autopilot PR #1 source. An important schema mismatch was found: its ledger records trusted evidence as `passed` / `failed` while the first classifier only accepted the string `success`. Now both canonical success labels map to evidence success, while an unrecognized label never grants success.
+
+More importantly, three **false-completion risks** are now fail-closed:
+- Any unrecognized external effect state returns `EFFECT_STATE_UNKNOWN` rather than being ignored.
+- A resolved effect (`acknowledged` or `not_executed`) without an independent receipt reference returns `EFFECT_RECEIPT_MISSING`.
+- Two trusted contradictory pass/fail receipts for one required evidence kind and exact revision return `CONFLICTING_VERIFICATION`; a single passing record cannot override a failed trusted record silently.
+
+These are **classifier invariants**, not authenticated checks. A caller still must supply a trustworthy, coherent snapshot, verify signer identity, bind receipts and approval to canonical task/run/fence, and never expose a self-asserted trusted bit as a model-facing tool. Revisions already terminal require independent reconciliation, not retroactive overwriting.
+
+The 43 offline synthetic tests pass in the isolated container. Full repository CI and a real Hermes/CDP/Windows run are separate release gates.
