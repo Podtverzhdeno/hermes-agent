@@ -96,3 +96,32 @@ class DiagnosticTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# Extended source-contract cases: effect receipts and Autopilot evidence names.
+class EvidenceAndEffectInvariantTests(unittest.TestCase):
+    def setUp(self):
+        self.base = Snapshot("task", "succeeded", "sha123", 1, 3, now=100.,
+                             required_evidence=("ci",),
+                             evidence=(Evidence("ci", "sha123", "success", True),))
+
+    def test_unknown_effect_status_fails_closed(self):
+        d = diagnose(replace(self.base, effects=(Effect("action", "pending_future"),)))
+        self.assertEqual(d.code, "EFFECT_STATE_UNKNOWN")
+
+    def test_acknowledged_effect_needs_independent_receipt(self):
+        d = diagnose(replace(self.base, effects=(Effect("action", "acknowledged"),)))
+        self.assertEqual(d.code, "EFFECT_RECEIPT_MISSING")
+
+    def test_acknowledged_effect_with_receipt_can_pass(self):
+        d = diagnose(replace(self.base, effects=(Effect("action", "acknowledged", "receipt-ref"),)))
+        self.assertEqual(d.code, "VERIFIED_SUCCESS")
+
+    def test_conflicting_trusted_pass_and_failure_blocks(self):
+        e = (Evidence("ci", "sha123", "success", True),
+             Evidence("ci", "sha123", "failed", True))
+        self.assertEqual(diagnose(replace(self.base, evidence=e)).code, "CONFLICTING_VERIFICATION")
+
+    def test_autopilot_passed_label_supported(self):
+        e = (Evidence("ci", "sha123", "passed", True),)
+        self.assertEqual(diagnose(replace(self.base, evidence=e)).code, "VERIFIED_SUCCESS")
