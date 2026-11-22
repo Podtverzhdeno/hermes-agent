@@ -24,12 +24,20 @@ concurrency:
 jobs:
   stdlib-contract:
     name: Stdlib contract / Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 8
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.12"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,6 +47,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Validate Python syntax
         run: python -m compileall -q autopilot tests/autopilot
+      - name: Install isolated pytest runner
+        run: python -m pip install --disable-pip-version-check "pytest>=9.0.2,<10"
+      - name: Run all Autopilot contracts
+        run: python -m pytest tests/autopilot -q -o addopts=
       - name: Run offline dependency-free contracts
         env:
           OPENAI_API_KEY: ""
