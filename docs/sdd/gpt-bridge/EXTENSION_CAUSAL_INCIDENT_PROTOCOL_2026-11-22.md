@@ -22,6 +22,43 @@
 
 A single source must own each lifecycle state; adapters may report observations but not independently advance task state. A read-only dashboard is a projection of task authority, not another queue.
 
+## 1.1. Recommended ChatGPT integration: controlled MCP plugin over native Hermes telemetry
+
+Official OpenAI documentation as checked 2026-11-22 offers MCP-backed ChatGPT plugins with optional UI and/or instructions/skills. This is a **distinct** transport from a browser extension or the OpenAI API running a model. A custom plugin can expose allowlisted tools to ChatGPT, whereas local Hermes is still the source of run state. A read-only MCP plugin does not, by itself, provide an always-on scheduling facility or allow ChatGPT to poll outside an active workflow.
+
+**Two independent mechanisms are required**:
+
+1. **Hermes-side durable monitor**, acting independently of ChatGPT connection lifetime: reads authenticated Runs status/SSE or shared gateway session event cursor, stores allowlisted metadata, records source gaps and unknown tool outcomes, and maintains an incident projection. Its own scheduler/daemon and observability health must be configured and operated separately; not implemented here.
+2. **ChatGPT-facing MCP plugin**: exposes bounded, scope-checked *queries* for the durable projection. Model cannot bypass server-enforced access controls. The plugin must not claim that event availability equals continuous GPT awareness, and must not receive raw prompts, hidden chain of thought, browser cookies or unrestricted local files.
+
+### Proposed tool surface (interface draft; not installed)
+
+| Tool | Mode and return | Authorization | Safety |
+|---|---|---|---|
+| `hermes_capabilities` | Read-only: supported protocol, version, observer coverage and schema | Profile scoped; no secrets | Fail capability mismatch, not infer stopped work |
+| `hermes_list_runs` | Read-only: permitted run IDs, state, stage, evidence freshness, cursor/gap | `runs.read` scope | Bounded rows, no user prompt text |
+| `hermes_run_incidents` | Read-only: incident codes, last authoritative event, evidence gap, effect certainty | `incidents.read`, project bound | Separate observed cause from hypothesis |
+| `hermes_run_evidence` | Read-only: exact event IDs, artifact SHA, verifier status, partial history flag | `evidence.read`, privacy filter | No raw SSE/event payload or tool arguments |
+| `hermes_git_integration_risks` | Read-only: PR numbers, pinned SHA, collision classes | Repository-scoped read | GitHub metadata does not prove runtime |
+| `hermes_acknowledge_incident` | Changes only **operator alert acknowledgment**, never task/effect authority | `incidents.ack` + version precondition | Does not resolve unknown tool outcome |
+| `hermes_request_stop` | Privileged request with task/run ownership and latest fence generation | `runs.stop`, fresh user confirmation | `stopping` is not `stopped`; verify terminal |
+| `hermes_resolve_unknown` | Exceptional owner-signed recovery proposal, **disabled by default** | Separate `runs.recover` grant and external-effect reconciliation | Never silently release queued work after crash |
+
+All tool descriptions/annotations (`readOnlyHint`) are usability hints, **not** security enforcement. The server authenticates on *every* invocation and checks issuer/audience/expiry/scope, source profile and task permissions. Follow OpenAI's per-tool OAuth security scheme declarations and resource metadata. Do not share a broad Windows filesystem editor token with the read-only watcher.
+
+**Private vs published:** A private MCP integration may use a secure tunnel with user-controlled setup and narrow scope. A published plugin needs its own stable public HTTPS MCP server and review; an ephemeral local tunnel is not a public production deployment. Per official docs, streamable HTTP is the expected transport, and OAuth 2.1/mTLS may be needed in the published architecture. Audit log excludes credentials; revocation rotates grant at the privileged gateway, not just in UI.
+
+**UI:** A compact optional MCP Apps timeline may expose per-run `stage`, `last_verified_event`, `evidence_age`, `gap`, `effect_certainty`, `blocker` and suggested safe next step. No spinner that claims “agent thinks” solely from a transport heartbeat. Treat browser/Chrome extension only as an optional *user-authorized browser-control source* for tasks requiring tab interaction; do not make it the system of record for a Hermes run.
+
+**Minimum integration gates:** unauthenticated and wrong-profile reads denied; malicious tool input never widens scope; explicit owner approval for writes; invalid/expired OAuth challenges work; no duplicate effect from retry; monitor unavailable shown as `UNOBSERVED`; 30 simultaneous ChatGPT clients do not cause 30 competing schedulers, sessions or external effects. Load/budget policy and constrained concurrency live on Hermes side.
+
+### Source references
+
+- OpenAI MCP Plugin server: https://developers.openai.com/plugins/build/mcp-server
+- OpenAI Plugin auth: https://developers.openai.com/plugins/build/auth
+- OpenAI Plugin architecture: https://developers.openai.com/plugins/concepts/plugins
+- Hermes Runs API: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/website/docs/user-guide/features/api-server.md
+
 ## 1a. Preferred supported native Hermes Runs API (verified in modern upstream only)
 
 **Source of truth:** official Hermes revision `da8e7d71abe4ac165760cd813c0c18c53e697b90`, its `website/docs/user-guide/features/api-server.md` and `gateway/platforms/api_server_runs.py`. This is a stronger documented extension surface than a reverse-engineered browser tab. It does **not** prove the owner's April fork or installed GPT extension implements it.
