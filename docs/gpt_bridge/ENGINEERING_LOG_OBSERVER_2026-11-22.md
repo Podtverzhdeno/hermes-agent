@@ -39,3 +39,19 @@ python -m compileall -q gateway/gpt_bridge_event_audit.py scripts/gpt_bridge_pr_
 ```
 
 Production deployment remains **HOLD** until the trusted adapter, actual local extension source, host/Native Messaging security and end-to-end failure injection are verified.
+
+
+## Follow-up verification (2026-11-22, approximately 10:50 UTC; later same pass)
+
+| ID | Evidence class | Finding | Required action |
+|---|---|---|---|
+| O-14 | OBSERVED_GITHUB | The open PR count increased to 26 (#1–#26), all draft at inspection. File lists for all 26 were obtained via the GitHub connector. | Refresh snapshots before review; avoid stale seven-PR assumptions |
+| O-15 | OBSERVED_GITHUB | Four PRs #4/#5/#6/#11 overlap on \`gateway/platforms/api_server.py\`; #4 and this PR #26 overlap on \`gateway/gpt_bridge_event_audit.py\` and the identically named test file. | Do not merge either parser without identifying protocol owner and reconciling types |
+| O-16 | OBSERVED_GITHUB | #1 and #10 overlap \`autopilot/ledger.py\`; #12/#17/#23 overlap \`gpt_companion/journal.py\`; #13/#15 overlap \`tools/browser_tool.py\`. | Single owner per mutable state machine; coverage at final combined SHA |
+| O-17 | OBSERVED_CODE/RESEARCH | PR #4's candidate parser targets native upstream \`/v1/runs\` SSE; this PR's offline module targets proposed SDD event-envelope v1, not native event shapes. | Versioned adapter with no hidden content/privilege elevation; see ADR-GPT-016 |
+| O-18 | RESEARCH_NOT_CURRENT_RUNTIME | An Oct 2026 upstream issue describes \`replay.truncated\`, missing run discovery and in-memory approvals at that revision; not validated against current v0.23.3. | Source-specific capability probing and current integration tests |
+| O-19 | OBSERVED_GITHUB | Draft PR #26 opened on this audit branch, initial SHA \`3990f675d93e80c2526dc758c317c200b507cb8f\`; at first check full tests and offline matrix were queued. | Never claim GitHub CI success; query the *latest* head |
+| O-20 | TESTED_OFFLINE | Added strict type/cycle/deep nesting and producer-ID hashing tests: 49 observer + 9 PR guard checks passed on local Python 3.13. | Repo workflow must independently run exact committed content |
+| O-21 | DESIGN_DECISION | MV3 shutdown must not imply run failure and must never trigger a second POST; observe native seq gaps, then reconcile from trusted status. | Include SSE replay and operator STOP in E2E tests |
+
+**Not done:** no Windows extension implementation; no MCP/Obsidian inspection after \`Session terminated\`; no live Hermes process monitor, no auto-fix deployment, no merge into main. These are intentional release HOLDs, not hidden achievements.
