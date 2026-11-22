@@ -310,3 +310,39 @@ def test_heartbeat_liveness_without_progress_is_stalled(tmp_path):
     assert result["state"] == "ALIVE_NO_PROGRESS"
     assert result["live_age_seconds"] == 0
     assert result["progress_age_seconds"] >= 300
+
+
+def test_coordinator_failed_report_and_worker_shutdown_are_not_conflicting(journal):
+    emit(journal, 1, "run.reported_failed", source="coordinator",
+         reason_code="AUTH_DENIED")
+    emit(journal, 1, "worker.stopped", source="worker")
+    result = journal.assess("run-causal")
+    assert result["state"] == "REPORTED_FAILED"
+    assert result["reported_reason_code"] == "AUTH_DENIED"
+    assert result["diagnostic_flags"] == []
+
+
+def test_coordinator_completion_and_worker_shutdown_require_verification(journal):
+    emit(journal, 1, "run.reported_completed", source="coordinator")
+    emit(journal, 1, "worker.stopped", source="worker")
+    result = journal.assess("run-causal")
+    assert result["state"] == "AWAITING_VERIFICATION"
+    assert result["reported_reason_code"] is None
+    assert "CROSS_SOURCE_TERMINALS" not in result["diagnostic_flags"]
+
+
+def test_multiple_worker_shutdowns_without_report_are_unconfirmed(journal):
+    emit(journal, 1, "worker.stopped", source="worker-a")
+    emit(journal, 1, "worker.stopped", source="worker-b")
+    result = journal.assess("run-causal")
+    assert result["state"] == "STOPPED_UNCONFIRMED"
+    assert "CROSS_SOURCE_TERMINALS" not in result["diagnostic_flags"]
+
+
+def test_independent_same_kind_run_outcome_reporters_need_reconciliation(journal):
+    emit(journal, 1, "run.reported_completed", source="coordinator-a")
+    emit(journal, 1, "run.reported_completed", source="coordinator-b")
+    result = journal.assess("run-causal")
+    assert result["state"] == "TRACE_INCOMPLETE"
+    assert result["next_action"] == "RECONCILE_CONFLICTING_EVENTS"
+    assert "CROSS_SOURCE_TERMINALS" in result["diagnostic_flags"]
