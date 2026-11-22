@@ -287,6 +287,9 @@ class EventJournal:
         missing = sum(max(sequences) - len(sequences) for sequences in by_source.values())
         reserved_events, effect_resolutions = {}, {}
         approval_requests, approval_resolutions = {}, {}
+        # Multiple non-identical reports for one action are *not* an ack.
+        # Retain them for reconciliation irrespective of arrival order.
+        effect_conflicts: set[str] = set()
         contradictory = False
         for e, _ in events:
             kind, action = e["kind"], e.get("action_id")
@@ -294,10 +297,12 @@ class EventJournal:
             if kind == "tool.effect_reserved":
                 if action in reserved_events:
                     contradictory = True
+                    effect_conflicts.add(action)
                 reserved_events[action] = origin
             elif kind in ("tool.effect_acknowledged", "tool.effect_not_executed"):
                 if action in effect_resolutions:
                     contradictory = True
+                    effect_conflicts.add(action)
                 effect_resolutions[action] = origin
             elif kind == "approval.required":
                 approval_requests[action] = origin
@@ -309,7 +314,8 @@ class EventJournal:
             action for action, resolution in effect_resolutions.items()
             if action in reserved_events and reserved_events[action][0] != resolution[0]
         }
-        reserved = (set(reserved_events) - set(effect_resolutions)) | cross_source_effects
+        reserved = ((set(reserved_events) - set(effect_resolutions))
+                    | cross_source_effects | effect_conflicts)
         pending_approval = set(approval_requests) - set(approval_resolutions)
         for action, resolution in approval_resolutions.items():
             if action in approval_requests and approval_requests[action][0] != resolution[0]:
@@ -372,7 +378,8 @@ class EventJournal:
         terminal = max(terminal_events, key=lambda e: e["sequence"]) if terminal_events else None
         last_terminal = terminal["kind"] if terminal else None
         reason = terminal.get("reason_code", "UNKNOWN") if terminal else "UNKNOWN"
-        if prior_unresolved or cross_source_effects or (reserved and live_age >= liveness_timeout):
+        if (prior_unresolved or cross_source_effects or effect_conflicts
+                or (reserved and live_age >= liveness_timeout)):
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
