@@ -1,5 +1,6 @@
 """Offline contract tests: NO browser, provider key, or external effects."""
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -229,6 +230,91 @@ class AdditionalAdversarialTests(unittest.TestCase):
             self.assertEqual(["duplicate","inserted"],sorted(out))
             self.assertEqual(1,a.diagnose("run-a")["event_count"])
             a.close();b.close()
+
+
+class TimelineAndSchemaTests(unittest.TestCase):
+    def test_utc_time_and_metadata_only(self):
+        j = CausalObserver()
+        try:
+            e = event(1, "worker.heartbeat")
+            j.ingest(e)
+            page = j.timeline("run-a")
+            self.assertEqual(1, len(page["events"]))
+            row = page["events"][0]
+            self.assertEqual(e["event_id"], row["event_id"])
+            self.assertIn("+00:00", row["received_at_utc"])
+            self.assertNotIn("prompt", row)
+            self.assertEqual([], row["evidence_refs"])
+            self.assertFalse(row["trusted_origin"])
+            self.assertIsNone(page["authoritative_task_state"])
+            self.assertEqual(row["received_at_utc"], j.diagnose("run-a")["last_by_producer"]["boot-a"]["received_at_utc"])
+        finally:
+            j.close()
+
+    def test_bounded_cursor_paging_is_deterministic_per_producer(self):
+        j = CausalObserver()
+        try:
+            for producer, seq in [("boot-b", 2), ("boot-a", 2), ("boot-b", 1), ("boot-a", 1)]:
+                j.ingest(event(seq, producer=producer))
+            cursor = {}
+            seen = []
+            for _ in range(4):
+                page = j.timeline("run-a", limit=1, **cursor)
+                self.assertEqual(1,len(page["events"]))
+                row = page["events"][0]
+                seen.append((row["producer_id"],row["source_event_seq"]))
+                if page["next_cursor"] is not None:
+                    cursor = page["next_cursor"]
+            self.assertEqual([("boot-a",1),("boot-a",2),("boot-b",1),("boot-b",2)], seen)
+            self.assertIsNone(page["next_cursor"])
+            self.assertFalse(page["has_more"])
+            self.assertEqual("per_producer_only_cross_producer_partial_order", page["ordering"])
+        finally:
+            j.close()
+
+    def test_invalid_paging_rejected(self):
+        j = CausalObserver()
+        try:
+            for kwargs in (dict(limit=0),dict(limit=501),dict(limit=True),
+                           dict(after_seq=-1),dict(after_seq=False),
+                           dict(after_producer="user / prompt")):
+                with self.assertRaises(ValueError):
+                    j.timeline("run-a", **kwargs)
+        finally:
+            j.close()
+
+    def test_migrate_old_journal_without_faking_event_wall_time(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=os.path.join(folder, "old.sqlite")
+            con=sqlite3.connect(path)
+            con.execute("""CREATE TABLE diagnostic_events (
+                event_id TEXT PRIMARY KEY, producer_id TEXT NOT NULL,
+                source_event_seq INTEGER NOT NULL, run_id TEXT NOT NULL,
+                task_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+                lease_fence INTEGER NOT NULL, kind TEXT NOT NULL,
+                effect_key TEXT, operation_fingerprint TEXT, target_revision TEXT,
+                evidence_refs TEXT NOT NULL, payload_hash TEXT NOT NULL,
+                trusted_origin INTEGER NOT NULL, receive_epoch TEXT NOT NULL,
+                received_mono REAL NOT NULL,
+                UNIQUE(producer_id,source_event_seq))""")
+            e=event(1)
+            con.execute("""INSERT INTO diagnostic_events (
+                event_id,producer_id,source_event_seq,run_id,task_id,
+                attempt_id,lease_fence,kind,evidence_refs,payload_hash,
+                trusted_origin,receive_epoch,received_mono)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (e["event_id"],e["producer_id"],1,e["run_id"],e["task_id"],
+                 e["attempt_id"],7,e["kind"],"[]","old-hash",0,"old-epoch",1.0))
+            con.commit();con.close()
+            j=CausalObserver(path)
+            try:
+                past=j.timeline("run-a")["events"][0]
+                self.assertIsNone(past["received_at_utc"])
+                self.assertEqual("unobserved",j.diagnose("run-a")["activity"])
+                j.ingest(event(2))
+                new=j.timeline("run-a")["events"][1]
+                self.assertIn("+00:00",new["received_at_utc"])
+            finally:j.close()
 
 
 class MultiAgentScaleTests(unittest.TestCase):
