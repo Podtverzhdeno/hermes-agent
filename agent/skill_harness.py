@@ -168,10 +168,16 @@ def load_skill_harness(skill_dir: Path | None, expected_skill: str) -> dict | No
             raise SkillHarnessError("unable to read pinned SKILL.md") from exc
         # The Git blob hash is a *version consistency check*, not an
         # authenticity guarantee. Never use it to authorize a tool.
-        actual = hashlib.sha1(
-            b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw
-        ).hexdigest()
-        if actual != profile["skill_git_blob"]:
+        def git_blob_hash(payload: bytes) -> str:
+            return hashlib.sha1(
+                b"blob " + str(len(payload)).encode("ascii") + b"\x00" + payload
+            ).hexdigest()
+        # Some Windows checkouts convert LF to CRLF. Markdown has the same
+        # semantics under either line ending; compare both byte variants.
+        expected = profile["skill_git_blob"]
+        actual = git_blob_hash(raw)
+        normalized = git_blob_hash(raw.replace(b"\r\n", b"\n"))
+        if expected not in (actual, normalized):
             raise SkillHarnessError(
                 "SKILL.md changed since its harness was reviewed; "
                 "revalidate the contract and renew its fingerprint"
