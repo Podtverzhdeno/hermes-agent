@@ -128,3 +128,53 @@ Snapshot is historical and **must be re-collected** from GitHub, including all o
 ## Open blockers and handoff
 
 **Not performed:** no local ChatGPT extension inspection, no running Windows/WSL integration, no live monitoring, no Obsidian sync, no production patch, no database migration, no full Hermes suite or GitHub CI signoff. `Local_WorkSpace` returned `Session terminated`. All integration candidates stay draft pending source verification. This review should be handed to a single integration owner who resolves #4/#5/#6, chooses an observer, checks upstream Kanban migration, and records the exact tested merge commit before attempting any canary.
+
+---
+
+## Addendum D-06 — 24-agent convergence and causal regression review (2026-11-22)
+
+**Revised evidence scope:** First snapshot file in this branch covers only the 11 PRs collected at 10:44:54 UTC. A subsequent authenticated GitHub repository query found **24 open PRs**. This is a demonstrable **coverage gap**, NOT proof that only 11 agents exist or that an offline 11-PR structural report is current. The bundled snapshot must be labelled HISTORICAL/INCOMPLETE for current release decisions. Every release must use a fresh, complete GitHub listing with per-PR files, HEAD/base SHA and a second pass. Receipt order is not an atomic global snapshot; recheck HEADs before merging.
+
+### D-06A — Consolidate one GitHub PR watcher, not four
+
+Source comparison at time of review:
+
+| Candidate | Distinguishing capability | Critical limitation / gate | Disposition |
+|---|---|---|---|
+| #14 | Active GitHub REST collection; independent branches; multi-Python CI | Excludes PRs with `base.ref != main`, so a stacked child may be missed | Use only applicable tests/branch comparisons |
+| #18 | REST check-run capture, metadata-only SQLite journal | No equivalent two-pass global PR-set consistency check was demonstrated in reviewed code | Contribute check evidence concepts |
+| #22 | Two-pass open PR listing, source repository-qualified heads, stacked ancestry, scheduled/manual read-only workflow | Schedule not active on main; CI incomplete at inspection; scheduled scan uses non-strict exit and needs explicit HOLD alert/monitor semantics | **Preferred integration candidate, contingent on CI and review** |
+| #24 (this review) | 24 offline structural contract tests, historical exact-head fixture, detailed causal SDD | No live GitHub collector, historical fixture partial, duplicates most watcher behavior | **Reference/test corpus only. Do not merge as another independent watcher** |
+
+**Owner gate:** one integration owner selects #22 or a reviewed alternative, imports genuinely unique tests, runs pinned-head CI and marks redundant scanner drafts superseded. Automated test-job success must not be presented as evidence that the Hermes agent, browser extension or GPT workflow is operating correctly.
+
+### D-06B — Confirmed causal regression and safe merge order
+
+PR #23 `gpt_companion/journal.py` source (reviewed blob `2ea7e36d421f238af31e675921000394b66ddf8f`) chooses the last terminal event by `max(terminal_events, key=lambda e: e["sequence"])` **including** `worker.stopped`. Event sequence `worker.started` → `run.reported_failed(reason_code=AUTH_DENIED)` → `worker.stopped` is therefore labelled `STOPPED_UNCONFIRMED`, masking the actual reported failure and reason. A completion report before stop loses `AWAITING_VERIFICATION`. Different completed/failed outcomes from the same emitter are not expressly flagged, and contradictory events with zero sequence gaps incorrectly select `FETCH_MISSING_EVENTS`.
+
+Sibling child PR #17 contains specific regressions in `tests/gpt_companion/test_terminal_causality.py`; PR #23 contains important prior-attempt unknown-effect isolation and cross-emitter ACK fencing. They must be **combined**, not selected as mutually exclusive last-writer-wins changes. Both children have base SHAs behind the subsequently advancing #12 parent; rebase and test the resulting combined revision. These are source-backed findings, not live incidents. Documented to PR #23 in [comment](https://github.com/Podtverzhdeno/hermes-agent/pull/23#issuecomment-7078068696).
+
+### D-06C — CDP ownership and privacy changes are one release unit
+
+PR #15 prevents `cleanup_browser` from closing externally owned CDP browser processes, including inactivity/atexit cleanup. But its reviewed `_create_cdp_session` logs the raw `cdp_url` at INFO level. A CDP endpoint may contain a token, credential or privileged URL. PR #13 separately changes the same `tools/browser_tool.py` to redact URLs/exceptions. Integrate BOTH invariants: externally owned browser survives closure of one worker session; no CDP URL credentials reach stdout/stderr/files or exception bodies. Test a sentinel URL end to end with two simultaneous external sessions. Review recorded in [PR #15](https://github.com/Podtverzhdeno/hermes-agent/pull/15#issuecomment-7078079701).
+
+### D-06D — Green scanner CI is not green GPT
+
+The current #22 workflow runs the collector without `--strict`; a scan can exit zero while reporting blockers, because strict exit is opt-in. That is acceptable if the job means only **collection succeeded**, but unsafe if the UI interprets it as **integration healthy**. Split into three surfaces:
+1. scan coverage/data availability and exact collection revision;
+2. integration HOLD/PASS gate (strict, independent CI, canonical ownership);
+3. live Hermes/GPT/extension health (unknown until the owner's actual install is connected).
+
+Publish deduplicated HOLD transitions and explicit unknown telemetry coverage. Do not flood alerts at every scheduled run. Do not claim this or any other draft runs periodically until a main-branch workflow is merged and observed. Review recorded in [PR #22](https://github.com/Podtverzhdeno/hermes-agent/pull/22#issuecomment-7078078232).
+
+### D-06E — Measurable acceptance contracts for dozens of agents
+
+- **Identity:** `task_id, run_id, attempt_id, producer_epoch, source_seq, lease_fence, action_id, effect_receipt_id, code_sha` are validated with independent origin and never inferred from human-readable chat messages.
+- **Completion:** model/worker reported completion is labelled provisional until an independently authenticated verifier confirms the artifact/effect at exact revision.
+- **Diagnostic integrity:** failure followed by worker stop retains the reported failure; conflicting terminal outcomes remain `TRACE_INCOMPLETE` with `RECONCILE_CONFLICTING_EVENTS`, never mere gap replay.
+- **Effect uncertainty:** unresolved external write from attempt N persists through attempt N+1 and cannot be cleared by a different emitter's untrusted ACK. No blind duplicate write.
+- **Ownership:** one canonical implementation per shared file, one task truth plane, one observer schema. Record outstanding PR ownership before every GitHub write; cannot assume today's owner tomorrow.
+- **Operational coverage:** 1, 8, 32, 64 workers; crash at reserve/call/ACK boundaries, callback after lease expiry, rate limits, 2 tabs, MV3 suspension, lost ACK, clock regression and repair-loop cap.
+- **Evidence:** every claimed fix includes failing-before/passing-after test output, source blob SHA, exact combined candidate HEAD and independent review. Historical fixture data and pending/cancelled/skipped CI never qualify as completed verification.
+
+**Status of this addendum:** source-reviewed, with concrete regression pointers and cross-agent comments; **not** local extension verification, production monitoring, corrected #23 runtime, or accepted merged fix.
