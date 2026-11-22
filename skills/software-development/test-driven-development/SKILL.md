@@ -1,7 +1,7 @@
 ---
 name: test-driven-development
 description: Use when implementing any feature or bugfix, before writing implementation code. Enforces RED-GREEN-REFACTOR cycle with test-first approach.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent (adapted from obra/superpowers)
 license: MIT
 metadata:
@@ -11,6 +11,19 @@ metadata:
 ---
 
 # Test-Driven Development (TDD)
+
+## Harness evidence checkpoint
+
+Before implementation, pin the baseline revision and run the newly added
+targeted test, capturing an actual failing exit and the reason it failed.
+Then run the same test after the minimal fix; record the exact post-change
+revision and unrelated regression checks. The sibling harness.json
+requires separate RED, GREEN, regression and diff evidence for its
+implementation operation. A model saying "tests passed" is not evidence.
+If red was not observed, report that limitation and add a reliable
+negative test rather than inventing a test transcript.
+
+
 
 ## Overview
 
