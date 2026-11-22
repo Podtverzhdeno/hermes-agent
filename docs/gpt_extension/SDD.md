@@ -305,3 +305,21 @@ More importantly, three **false-completion risks** are now fail-closed:
 These are **classifier invariants**, not authenticated checks. A caller still must supply a trustworthy, coherent snapshot, verify signer identity, bind receipts and approval to canonical task/run/fence, and never expose a self-asserted trusted bit as a model-facing tool. Revisions already terminal require independent reconciliation, not retroactive overwriting.
 
 The 46 offline synthetic tests pass in the isolated container, including 3,200 classifications across 32 concurrent Python observers and a 20-case external effect/status subtest matrix. This is a classifier concurrency exercise, **not** parallel GPT worker execution. Full repository CI and a real Hermes/CDP/Windows run are separate release gates.
+
+
+## 18. CDP secret handling: subprocess output fixed, process argv remains a release blocker
+
+An extended source review found four additional disclosure paths inside `tools/browser_tool.py:_run_browser_command`. For a CDP-backed child command, the previous source logged raw stderr, non-JSON stdout, the first four command-line arguments and raw exception/error messages. Those can include an embedded CDP WebSocket bearer URL or user session details. The experimental branch now **suppresses sensitive diagnostics for attached-CDP commands** and replaces CDP parsed error strings with a redacted category, while preserving normal successful JSON and screenshot return behavior. `tests/tools/test_browser_cdp_redacted_logs.py` now includes **8 regression tests** (four extra child-process fixtures). These eight are **not** part of the isolated 46-test classifier suite: run the full GitHub CI at exact head to verify them.
+
+**Residual risk not yet fixed:** the current Hermes subprocess still invokes `agent-browser --cdp <full URL>`, so a credential-bearing CDP URL may be exposed in OS process arguments and process inspection regardless of logging fixes. Treat as a security release blocker where the CDP endpoint contains bearer credentials. Never claim URL confidentiality from logger redaction alone.
+
+The current agent-browser official CDP guide documents an environment-backed `AGENT_BROWSER_CDP` target, environment scoped `AGENT_BROWSER_CDP_HEADERS`, and strict session tab pinning using `--pin-tab` / `AGENT_BROWSER_PIN_TAB`. These may permit safer transport and stronger tab ownership, **but installed-version support and interaction with Hermes' existing “do not combine --session with --cdp” workaround must be tested**; the guide describes newer session behavior and is not sufficient to change this fork's invocation blindly. A secure design should prefer a credential-free localhost port or supported authenticated WebSocket headers, avoid embedding a bearer in process arguments, verify the resolved target is the intended owner-authorized browser, and use exclusive session/tab ownership. Never forward authentication headers to a different endpoint.
+
+Extra release tests: process-list inspection with dummy bearer; CLI environment CDP version matrix; bridge recovery after tab closure; pin-tab tab_locked/tab_gone semantics; isolation across at least 32 browser *lane reservations*; browser cleanup must not terminate externally owned Chrome/Edge; log and returned-result redaction on all 8 synthetic failure cases; no secret in crash dumps or diagnostics artifacts.
+
+References:
+- https://github.com/vercel-labs/agent-browser/blob/main/docs/content/docs/cdp-mode.mdx
+- https://github.com/Podtverzhdeno/hermes-agent/pull/15
+- https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/
+
+**Privacy boundary:** default GenAI telemetry should be metadata-only; raw prompts, tool arguments/results and output capture require explicit opt-in and a separate data-protection policy. Diagnostic error class is useful; raw stderr, CDP URLs and exception bodies are not required for normal operator triage.
