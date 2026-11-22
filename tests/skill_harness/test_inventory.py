@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[2]
 class TestSkillInventory(unittest.TestCase):
     def test_repository_inventory_is_complete_and_candid(self):
         data = scan_repository(ROOT)
-        self.assertGreaterEqual(data["total"], 12)
-        self.assertGreaterEqual(data["counts"].get("profiled", 0), 12)
+        self.assertGreaterEqual(data["total"], 27)
+        self.assertGreaterEqual(data["counts"].get("profiled", 0), 27)
         self.assertEqual(data["counts"].get("invalid-profile", 0), 0)
         self.assertEqual(data["counts"].get("unreadable", 0), 0)
         self.assertFalse(data["model_behavior_tested"])
