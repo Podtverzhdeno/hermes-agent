@@ -49,6 +49,13 @@ class CDPReply:
     tool_calls: tuple[ToolProposal, ...]
 
 
+def _byte_length(value: str, code: str) -> int:
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeError:
+        raise CDPProtocolError(code) from None
+
+
 def _json_pairs(pairs):
     output = {}
     for k, v in pairs:
@@ -122,7 +129,7 @@ def _tool_proposal(raw: Any, allowed: frozenset[str]) -> ToolProposal:
     if name not in allowed:
         raise CDPProtocolError("TOOL_NOT_DECLARED")
     if isinstance(args, str):
-        if len(args.encode("utf-8")) > MAX_ARGUMENT_BYTES:
+        if _byte_length(args, "TOOL_ARGUMENT_SCHEMA_INVALID") > MAX_ARGUMENT_BYTES:
             raise CDPProtocolError("TOOL_ARGUMENT_LIMIT")
         args = _parse_json(args)
     if not isinstance(args, dict):
@@ -157,7 +164,7 @@ def parse_cdp_reply(
         except UnicodeError:
             raise CDPProtocolError("JSON_SCHEMA_INVALID") from None
     if isinstance(raw, str):
-        if len(raw.encode("utf-8")) > MAX_ENVELOPE_BYTES:
+        if _byte_length(raw, "JSON_SCHEMA_INVALID") > MAX_ENVELOPE_BYTES:
             raise CDPProtocolError("ENVELOPE_LIMIT")
         parsed = _parse_json(raw)
     elif isinstance(raw, dict):
@@ -175,7 +182,7 @@ def parse_cdp_reply(
     content = parsed["content"]
     if not isinstance(content, str):
         raise CDPProtocolError("CONTENT_TYPE_INVALID")
-    if len(content.encode("utf-8")) > MAX_CONTENT_BYTES:
+    if _byte_length(content, "CONTENT_TYPE_INVALID") > MAX_CONTENT_BYTES:
         raise CDPProtocolError("CONTENT_LIMIT")
     calls = parsed["tool_calls"]
     if not isinstance(calls, list) or len(calls) > MAX_CALLS:
