@@ -303,6 +303,7 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
     claims: dict[tuple[str, int], set[str]] = defaultdict(set)
     verifications: set[tuple[str, str]] = set()
     successes: list[dict] = []
+    terminals: dict[tuple[str, str | None], set[str]] = defaultdict(set)
     stopped: list[dict] = []
     reused_effects: dict[tuple[str, str], set[int]] = defaultdict(set)
 
@@ -329,6 +330,8 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
         if kind == "task.completed" and task_id:
             if event.get("state_to") not in ("succeeded", "failed", "cancelled", "blocked"):
                 findings.add("COMPLETION_WITHOUT_TERMINAL_STATE", "incomplete", task_id=task_id, event_id=eid)
+            else:
+                terminals[(task_id, event.get("attempt_id"))].add(event["state_to"])
             if event.get("state_to") in ("failed", "cancelled", "blocked") and not event.get("reason_code"):
                 findings.add("TERMINAL_FAILURE_WITHOUT_REASON", "incomplete", task_id=task_id, event_id=eid)
             if event.get("state_to") == "succeeded":
@@ -360,6 +363,15 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
                 queue.append(child)
     if visited != len(by_id):
         findings.add("CAUSAL_CYCLE", "critical")
+
+    for (task_id, attempt_id), terminal_states in terminals.items():
+        if len(terminal_states) > 1:
+            if attempt_id is None:
+                # Events from older attempts may share a task ID. Without an
+                # attempt identifier the conflicting history is ambiguous.
+                findings.add("TERMINAL_CONFLICT_WITHOUT_ATTEMPT_ID", "incomplete", task_id=task_id)
+            else:
+                findings.add("CONFLICTING_ATTEMPT_TERMINAL_STATES", "critical", task_id=task_id)
 
     for (task_id, fence), agents in claims.items():
         if len(agents) > 1:
@@ -421,13 +433,17 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
             findings.add("SUCCESS_WITHOUT_REVISION_VERIFIER_IN_SNAPSHOT", "incomplete",
                          task_id=task_id, event_id=success["event_id"])
 
+    if not by_id and not findings.counts:
+        # A perfectly empty input is not a healthy run or a proof of uptime.
+        findings.add("EMPTY_SNAPSHOT", "incomplete")
+
     codes = findings.counts
     if invalid:
         status, exit_code = "invalid_snapshot", 4
     elif "EFFECT_OUTCOME_UNKNOWN" in codes or "SUCCESS_WHILE_EFFECT_UNRESOLVED" in codes:
         status, exit_code = "requires_effect_reconciliation", 2
     elif any(x["severity"] == "critical" for x in findings.items) or any(k in codes for k in
-             ("EVENT_ID_COLLISION", "SEQUENCE_COLLISION", "FENCE_OWNER_CONFLICT", "CAUSAL_CYCLE",
+             ("EVENT_ID_COLLISION", "SEQUENCE_COLLISION", "FENCE_OWNER_CONFLICT", "CONFLICTING_ATTEMPT_TERMINAL_STATES", "CAUSAL_CYCLE",
               "CAUSAL_SEQUENCE_INVERSION", "EFFECT_REUSED_ACROSS_FENCES", "ACK_WITHOUT_EVIDENCE_REF")):
         status, exit_code = "integrity_anomaly", 2
     elif codes:
