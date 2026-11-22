@@ -139,3 +139,22 @@ def test_invalid_limits_fail_closed(subject, limit):
     ledger, clock = subject
     with pytest.raises(ValueError):
         inspect_project(ledger, "Hermes", clock=clock, limit=limit)
+
+
+def test_contradictory_evidence_is_attention_not_success(subject):
+    ledger, clock = subject
+    task = create(ledger)
+    w = ledger.claim("A1")
+    ledger.begin_verification(task, "A1", w["fence"])
+    ledger.record_evidence(task, "tests", "pytest", "sha:head",
+                           "passed", "report:good", trusted=True)
+    ledger.record_evidence(task, "tests", "secondary", "sha:head",
+                           "failed", "report:bad", trusted=True)
+    ledger.record_evidence(task, "ci", "github", "sha:head",
+                           "passed", "run:1", trusted=True)
+    snapshot = inspect_project(ledger, "Hermes", clock=clock)
+    assert snapshot["urgency"] == "attention"
+    assert snapshot["next_step"] == "repair_failed_required_evidence"
+    assert snapshot["failed_required_evidence_cards_shown"] == 1
+    assert snapshot["tasks"][0]["failed_required_evidence"] == ["tests"]
+    assert not ledger.finalize(task, "A1", w["fence"])
