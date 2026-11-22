@@ -25,7 +25,7 @@ _TERMINAL = frozenset(("completed", "failed", "cancelled", "interrupted"))
 _TOOL_BEGIN = frozenset(("tool.started",))
 _TOOL_END = frozenset(("tool.completed",))
 _APPROVAL_BEGIN = frozenset(("approval.request",))
-_APPROVAL_END = frozenset(("approval.resolved", "approval.denied", "approval.cancelled"))
+_APPROVAL_END = frozenset(("approval.responded", "approval.resolved", "approval.denied", "approval.cancelled"))
 _FINISH_EVENT = {
     "run.completed": "completed", "run.failed": "failed",
     "run.cancelled": "cancelled", "run.interrupted": "interrupted",
