@@ -16,6 +16,7 @@ from gateway.gpt_bridge_diagnostics import (
     IdempotencyCache,
     IdempotencyInProgress,
     IdempotencyPayloadMismatch,
+    IdempotencyOutcomeUnknown,
     canonical_fingerprint,
     scoped_idempotency_key,
     log_bridge_event,
@@ -133,7 +134,7 @@ async def test_cancelled_waiter_does_not_cancel_shared_work():
 
 
 @pytest.mark.asyncio
-async def test_failure_not_cached_and_ttl_expires():
+async def test_uncertain_failure_is_quarantined_until_ttl():
     cache = IdempotencyCache(ttl_seconds=0.01)
     executions = 0
 
@@ -147,10 +148,13 @@ async def test_failure_not_cached_and_ttl_expires():
     with pytest.raises(RuntimeError):
         await cache.get_or_set("k", "fp", work)
     await asyncio.sleep(0)
-    assert await cache.get_or_set("k", "fp", work) == 2
-    assert await cache.get_or_set("k", "fp", work) == 2
+    with pytest.raises(IdempotencyOutcomeUnknown):
+        await cache.get_or_set("k", "fp", work)
+    assert executions == 1
+    # This only protects during the local retention interval; durable
+    # cross-worker replay prevention is not implemented by this cache.
     await asyncio.sleep(0.02)
-    assert await cache.get_or_set("k", "fp", work) == 3
+    assert await cache.get_or_set("k", "fp", work) == 2
 
 
 def test_structured_log_omits_raw_session_and_any_payload(caplog):
@@ -292,14 +296,20 @@ async def test_nonstream_agent_reported_error_is_server_failure_not_200(caplog):
 
     with patch.object(adapter, "_run_agent", side_effect=failing_agent):
         async with TestClient(TestServer(app)) as client:
-            for _ in range(2):
-                response = await client.post("/v1/chat/completions",
-                    json=_chat_body(), headers={"Idempotency-Key": idem})
-                assert response.status == 500
-                assert response.headers.get("X-Hermes-Run-Id")
-                raw = await response.text()
-                assert secret not in raw
-                assert (json.loads(raw)["error"]["code"]) == "agent_failed"
-    # A failed result must not be cached for replay as successful output.
-    assert calls == 2
+            first = await client.post("/v1/chat/completions",
+                json=_chat_body(), headers={"Idempotency-Key": idem})
+            assert first.status == 500
+            assert first.headers.get("X-Hermes-Run-Id")
+            first_text = await first.text()
+            assert secret not in first_text
+            assert json.loads(first_text)["error"]["code"] == "agent_failed"
+            # The first failure may have occurred AFTER an external action;
+            # never automatically re-run the same key during retention.
+            second = await client.post("/v1/chat/completions",
+                json=_chat_body(), headers={"Idempotency-Key": idem})
+            assert second.status == 409
+            second_text = await second.text()
+            assert "idempotency_outcome_unknown" in second_text
+            assert secret not in second_text
+    assert calls == 1
     assert secret not in "\n".join(caplog.messages)
