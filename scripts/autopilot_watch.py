@@ -26,6 +26,8 @@ from autopilot.diagnostics import LedgerObserver  # noqa: E402
 def safe_append_jsonl(path: Path, record: dict) -> None:
     """Append a single restricted-permission event; avoid symlink targets."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise OSError("refusing symbolic link log destination")
     flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
@@ -96,7 +98,9 @@ def main(argv=None) -> int:
             # Emit on status/event change; an unchanged observer still emits a
             # heartbeat once each ~60 sec to make silent monitor death detectable.
             now = time.monotonic()
-            if fingerprint != last_fingerprint or now - last_heartbeat >= 60 if last_fingerprint is not None else True:
+            should_emit = (last_fingerprint is None or fingerprint != last_fingerprint
+                           or now - last_heartbeat >= 60)
+            if should_emit:
                 if args.log:
                     safe_append_jsonl(args.log, result)
                 else:
