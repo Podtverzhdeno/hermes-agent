@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "skill": "native-mcp",
+  "purpose": "Connect narrowly scoped MCP servers with transport and permission checks.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Configure a trusted local MCP server in Hermes",
+      "Diagnose MCP stdio connection failures",
+      "Add a scoped MCP tool integration"
+    ],
+    "do_not_trigger": [
+      "Browse a website with no MCP dependency",
+      "Give all MCP tools unrestricted filesystem access",
+      "Create a PR about unrelated application logic"
+    ]
+  },
+  "preflight": [
+    "Inventory transport, server identity, tool schemas and credential flow.",
+    "Inspect server command/network target and demand explicit trusted-source approval.",
+    "Limit environment variables and host paths before enabling a server."
+  ],
+  "workflow": [
+    "Add server config only in an isolated profile or backup.",
+    "Verify handshake and allowed tool names without executing dangerous tools.",
+    "Exercise one harmless call and confirm error/timeout behavior.",
+    "Document recovery and disable procedure for the connector."
+  ],
+  "actions": [
+    {
+      "operation": "mcp.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "server-identity"
+      ]
+    },
+    {
+      "operation": "mcp.configure",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "server-identity",
+        "config-diff",
+        "handshake"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "server-identity",
+      "source": "artifact",
+      "how_to_verify": "Record verified server package/source, transport and exposed tool names."
+    },
+    {
+      "id": "config-diff",
+      "source": "file_hash",
+      "how_to_verify": "Read back profile config diff, with secrets redacted."
+    },
+    {
+      "id": "handshake",
+      "source": "local_test",
+      "how_to_verify": "Test schema discovery and harmless probe with timeout and explicit limits."
+    }
+  ],
+  "failure_modes": [
+    "If server identity is unknown, do not start or auto-reconnect it.",
+    "On repeated auth/transport failures, disable dispatch rather than broadening privileges."
+  ]
+}
