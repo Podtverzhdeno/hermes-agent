@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Callable
 
@@ -53,7 +54,7 @@ def make_approval_callback(
         options.append(PermissionOption(option_id="deny", kind="reject_once", name="Deny"))
         import acp as _acp
 
-        tool_call = _acp.start_tool_call("perm-check", command, kind="execute")
+        tool_call = _acp.start_tool_call(f"perm-check-{uuid.uuid4().hex}", command, kind="execute")
 
         coro = request_permission_fn(
             session_id=session_id,
@@ -61,14 +62,20 @@ def make_approval_callback(
             options=options,
         )
 
+        future = None
         try:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             response = future.result(timeout=timeout)
-        except (FutureTimeout, Exception) as exc:
+        except Exception as exc:
+            # An unanswered permission prompt must not outlive its decision.
+            if future is not None:
+                future.cancel()
+            else:
+                coro.close()
             logger.warning("Permission request timed out or failed: %s", exc)
             return "deny"
 
-        outcome = response.outcome
+        outcome = getattr(response, "outcome", None)
         if isinstance(outcome, AllowedOutcome):
             option_id = outcome.option_id
             # Look up the kind from our options list
