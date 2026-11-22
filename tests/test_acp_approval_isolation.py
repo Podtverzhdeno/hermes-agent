@@ -175,3 +175,23 @@ def test_permission_bridge_accepts_allow_permanent_keyword(monkeypatch):
 
     assert asyncio.run(run()) == "once"
     assert captured == [["allow_once", "deny"]]
+
+
+@pytest.mark.parametrize("backend", ["docker", "singularity", "modal", "daytona"])
+def test_acp_scope_does_not_silently_bypass_container_commands(monkeypatch, backend):
+    from tools import approval
+
+    monkeypatch.setattr(
+        approval, "detect_dangerous_command",
+        lambda _: (True, "danger", "Dangerous operation"),
+    )
+    calls = []
+
+    def reject(command, description, *, allow_permanent=True):
+        calls.append(backend)
+        return "deny"
+
+    with terminal_tool.scoped_approval_callback(reject):
+        outcome = terminal_tool._check_dangerous_command("dangerous", backend)
+    assert outcome["approved"] is False
+    assert calls == [backend]
