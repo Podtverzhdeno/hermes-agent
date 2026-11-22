@@ -384,6 +384,22 @@ Do not treat file-sha differences alone as proof of an upstream fix's correctnes
 
 **Potential apparent hang:** after the worker has returned, unbounded asynchronous `session_update` or usage-update emission may delay the ACP prompt response. Independently measure `agent_finished`, `session_update_sent`, `client_acked` and `prompt_response_sent` spans; distinguish a blocked UI update from a still-running model. Avoid dropping final usage events without recording an observability gap. This scenario is consistent with an upstream issue report, but **not yet reproduced on the owner's installation**.
 
+## 12.2 Multi-agent PR collision inventory and canonical integration rule
+
+**Point-in-time GitHub evidence (2026-11-22):** 16 concurrent draft pull requests (#1–#16), 140 distinct touched files and 14 pairs of PRs editing at least one identical path. These counts become stale as soon as another agent pushes; refresh from all paginated PR changed-file listings, verify exact HEAD before any merge. Coordinating PR #14 already provides a draft collision gate, so the GPT Bridge must **reuse its review findings**, not spawn another PR gate.
+
+| Conflict cluster | Active PRs | Safe merge gate |
+|---|---|---|
+| Autopilot ledger and tests | #1 vs #10 | #1 owns authoritative task/effect semantics; compare #10 diagnostics separately |
+| API server idempotency / retries / SSE | #4, #5, #6, #11 | single assigned integrator; replay-negative tests and unknown-outcome guard; one canonical implementation |
+| Browser/CDP cleanup + log redaction | #13 vs #15 | preserve externally owned CDP and credential redaction, prove both in one integration test |
+| Package discovery | #1, #9, #12, #13 | aggregate only reviewed module includes; build wheel/sdist to assert imports |
+| Semantically overlapping diagnostics without common paths | #7, #8, #9, #12, #13, #14, #16 | choose one producer contract + one read-only observer; archive superseded implementations, avoid duplicate writes |
+
+**Decision D-010 (PROPOSED):** no auto-merge from a numeric priority score. Each overlap requires an integration owner, normalized feature contract, exact HEAD/base SHA, test evidence and a rollback plan. A file-disjoint PR can still conflict semantically by creating a duplicate scheduler, journal or cancellation authority. PR #7's SDD is a review input until the owner chooses canonical docs; its offline ZIP is not an integration target by default.
+
+**Decision D-011 (PROPOSED):** because upstream has significantly evolved ACP state/interrupt management, every old-fork fix needs source-parity comparison before merge. Passing local tests alone is not evidence of safe integration with the current user-installed Hermes or future upstream versions.
+
 ## 13. Primary sources (selection, not an exhaustive literature claim)
 
 - Chrome MV3 service-worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
