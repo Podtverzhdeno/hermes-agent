@@ -5,6 +5,16 @@
 **Scope:** existing Hermes OpenAI-compatible HTTP gateway in `gateway/platforms/api_server.py`, its agent-runner, tools, session state, and future integrations with GPT-facing clients. This is *not* a claim that an official ChatGPT browser extension or a ChatGPT account bridge exists.
 **Owners:** architecture/A0; gateway/API; runner; persistence; security; verification. Parallel agents may implement bounded subprojects only under the coordination rules below.
 
+## Superseding architecture note — upstream-first, 2026-11-22
+
+**Higher-priority decision for production than any custom coordinator proposed below:** this repository's `main@7e910090...` is from 2026-04-01; modern upstream Hermes v0.23.3 (release 2026-11-19) already has **Kanban** (multi-agent durable work lifecycle and worker lanes), **canonical Runs API** with run status, sequenced/replayable SSE, session turn ownership, durable keyed admission and unknown-run resolution. These capabilities are **not present** in the inspected April fork's `gateway/platforms/api_server.py`; that source exposes no `/v1/runs` route. The user has not authorized or verified any deployment migration. <https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3>, <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md>.
+
+**Authority rule:** On a modern, canary-verified Hermes install, **upstream Kanban** is authoritative for task/worker lifecycle; **native Runs** is authoritative for run status, stop/cancel, sessions and progress sequencing. PR #1's `autopilot/ledger.py` is an **unmerged, isolated effect/approval/evidence prototype**, not an additional production scheduler. Its own audit [UPSTREAM_PARITY_AUDIT_2026-11-22.md](https://github.com/Podtverzhdeno/hermes-agent/blob/sdd/autopilot-reliability-2026-11-22/docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md) explicitly says not to run two schedulers. The browser plugin's event journal is observation-only. Only a narrowly scoped external effect-reconciliation layer may supplement the upstream Kanban/Run authority after trusted integration tests.
+
+**Preferred order:** (1) backup/inventory and isolated v0.23.3 canary with distinct `HERMES_HOME`, ports, profiles, database and credentials; (2) verify native Kanban worker prompt delivery on actual Windows host, run creation, SSE cursor replay, stop/unknown resolution and browser-plugin capability handshake; (3) port only demonstrably missing safety invariants from this PR, resolving #4/#5/#6 conflicts; (4) integrate effect ledger with canonical upstream run/task IDs; (5) expand to 50-agent fault injection and explicit owner-approved rollout. **Never `git pull` an unreviewed upstream main into the user's active workspace.**
+
+The current PR #6 is an **interim April-fork API safety patch**, not a recommended replacement for modern upstream's already-implemented native lifecycle. CI on the old fork does not establish modern upstream compatibility.
+
 ## 0. Evidence and boundaries
 
 Observed in baseline source (not inferred from runtime telemetry):
