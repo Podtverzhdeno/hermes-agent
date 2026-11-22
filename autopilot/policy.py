@@ -14,6 +14,7 @@ from hashlib import sha256
 import json
 import math
 import re
+from types import MappingProxyType
 from typing import Any, Mapping
 
 
@@ -24,7 +25,7 @@ class PolicyDenied(PermissionError):
 # Identity is an executable adapter name controlled by the host, not a free-form
 # LLM tool label. An unknown adapter is denied. Critical adapters cannot be
 # enabled by simply saying "autopilot on".
-_CAPABILITY_RISKS = {
+_CAPABILITY_RISKS = MappingProxyType({
     "github.repo.read": "R0",
     "github.pr.read": "R0",
     "github.checks.read": "R0",
@@ -37,7 +38,7 @@ _CAPABILITY_RISKS = {
     "workspace.file.patch": "R1",
     "workspace.file.read": "R0",
     "obsidian.note.patch": "R2",
-}
+})
 
 _GITHUB_REPO = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 _CRITICAL = frozenset(("R3",))
@@ -59,6 +60,23 @@ def _canonical(value: Any) -> Any:
             raise ValueError("action arguments must use string keys")
         return {key: _canonical(val) for key, val in value.items()}
     raise ValueError("unsupported action argument type")
+
+
+def _freeze(value: Any) -> Any:
+    """Recursively freeze all caller-provided action arguments."""
+    if type(value) is dict:
+        return MappingProxyType({key: _freeze(v) for key, v in value.items()})
+    if type(value) is list:
+        return tuple(_freeze(item) for item in value)
+    return value
+
+
+def _thaw(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw(v) for key, v in value.items()}
+    if type(value) is tuple:
+        return [_thaw(item) for item in value]
+    return value
 
 
 def _nonempty(field_name: str, text: str) -> str:
@@ -85,7 +103,7 @@ class ActionIntent:
         encoded = json.dumps(clean, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         if len(encoded.encode("utf-8")) > 65536:
             raise ValueError("action arguments exceed 64 KiB")
-        object.__setattr__(self, "arguments", clean)
+        object.__setattr__(self, "arguments", _freeze(clean))
 
     @property
     def digest(self) -> str:
@@ -97,7 +115,7 @@ class ActionIntent:
             "capability": self.capability,
             "target": self.target,
             "revision": self.revision,
-            "arguments": self.arguments,
+            "arguments": _thaw(self.arguments),
         }
         wire = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
         return "sha256:" + sha256(wire.encode("utf-8")).hexdigest()
@@ -128,6 +146,19 @@ class ActionPolicy:
     # addition to approval at the exact operation boundary.
     permit_critical: bool = False
     policy_revision: str = "policy:v1"
+
+    def __post_init__(self):
+        for field_name in ("allowed_projects", "allowed_roles",
+                           "allowed_capabilities", "allowed_repositories"):
+            values = getattr(self, field_name)
+            if not isinstance(values, (set, frozenset, tuple, list)):
+                raise ValueError(field_name + " must be an iterable allowlist")
+            for value in values:
+                _nonempty(field_name, value)
+            object.__setattr__(self, field_name, frozenset(values))
+        if type(self.permit_critical) is not bool:
+            raise ValueError("permit_critical must be a boolean")
+        _nonempty("policy_revision", self.policy_revision)
 
     def evaluate(self, intent: ActionIntent) -> ActionDecision:
         risk = _CAPABILITY_RISKS.get(intent.capability)
@@ -167,6 +198,11 @@ class ActionPolicy:
             risk=risk,
             requires_owner_approval=risk in _EXTERNAL,
             requires_secondary_confirmation=risk in _CRITICAL,
-            digest=intent.digest,
+            digest="sha256:" + sha256(
+                json.dumps(
+                    {"intent": intent.digest, "policy_revision": self.policy_revision},
+                    sort_keys=True, separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest(),
             reason="permitted proposal; gateway must enforce remaining guards",
         )
