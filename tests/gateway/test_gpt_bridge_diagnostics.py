@@ -262,3 +262,44 @@ async def test_sse_success_still_emits_normal_finish():
             assert "hermes.error" not in wire
             assert '"finish_reason": "stop"' in wire
             assert "data: [DONE]" in wire
+
+
+def test_browser_cors_exposes_run_and_session_ids():
+    from gateway.platforms.api_server import _CORS_HEADERS
+    assert "X-Hermes-Run-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
+    assert "X-Hermes-Session-Id" in _CORS_HEADERS["Access-Control-Expose-Headers"]
+    adapter = APIServerAdapter(
+        PlatformConfig(enabled=True, extra={"cors_origins": ["https://trusted.example"]})
+    )
+    allowed = adapter._cors_headers_for_origin("https://trusted.example")
+    assert allowed["Access-Control-Allow-Origin"] == "https://trusted.example"
+    assert "X-Hermes-Run-Id" in allowed["Access-Control-Expose-Headers"]
+    assert adapter._cors_headers_for_origin("https://untrusted.example") is None
+
+
+@pytest.mark.asyncio
+async def test_nonstream_agent_reported_error_is_server_failure_not_200(caplog):
+    app, adapter = _app_and_adapter()
+    secret = "SECRET_FROM_UPSTREAM_ERROR"
+    idem = str(uuid.uuid4())
+    calls = 0
+
+    async def failing_agent(**kwargs):
+        nonlocal calls
+        calls += 1
+        return ({"error": secret, "final_response": ""},
+                {"input_tokens": 1, "output_tokens": 0, "total_tokens": 1})
+
+    with patch.object(adapter, "_run_agent", side_effect=failing_agent):
+        async with TestClient(TestServer(app)) as client:
+            for _ in range(2):
+                response = await client.post("/v1/chat/completions",
+                    json=_chat_body(), headers={"Idempotency-Key": idem})
+                assert response.status == 500
+                assert response.headers.get("X-Hermes-Run-Id")
+                raw = await response.text()
+                assert secret not in raw
+                assert (json.loads(raw)["error"]["code"]) == "agent_failed"
+    # A failed result must not be cached for replay as successful output.
+    assert calls == 2
+    assert secret not in "\n".join(caplog.messages)
