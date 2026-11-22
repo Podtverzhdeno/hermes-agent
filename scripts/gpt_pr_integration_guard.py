@@ -113,11 +113,19 @@ def collect(repo: str, token: str = '') -> dict[str, Any]:
             raise IncompleteSnapshot(f'PR #{n}: changed files exceed safe scan limit')
         files = _pages(f'{prefix}/pulls/{n}/files', token, MAX_FILES_PER_PR, f'PR #{n} files')
         paths = []
+        renamed_from = []
         for item in files:
             name = item.get('filename') if isinstance(item, dict) else None
             if not isinstance(name, str) or not name:
                 raise IncompleteSnapshot(f'PR #{n}: file path missing')
             paths.append(name)
+            # A rename must reserve BOTH the old and new path. Otherwise a
+            # second PR editing the old name produces a false "no collision".
+            if item.get('status') == 'renamed':
+                old = item.get('previous_filename')
+                if not isinstance(old, str) or not old:
+                    raise IncompleteSnapshot(f'PR #{n}: rename source path missing')
+                renamed_from.append(old)
         if len(paths) != changed_files or len(set(paths)) != len(paths):
             raise IncompleteSnapshot(f'PR #{n}: file list incomplete/duplicated')
         prs.append({
@@ -125,6 +133,7 @@ def collect(repo: str, token: str = '') -> dict[str, Any]:
             'base_repo': base_repo, 'head_ref': head['ref'], 'head_sha': head['sha'],
             'head_repo': head_repo, 'draft': detail.get('draft'),
             'changed_files': changed_files, 'paths': paths,
+            'renamed_from_paths': sorted(set(renamed_from)), 
         })
 
     # Cross-PR reads are not atomic. Catch any changed PR head, base, or fork
@@ -153,7 +162,7 @@ def collect(repo: str, token: str = '') -> dict[str, Any]:
     if last_sha != default_sha:
         raise IncompleteSnapshot('Default branch moved during scan')
     return {
-        'schema': 'hermes.pr.snapshot.v2',
+        'schema': 'hermes.pr.snapshot.v3',
         'repository': repo,
         'collected_at': dt.datetime.now(dt.timezone.utc).isoformat(),
         'default_branch': branch,
@@ -168,8 +177,8 @@ def _is_sensitive(path: str) -> bool:
 
 
 def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
-    if snapshot.get('schema') != 'hermes.pr.snapshot.v2':
-        raise IncompleteSnapshot('Unsupported snapshot schema; v2 required for fork-safe ancestry')
+    if snapshot.get('schema') != 'hermes.pr.snapshot.v3':
+        raise IncompleteSnapshot('Unsupported snapshot schema; v3 required for rename/fork-safe ancestry')
     if not isinstance(snapshot.get('repository'), str) or not snapshot['repository']:
         raise IncompleteSnapshot('Repository identity missing')
     if not isinstance(snapshot.get('default_branch'), str) or not snapshot['default_branch']:
@@ -197,6 +206,14 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
                 or len(paths) != len(set(paths)) or type(p.get('changed_files')) is not int
                 or len(paths) != p['changed_files']):
             raise IncompleteSnapshot(f'PR #{n}: missing/incomplete paths')
+        old_paths = p.get('renamed_from_paths')
+        if not isinstance(old_paths, list) or not all(
+            isinstance(path, str) and path for path in old_paths
+        ) or len(old_paths) != len(set(old_paths)):
+            raise IncompleteSnapshot(f'PR #{n}: rename source evidence missing')
+        # One renamed source path per changed-file record at most.
+        if len(old_paths) > p['changed_files']:
+            raise IncompleteSnapshot(f'PR #{n}: invalid rename sources')
         pulls[n] = p
         identity = (p['head_repo'], p['head_ref'])
         if identity in branches:
@@ -255,7 +272,9 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
     nums = sorted(pulls)
     for i, a in enumerate(nums):
         for b in nums[i + 1:]:
-            overlap = sorted(set(pulls[a]['paths']) & set(pulls[b]['paths']))
+            a_paths = set(pulls[a]['paths']) | set(pulls[a]['renamed_from_paths'])
+            b_paths = set(pulls[b]['paths']) | set(pulls[b]['renamed_from_paths'])
+            overlap = sorted(a_paths & b_paths)
             if not overlap:
                 continue
             stacked = a in ancestors(b) or b in ancestors(a)
@@ -303,7 +322,7 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
     findings.sort(key=lambda f: ({'blocker': 0, 'review': 1}[f['severity']],
                                  f['code'], f['prs']))
     return {
-        'schema': 'hermes.pr.watch.report.v2',
+        'schema': 'hermes.pr.watch.report.v3',
         'repository': snapshot['repository'],
         'collected_at': snapshot.get('collected_at'),
         'default_head_sha': snapshot['default_head_sha'],
