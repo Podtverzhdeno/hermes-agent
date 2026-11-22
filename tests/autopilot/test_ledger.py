@@ -511,3 +511,20 @@ def test_terminal_evidence_cannot_be_rewritten_after_success(ctx):
         ledger.record_evidence(task, "tests", "trusted", "git:abc123",
                                "failed", "artifact:tamper", trusted=True)
     assert ledger.get(task)["status"] == "succeeded"
+
+
+def test_approval_cannot_reserve_previously_acknowledged_effect_again(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, first = lease(ledger)
+    ledger.request_approval(task, "A1", first, "write", "sha256:fixed", clock() + 100)
+    ledger.decide_approval(task, "write", "sha256:fixed", "owner", True)
+    claim = ledger.claim("A1", lease_seconds=15)
+    ledger.reserve_effect(task, "A1", claim["fence"], "write", "sha256:fixed")
+    ledger.acknowledge_effect(task, "A1", claim["fence"], "write",
+                              "sha256:fixed", "receipt:first")
+    with pytest.raises(LedgerConflict, match="cannot be approved again"):
+        ledger.request_approval(task, "A1", claim["fence"],
+                                "write", "sha256:fixed", clock() + 100)
+    assert ledger.get(task)["status"] == "running"
+    assert ledger.effects(task)[0]["result_ref"] == "receipt:first"
