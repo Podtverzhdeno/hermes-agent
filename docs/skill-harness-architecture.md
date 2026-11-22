@@ -19,7 +19,7 @@ This pilot provides:
 3. Surfacing the validated manifest in skill_view() responses;
 4. A lookup-name/path guard and safer symlink boundaries for the skill reader
    and skill manager;
-5. Thirteen individually scoped manifests for initial high-risk/high-value skills;
+5. Twenty-seven individually scoped manifests for selected high-risk/high-value skills;
 6. A repository-wide inventory auditor (117 SKILL.md at baseline) and targeted tests;
 7. A validated skill_manage(write_harness) action with optimistic SHA-256 read-back;
 8. An enforced size ceiling for linked references viewed under a harness;
@@ -95,6 +95,11 @@ requires harness.yaml.** The existing SKILL.md format remains portable.
 | native-mcp | Tool poisoning/overprivilege | server trust and schemas | read-only probe + inventory |
 | github-auth | Secret disclosure / wrong identity | scoped identity and safe credential store | redacted auth and read access checks |
 | github-repo-management | Irreversible admin changes | owner, branch rules, approval scope | before/after receipt and resource IDs |
+| github-issues | Token scraping, duplicate or unauthorized issue writes | account, issue, existing state | read-back of issue URL, labels and comments |
+| mcporter | Untrusted MCP tools and surprise writes | server identity, schema, side-effect scope | tool execution and resource receipt |
+| ocr-and-documents | Private file exfiltration, incorrect OCR | confidentiality, source/pages and local tooling | page-grounded extraction with uncertainty |
+| fastmcp | Vulnerable tool surface or public exposure | protocol, tool permissions, transport | schema tests, valid/invalid calls and cleanup |
+| notion | Duplicate writes or wrong resource scope | integration ID, page/data-source and revision | before/after resource read-back |
 | pytorch-fsdp | Stale APIs / GPU cost / deadlock | torch version, ranks, baseline, checkpoints | measured per-rank tests and save/load |
 
 These are initial **hypotheses**, not proven quality gains. Compare against
@@ -115,7 +120,7 @@ when the file is too large; this is a real guard, not merely a prose rule.
 
 Inventory at the initial fork revision: **117** Skills (74 bundled + 43
 optional), **0** per-skill harness manifests; 44 SKILL.md files were
-greater than 10 KiB. This first wave specializes 13 Skills, i.e. about 11%
+greater than 10 KiB. This expanded pilot specializes 27 Skills, i.e. about 23%
 of baseline inventory. Avoid interpreting coverage as a quality metric.
 
 ## Workflow for a hardened v2
@@ -239,3 +244,46 @@ python -m pytest tests/ -q
   https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html
 - OWASP Agentic Skills Top 10:
   https://owasp.github.io/www-project-agentic-skills-top-10/
+
+## Corrective hardening pass — 2026-11-22
+
+The initial 22-manifest pilot had **10 broken activation exclusions**:
+`activation.not_when: undefined` is not a list and caused validation to fail
+closed for those Skills. This was a functionality regression, not just missing
+metadata. The corrective commit replaces each placeholder with two domain-
+specific negative routing examples and adds catalog tests that reject such
+placeholder exclusions for every manifest.
+
+Five additional per-Skill contracts now cover `github-issues`, `mcporter`,
+`ocr-and-documents`, `fastmcp`, and `notion`. The issue Skill no longer
+extracts GitHub credentials from local secrets; it uses an existing GitHub
+provider or authenticated `gh` session. The PDF Skill now treats remote
+conversion of private content as a separate, explicitly authorized operation,
+and recognizes that PyMuPDF can optionally OCR through Tesseract.
+
+This still does **not** grant manifest-declared capabilities, perform domain
+task evaluations, prevent all TOCTOU races, or demonstrate runtime isolation.
+An individual harness is a **contract**, not a security boundary. Validate
+the full skills corpus on each change; the tests and source audit are evidence
+of schema and content integrity, not model performance.
+
+### Additional verification references
+
+- GitHub CLI issue documentation: https://cli.github.com/manual/gh_issue_edit
+- PyMuPDF OCR: https://pymupdf.readthedocs.io/en/latest/ocr/index.html
+- MCP guidance on annotation trust: https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/
+- OWASP Agentic Skills Top 10: https://owasp.github.io/www-project-agentic-skills-top-10/
+
+### Suggested next engineering layer (not implemented here)
+
+1. Add host-side `SkillExecutionContext` with immutable skill identity, content
+   digest, grants, resource scopes, tool budgets and structured operation IDs.
+2. Enforce every tool invocation at the central dispatcher using a scoped policy
+   decision point; never accept capability annotations as authority.
+3. Add skill-specific paired baseline/candidate eval cases with seeded
+   fixtures, adversarial content and read-back receipts. Report task success,
+   cost, activation precision and safety regressions separately.
+4. For cross-process filesystem modifications, replace optimistic SHA checks
+   with atomic compare-and-swap or descriptor-based operations.
+5. Keep each Skill's versioned reference documentation current; re-verify
+   technical APIs and examples before promotion to production.

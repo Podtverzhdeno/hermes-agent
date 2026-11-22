@@ -1,0 +1,23 @@
+# Advisory-only per-skill contract; does not grant tools or permissions.
+schema_version: 1
+skill: notion
+activation:
+  when: ["Find, read or update identified Notion pages, blocks or data sources","Manage Notion workspaces through approved API operations"]
+  not_when: ["Modify an Obsidian vault in Markdown files rather than Notion","Modify Google Docs or Drive resources unrelated to a Notion target"]
+capabilities:
+  tools: ["curl","terminal","Notion API"]
+  side_effects: external_write
+  approval_required: ["Create, archive, delete or bulk-edit pages and databases outside the explicit task","Change sharing, integration access or export private workspace content"]
+lifecycle:
+  preflight: ["Resolve integration identity, Notion API version and exact page/data-source IDs","Check shared integration permissions and existing object state"]
+  execute: ["Read object and paginate results before selected mutations","Keep tokens out of commands and outputs; distinguish database versus data-source IDs"]
+  verify: ["Check API status and read back updated properties or blocks","Identify duplicate page creation and unexpected linked-object side effects"]
+  recover: ["After uncertain write query the target before any retry","Respect rate limits, conflict errors and provider permission denials"]
+budget:
+  max_tool_calls: 38
+  max_reference_bytes: 196608
+evidence:
+  required: ["Object identifiers, API version and authorized operation","Before/after property proof and any failure or uncertain state"]
+output:
+  format: "Verified Notion operation receipts per affected resource"
+  acceptance: ["No unapproved external sharing or archive/delete","No credential disclosure or duplicate updates from blind retry"]

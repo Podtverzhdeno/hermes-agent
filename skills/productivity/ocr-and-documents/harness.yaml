@@ -1,0 +1,23 @@
+# Advisory-only per-skill contract; does not grant tools or permissions.
+schema_version: 1
+skill: ocr-and-documents
+activation:
+  when: ["Extract and validate text from PDF pages or scanned documents","Run OCR while preserving page-level provenance and layout evidence"]
+  not_when: ["Modify DOCX styles or PowerPoint slide design rather than extract document content","Process already extracted plain text with no page structure or OCR requirement"]
+capabilities:
+  tools: ["read_file","execute_code","web_extract","terminal"]
+  side_effects: local_write
+  approval_required: ["Upload a private document to an external OCR, cloud conversion or extraction service","Install large OCR models or overwrite source files"]
+lifecycle:
+  preflight: ["Classify source privacy, format, page count and permitted processing location","Inspect text layer and select bounded page ranges before choosing OCR"]
+  execute: ["Prefer local text-layer extraction; use OCR only on pages requiring it","Keep original document read-only and record method, page numbers and extraction gaps"]
+  verify: ["Compare extracted passages and tables with representative page images","Flag uncertain formulas, table cells and unreadable pages rather than fabricate completeness"]
+  recover: ["On extraction failure preserve originals and return page-scoped partial results","Use alternate local extraction only within existing privacy and resource authorization"]
+budget:
+  max_tool_calls: 35
+  max_reference_bytes: 262144
+evidence:
+  required: ["Source filename or digest, page ranges and method","Page-anchored extracts with uncertainty for OCR and complex layouts"]
+output:
+  format: "Page-grounded document extraction and verification report"
+  acceptance: ["No private input sent to third-party tools without authorization","No unverified complete-extraction or numeric-accuracy claim"]
