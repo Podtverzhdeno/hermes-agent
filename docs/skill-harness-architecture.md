@@ -287,3 +287,22 @@ of schema and content integrity, not model performance.
    with atomic compare-and-swap or descriptor-based operations.
 5. Keep each Skill's versioned reference documentation current; re-verify
    technical APIs and examples before promotion to production.
+
+### Routing evaluation corpus v2 (static fixtures, **not** observed runs)
+
+The hand-authored corpus now has 27 normal task prompts, 27 **genuine**
+adjacent-skill exclusion prompts, and eight injected-content scenarios.
+Previously the negative prompts accidentally described **positive** cases
+for their forbidden Skill, while the positive prompts were merely Skill names.
+Those fixtures would punish correct routing and overstate activation quality.
+
+The scorer now checks a declared expected *alternative* on hard negatives
+where provided, not merely that the forbidden Skill was avoided.
+It still needs trusted agent traces and does **not** execute a model.
+The matching static tests guard only data integrity and scoring semantics.
+
+Metrics from this dataset are intentionally **unreported** until baseline
+and candidate runs are captured with the same prompt, model, harness,
+tool registry and resource state. Future corpus expansions should add
+paraphrases, ambiguity, mixed requests, partial tool errors and multiple
+languages, then keep a sealed holdout set.
