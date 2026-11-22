@@ -101,3 +101,8 @@ This yields **at least 15 colliding exact paths in the sampled inventory**, excl
 Official Hermes Observer Hooks are **fail-open** and can surface sanitized provider/tool metadata but do not act as a durable external effect authority: https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks . Upstream Kanban worker lanes already own task lifecycle and review transitions: https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-worker-lanes . Browser companion's profile/version/consent capability boundary: https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md . OpenAI API background response ID and signed webhook lifecycle are separate from ChatGPT web UI: https://developers.openai.com/api/docs/guides/background and https://developers.openai.com/api/docs/guides/webhooks .
 
 All of these are **reference contracts**, not evidence that the user's local installed Hermes or browser already exposes them.
+
+
+| H-014 | CONFIRMED → PATCHED | Journal `missing=sum(max(seq)-len)` counted an unseen source prefix `1..49` as 49 proven holes when first observed seq was 50 | In multi-source or late-attach monitoring, coverage misinformation can cause false gap alarms and incorrect replay operator advice | PR #17 switches to internal `max-min+1-count` + separate unverified-prefix flag and action, 5 regression tests; needs exact-head CI |
+
+**H-014 evidence limits:** no trusted producer cursor or source incarnation is currently available; `unverified_prefix_sources` is a **conservative uncertainty marker**, not a verified missing sequence count. Parent watcher _fingerprint currently omits prefix list, and the signed checkpoint remains an unimplemented release gate. This change is offline only.
