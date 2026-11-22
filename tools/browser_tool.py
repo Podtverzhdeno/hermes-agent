@@ -1418,14 +1418,20 @@ def browser_close(task_id: Optional[str] = None) -> str:
 
     effective_task_id = task_id or "default"
     with _cleanup_lock:
-        had_session = effective_task_id in _active_sessions
+        existing = _active_sessions.get(effective_task_id)
+        had_session = existing is not None
+        features = existing.get("features") if isinstance(existing, dict) else None
+        external_cdp = isinstance(features, dict) and features.get("cdp_override") is True
 
     cleanup_browser(effective_task_id)
 
     response = {
         "success": True,
-        "closed": True,
+        "closed": True,  # Hermes session lease closed, not necessarily browser process.
     }
+    if external_cdp:
+        response["browser_process_closed"] = False
+        response["external_cdp_detached"] = True
     if not had_session:
         response["warning"] = "Session may not have been active"
     return json.dumps(response, ensure_ascii=False)
