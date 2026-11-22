@@ -1,0 +1,60 @@
+name: Hermes GPT coordination offline contracts
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/hermes_gpt_coordination_audit.py'
+      - 'tests/coordination/**'
+      - 'docs/sdd/hermes-gpt-integration/**'
+      - '.github/workflows/hermes-gpt-coordination.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Compile standalone scanner
+        run: python -m py_compile scripts/hermes_gpt_coordination_audit.py
+      - name: Run offline collision audit contracts
+        run: python -m unittest discover -s tests/coordination -p "test_*.py" -v
+
+  # Explicit operator action only; never runs against user credentials.
+  manual-live-inventory:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Collect public repository PR and branch overlaps (read only)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python scripts/hermes_gpt_coordination_audit.py \
+            --repo "$GITHUB_REPOSITORY" --base main --output coordination-report.json
+          code=$?
+          set -e
+          if [ -f coordination-report.json ]; then cat coordination-report.json; fi
+          exit "$code"
+      - name: Upload diagnostic report even if inventory finds collisions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-gpt-coordination-snapshot
+          path: coordination-report.json
+          if-no-files-found: ignore
+          retention-days: 7
