@@ -91,3 +91,8 @@ The process prints only state transitions. A crash between persisting an alert a
 - Direct Python consumers should call verify_chain before assess and handle SQLite failures without treating corruption as a worker failure. The packaged CLI already performs integrity checking. No authenticated ingress, live session monitor, scheduler or production repair is added here.
 
 Integration owner note: this patch is stacked on PR #12 and is not a separate replacement for the PR #9 gpt_bridge observer. Consult the SDD collision map before merging.
+
+
+#### Sequence prefix / internal gap contract
+
+A newly observed source whose first sequence is `50` has an **unverified source prefix**, not 49 confirmed gaps in the inspected run. `missing_sequences` counts only holes between observed minimum and maximum for each source, `unverified_prefix_sources` lists sources starting above 1, and `UNVERIFIED_SOURCE_PREFIX` requests a producer cursor/checkpoint review. A known internal hole still requests `FETCH_MISSING_EVENTS`. This is fail-closed because the source may have emitted earlier events outside the journal. Neither status means an external write did or did not happen.
