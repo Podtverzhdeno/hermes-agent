@@ -1,0 +1,58 @@
+name: GPT stacked PR ancestry watch (read only)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/gpt_pr_stack_guard.py'
+      - 'tests/scripts/test_gpt_pr_stack_guard.py'
+      - '.github/workflows/gpt-stack-guard.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */4 * * *'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: gpt-stack-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'pytest>=8,<10'
+      - name: Run read-only ancestry guard unit tests
+        run: python -m pytest tests/scripts/test_gpt_pr_stack_guard.py -q -o addopts=''
+
+  live-snapshot:
+    # Avoid running network inventory with untrusted pull_request code.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    needs: offline-contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Collect pinned open PR ancestry snapshot without writes
+        id: audit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/gpt_pr_stack_guard.py --repo "$GITHUB_REPOSITORY" --output stack-report.json
+      - name: Preserve review evidence, including non-green audits
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gpt-stack-report
+          path: stack-report.json
+          if-no-files-found: warn
+          retention-days: 14
