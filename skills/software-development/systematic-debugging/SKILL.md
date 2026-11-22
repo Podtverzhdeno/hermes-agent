@@ -1,7 +1,7 @@
 ---
 name: systematic-debugging
 description: Use when encountering any bug, test failure, or unexpected behavior. 4-phase root cause investigation — NO fixes without understanding the problem first.
-version: 1.1.0
+version: 1.2.0
 author: Hermes Agent (adapted from obra/superpowers)
 license: MIT
 metadata:
@@ -11,6 +11,18 @@ metadata:
 ---
 
 # Systematic Debugging
+
+## Harness-specific causal verification
+
+Treat reproduction, root-cause diagnosis and implementation as different
+states. Pin the environment, input, version, failing command and timestamp;
+record at least one discriminating experiment that separates the proposed
+cause from plausible alternatives. The sibling harness.json requires the
+reproducer and causal evidence for diagnosis; a fix additionally requires
+a passing regression at the changed revision. Unknown external timeouts
+must be reconciled, never interpreted as proof the bug is fixed.
+
+
 
 ## Overview
 
