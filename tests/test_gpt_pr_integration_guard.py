@@ -325,6 +325,28 @@ class PRWatchTests(unittest.TestCase):
         self.assertTrue(any(f['code'] == 'INDEPENDENT_WRITE_COLLISION'
                             for f in report['findings']))
 
+    def test_windows_prohibited_device_and_component_names_block_checkout(self):
+        samples = [
+            'src/CON.txt', 'src/nul.txt', 'docs/AUX.log', 'jobs/COM1.py',
+            'jobs/LPT9.txt', 'docs/trailing.', 'docs/trailing ',
+            'src/no?.py', 'src/no:name.py', 'src/back\\slash.py',
+            'src/control\x01.py', 'src//empty.py', 'src/../parent.py',
+        ]
+        for path in samples:
+            with self.subTest(path=repr(path)):
+                report = guard.analyze(snapshot(pr(1, [path])))
+                self.assertIn('WINDOWS_UNREPRESENTABLE_PATH',
+                              [i['code'] for i in report['findings']])
+                self.assertEqual(report['integration_verdict'], 'HOLD_FOR_REVIEW')
+
+    def test_normal_windows_paths_do_not_produce_windows_invalid_warnings(self):
+        report = guard.analyze(snapshot(
+            pr(1, ['src/runner.py', 'docs/Design Note.md', '.github/workflows/ci.yml'])
+        ))
+        self.assertNotIn('WINDOWS_UNREPRESENTABLE_PATH',
+                         [i['code'] for i in report['findings']])
+        self.assertEqual(report['integration_verdict'], 'REVIEW_ONLY')
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
