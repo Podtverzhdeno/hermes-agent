@@ -30,7 +30,8 @@ def snapshot(*items):
             "main_sha": SHA,
             "source_verification": {"local_extension_verified": True, "live_monitor_connected": True},
             "decisions": {"api_pr": None, "observer_pr": None, "control_plane": "upstream_kanban"},
-            "proposals": list(items) or [entry(1)]}
+            "proposals": list(items) or [entry(1)],
+            "reported_open_pr_count": len(items) or 1}
 
 
 def codes(s):
@@ -155,3 +156,41 @@ def test_cli_does_not_signal_merge_approval_on_clean_snapshot(tmp_path):
     run2 = subprocess.run([sys.executable, str(SCRIPT), str(path), "--structural-only-ok"], capture_output=True, text=True)
     assert run2.returncode == 0
     assert json.loads(run2.stdout)["release_authorized"] is False
+
+
+def test_unknown_inventory_count_is_visible_not_implicitly_complete():
+    s = snapshot(entry(1, domains=["api", "observer"]))
+    s["decisions"].update(api_pr=1, observer_pr=1)
+    s.pop("reported_open_pr_count")
+    result = gate.evaluate(s, now=NOW)
+    assert "PR_INVENTORY_COUNT_UNKNOWN" in codes(s)
+    assert result["status"] == "BLOCKED"
+    assert result["inventory_coverage_attested"] is False
+
+
+def test_mismatched_inventory_count_detects_partial_listing():
+    s = snapshot(entry(1, domains=["api", "observer"]))
+    s["decisions"].update(api_pr=1, observer_pr=1)
+    s["reported_open_pr_count"] = 24
+    result = gate.evaluate(s, now=NOW)
+    assert "PR_INVENTORY_COUNT_MISMATCH" in codes(s)
+    assert result["reported_open_pr_count"] == 24
+    assert result["proposals_scanned"] == 1
+    assert result["status"] == "BLOCKED"
+
+
+def test_matching_self_reported_count_does_not_authorize_release():
+    s = snapshot(entry(1, domains=["api", "observer"]))
+    s["decisions"].update(api_pr=1, observer_pr=1)
+    result = gate.evaluate(s, now=NOW)
+    assert result["status"] == "STRUCTURAL_ONLY_NOT_APPROVED"
+    assert result["inventory_coverage_attested"] is False
+    assert result["release_authorized"] is False
+
+
+@pytest.mark.parametrize("invalid", [-1, True, 1.5, "24", 501])
+def test_invalid_reported_counts_are_not_trusted(invalid):
+    s = snapshot(entry(1))
+    s["reported_open_pr_count"] = invalid
+    with pytest.raises(gate.InvalidSnapshot):
+        gate.evaluate(s, now=NOW)
