@@ -19,7 +19,7 @@ PILOT_NAMES = frozenset((
     "github-code-review", "github-repo-management", "codebase-inspection",
     "arxiv", "ml-paper-writing", "obsidian", "google-workspace", "native-mcp",
     "pytorch-fsdp", "chroma", "faiss", "qdrant-vector-search", "dspy",
-    "evaluating-llms-harness", "writing-plans",
+    "evaluating-llms-harness", "writing-plans", "hermes-agent",
 ))
 
 
