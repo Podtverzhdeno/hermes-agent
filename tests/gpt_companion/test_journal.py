@@ -128,7 +128,7 @@ def test_prior_attempt_events_do_not_hide_latest_failure(context):
     {"prompt": "secret"}, {"api_key": "sk-example"}, {"raw_output": "hi"},
     {"reason_code": "error detail; password"}, {"sequence": True},
     {"event_id": "a b"}, {"attempt": 0}, {"schema_version": 2},
-    {"kind": "provider.anything"},
+    {"kind": "provider.anything"}, {"kind": ["worker.started"]},
 ])
 def test_rejects_unapproved_content_or_invalid_contract(change):
     with pytest.raises(JournalConflict):
@@ -177,3 +177,38 @@ def test_rate_limit_is_diagnosis_not_permission_to_retry(context):
     result = db.assess("run-1")
     assert result["next_action"] == "HONOR_RETRY_AFTER_AND_BUDGET"
     assert result["state"] == "REPORTED_FAILED"
+
+
+def test_delayed_backfill_does_not_fake_worker_liveness(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started"))
+    clock.jump(2)
+    db.ingest(event(3, "worker.heartbeat"))
+    clock.jump(125)
+    # Older event is delivered late; its receipt time is NOT a new heartbeat.
+    db.ingest(event(2, "worker.progress"))
+    result = db.assess("run-1")
+    assert result["missing_sequences"] == 0
+    assert result["state"] == "WORKER_UNRESPONSIVE"
+    assert result["live_age_seconds"] == 125
+    assert result["progress_age_seconds"] == 127
+
+
+def test_heartbeat_only_worker_eventually_has_no_progress(context):
+    db, clock = context
+    db.ingest(event(1, "run.accepted"))
+    for seq in range(2, 7):
+        clock.jump(65)
+        db.ingest(event(seq, "worker.heartbeat"))
+    result = db.assess("run-1")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["progress_age_seconds"] == 325
+    assert result["live_age_seconds"] == 0
+
+
+def test_invalid_observation_clock_fails_closed(context):
+    db, _ = context
+    db.ingest(event(1, "worker.started"))
+    for invalid in (float("nan"), float("inf"), float("-inf"), -1):
+        with pytest.raises(ValueError, match="observation clock"):
+            db.assess("run-1", now=invalid)
