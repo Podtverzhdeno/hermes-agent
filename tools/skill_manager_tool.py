@@ -32,6 +32,7 @@ Directory layout for user skills:
             └── SKILL.md
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -40,7 +41,10 @@ import shutil
 import tempfile
 from pathlib import Path
 from hermes_constants import get_hermes_home
-from agent.skill_harness import path_within_root
+from agent.skill_harness import (
+    MAX_MANIFEST_BYTES, SkillHarnessError, path_within_root,
+    validate_skill_harness,
+)
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -461,6 +465,87 @@ def _patch_skill(
     }
 
 
+def _write_harness(
+    name: str, file_content: str, expected_sha256: str = None
+) -> Dict[str, Any]:
+    """Validated, optimistic-concurrency update for an agent-managed harness.
+
+    Existing manifests require the digest obtained from skill_view. A new
+    manifest can be created without that digest. This does not authorize
+    tool permissions; the contract is procedural metadata only.
+    """
+    existing = _find_skill(name)
+    if not existing:
+        return {"success": False, "error": f"Skill '{name}' not found."}
+
+    if not isinstance(file_content, str):
+        return {"success": False, "error": "file_content must be YAML text."}
+    if len(file_content.encode("utf-8")) > MAX_MANIFEST_BYTES:
+        return {"success": False, "error": "Harness manifest exceeds 32 KiB."}
+
+    skill_dir = existing["path"]
+    target = skill_dir / "harness.yaml"
+    if target.is_symlink() or not path_within_root(target, skill_dir):
+        return {"success": False, "error": "Unsafe harness path/symlink."}
+
+    try:
+        from agent.skill_utils import parse_frontmatter
+
+        skill_raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        meta, _ = parse_frontmatter(skill_raw)
+        canonical_name = meta.get("name")
+        if not isinstance(canonical_name, str) or not canonical_name:
+            return {"success": False, "error": "SKILL.md has no canonical name."}
+        validate_skill_harness(yaml.safe_load(file_content), canonical_name)
+    except (OSError, UnicodeError, yaml.YAMLError, SkillHarnessError) as exc:
+        return {"success": False, "error": f"Invalid harness: {exc}"}
+
+    try:
+        original = target.read_text(encoding="utf-8") if target.exists() else None
+    except (OSError, UnicodeError) as exc:
+        return {"success": False, "error": f"Cannot read existing harness: {exc}"}
+
+    if original is not None:
+        if not expected_sha256 or len(expected_sha256) != 64:
+            return {
+                "success": False,
+                "error": "Existing harness requires expected_sha256 from skill_view.",
+            }
+        actual = hashlib.sha256(original.encode("utf-8")).hexdigest()
+        if actual != expected_sha256:
+            return {
+                "success": False,
+                "error": "Harness changed since it was read; re-read and reconcile.",
+                "current_sha256": actual,
+            }
+    elif expected_sha256:
+        return {
+            "success": False,
+            "error": "Harness does not exist; do not provide expected_sha256 on creation.",
+        }
+
+    try:
+        _atomic_write_text(target, file_content)
+    except OSError as exc:
+        return {"success": False, "error": f"Cannot write harness: {exc}"}
+
+    scan_error = _security_scan_skill(skill_dir)
+    if scan_error:
+        if original is None:
+            target.unlink(missing_ok=True)
+        else:
+            _atomic_write_text(target, original)
+        return {"success": False, "error": scan_error}
+
+    return {
+        "success": True,
+        "message": f"Validated harness for '{name}' saved.",
+        "path": str(target),
+        "manifest_sha256": hashlib.sha256(file_content.encode("utf-8")).hexdigest(),
+        "enforcement": "advisory_only",
+    }
+
+
 def _delete_skill(name: str) -> Dict[str, Any]:
     """Delete a skill."""
     existing = _find_skill(name)
@@ -589,6 +674,7 @@ def skill_manage(
     old_string: str = None,
     new_string: str = None,
     replace_all: bool = False,
+    expected_sha256: str = None,
 ) -> str:
     """
     Manage user-created skills. Dispatches to the appropriate action handler.
@@ -612,6 +698,9 @@ def skill_manage(
             return json.dumps({"success": False, "error": "new_string is required for 'patch'. Use empty string to delete matched text."}, ensure_ascii=False)
         result = _patch_skill(name, old_string, new_string, file_path, replace_all)
 
+    elif action == "write_harness":
+        result = _write_harness(name, file_content, expected_sha256)
+
     elif action == "delete":
         result = _delete_skill(name)
 
@@ -628,7 +717,7 @@ def skill_manage(
         result = _remove_file(name, file_path)
 
     else:
-        result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}
+        result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, write_harness, delete, write_file, remove_file"}
 
     if result.get("success"):
         try:
@@ -653,7 +742,7 @@ SKILL_MANAGE_SCHEMA = {
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "
         "edit (full SKILL.md rewrite — major overhauls only), "
-        "delete, write_file, remove_file.\n\n"
+        "delete, write_harness, write_file, remove_file.\n\n"
         "Create when: complex task succeeded (5+ calls), errors overcome, "
         "user-corrected approach worked, non-trivial workflow discovered, "
         "or user asks you to remember a procedure.\n"
@@ -670,7 +759,7 @@ SKILL_MANAGE_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create", "patch", "edit", "delete", "write_file", "remove_file"],
+                "enum": ["create", "patch", "edit", "delete", "write_harness", "write_file", "remove_file"],
                 "description": "The action to perform."
             },
             "name": {
@@ -726,7 +815,11 @@ SKILL_MANAGE_SCHEMA = {
             },
             "file_content": {
                 "type": "string",
-                "description": "Content for the file. Required for 'write_file'."
+                "description": "Text for write_file or complete YAML for write_harness."
+            },
+            "expected_sha256": {
+                "type": "string",
+                "description": "For updating an existing harness: its current SHA-256 from skill_view. Omit only when creating a new harness."
             },
         },
         "required": ["action", "name"],
@@ -750,6 +843,7 @@ registry.register(
         file_content=args.get("file_content"),
         old_string=args.get("old_string"),
         new_string=args.get("new_string"),
-        replace_all=args.get("replace_all", False)),
+        replace_all=args.get("replace_all", False),
+        expected_sha256=args.get("expected_sha256")),
     emoji="📝",
 )
