@@ -95,7 +95,7 @@ def test_attempts_are_bounded_and_eventually_fail(ctx):
     clock.advance(16)
     ledger.claim("recover")  # triggers expiration but next retry is delayed
     clock.advance(2)
-    assert ledger.claim("recover")["id"] == task
+    assert ledger.claim("recover", lease_seconds=15)["id"] == task
     clock.advance(16)
     assert ledger.claim("recover") is None
     assert ledger.get(task)["status"] == "failed"
@@ -135,7 +135,7 @@ def test_unknown_effect_must_be_reconciled_before_retry(ctx):
     clock.advance(16)
     assert ledger.claim("A3") is None
     assert ledger.get(task)["status"] == "needs_reconciliation"
-    with pytest.raises(LedgerConflict):
+    with pytest.raises(ValueError, match="outcome and independent proof_ref"):
         ledger.reconcile_effect(task, "deploy", "unknown", "none")
     ledger.reconcile_effect(task, "deploy", "acknowledged", "audit:external-789")
     assert ledger.get(task)["status"] == "retry_wait"
