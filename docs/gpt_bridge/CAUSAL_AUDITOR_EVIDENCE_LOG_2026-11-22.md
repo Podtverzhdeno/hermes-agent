@@ -133,3 +133,11 @@ As of authoring this log: 49 tests passed locally in the isolated container (`Ra
 - **GREEN (source locally tested)** every STOP kind now checks missing/UNKNOWN reasons. Stop evidence sorted by validated task/kind/event ID before bounded output; 300-stop reversed test checks identical capped lists and suppression count 50. Original test suite expanded from 73 to **77**; 77/77 local PASS on Python 3.13.5. No authority upgraded; missing-code diagnostics are advisory.
 - **PRIOR EXACT-HEAD GITHUB CI EVIDENCE:** `f206d22c770b38bdbf75b4b35b9893cd9e5d2878` passed scoped audit workflow `45016532004` on all three Python 3.11, 3.12 and 3.13 jobs. Source changes after that SHA need a fresh exact-head conclusion.
 - **PENDING BEFORE RELEASE:** no actual Windows user extension installed version, authenticated runtime event outbox or trusted receipt/reconciliation; no live end-to-end or persistent monitoring claim. General Hermes suite had been non-green.
+
+
+## Eleventh review: silent omission of malformed stop identity
+
+- **RED:** `approval.denied` and `worker.lease_expired` are stop kinds outside `task.` namespace. Their absent `task_id` passed the parser and were ignored by the downstream `STOP_KINDS and task_id` condition. Both returned `no_anomalies_in_supplied_slice` when isolated — two new, independently reproducible negative tests failed.
+- **FIX:** task-scoped `STOP_KINDS` must have a valid UUID task id. Missing identity fails strict parse with `invalid_snapshot` rather than accepting an unassociated stop or manufacturing task identity. Global worker incidents require a separate explicit schema.
+- **GREEN LOCAL:** **79/79** pure-stdlib tests pass, including the four prior stop-order/reason tests; no successful action, retry, untrusted event authorization or external ChatGPT Send is implied.
+- **PUBLISHED CI BASELINE:** exact head `9f27906967e3ad40419d1251b87ff6c441ad973c` (the 77-test revision) passed targeted CI 3/3 on Python 3.11/3.12/3.13, run `45017043332`. Its broad suite and present SHA must still be checked independently.
