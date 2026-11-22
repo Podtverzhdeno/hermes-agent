@@ -13,18 +13,26 @@ At review time seven open draft PRs exist. PR #4, #5, #6 each independently modi
 |---|---|---|
 | #4 GPT bridge diagnostics | Inflight duplicate returns 409; payload mismatch 422; completed LRU can evict unexpired key | Define retry/conflict semantics, reject effects with unknown outcome |
 | #5 atomic diagnostics | Inflight duplicate joins pending task; completed LRU may evict unexpired key | Reuse after eviction or restart cannot promise exactly-once |
-| #6 GPT observability | Bounded single-flight without evicting active keys; SSE exception path sends error rather than fake stop | Failure evicts idempotency entry; session-load error becomes empty history; inspect error-valued agent result |
+| #6 GPT observability | Bounded single-flight, SSE failure path; **later revision now quarantines failed keyed operations as unknown and classifies reported agent failure** | Explicit session-load exception still becomes empty history; no durable cross-process effect fence |
 | #7 GPT SDD | Single ledger + read-only extension/causal event designs | Not implemented, actual local extension uninspected |
 | #1 Autopilot | Proposed durable task/effect ledger and tests | Not production execution/lease enforcement |
 | #3 ACP safety | Scoped permission callback changes | Independent executor race and security tests required |
 
-**CODE FINDING API-01 (OBSERVED, PR #6):** _IdempotencyCache._on_done removes a key when the task raises. A subsequent request with the same key can rerun the computation, including external effects that may already have committed before an exception. No process-local cache can prove an external effect did not happen. If outcome is uncertain, create a durable NEEDS_RECONCILIATION record, perform independent read-back, do not blindly retry.
+**CODE FINDING API-01 (HISTORICAL, fixed in newer PR #6 revision):** Earlier _IdempotencyCache._on_done removed a failed key, permitting a duplicate attempt after a possibly committed external effect. **Rechecked** gateway/platforms/api_server.py blob 2baea1ec40d381440b4df7d77794b16469bbe5b6: failed keyed operations now retain state outcome_unknown and retries raise IdempotencyUncertainOutcome. Good local fix; still not durable after process restart and does not reconcile external effects. Independent crash/restart tests remain necessary.
 
 **CODE FINDING API-02 (OBSERVED, PR #6 and baseline):** Explicit X-Hermes-Session-Id session-read exception is logged and history becomes an empty list. This masks continuity failure as a new context. Fail closed with session_store_unavailable for explicit continuation and add negative DB tests.
 
-**CODE FINDING API-03 (OBSERVED, PR #6):** The non-streaming code may take result["error"] as a successful assistant content with finish_reason=stop or Responses status=completed; require explicit agent-failure classification and regression tests.
+**CODE FINDING API-03 (HISTORICAL, fixed in newer PR #6 revision):** Earlier error-valued runner results could be reported as a successful assistant content. Recheck found _agent_run_outcome and AgentReportedFailure paths in chat, SSE and Responses. Verify their test coverage independently on the current PR head; do not assert runtime validation from code inspection alone.
 
 **BLOCKED-01:** Local_WorkSpace returned Session terminated, fallback connector HTTP 429. This is an observability-channel failure, **not proof that Hermes or the browser extension is stopped**. The previously identified local chat-launch-smoke-desktop-test/web-extension is not present in the inspected fork, so its actual manifest, permissions, native host and browser runtime remain unverified.
+
+
+
+## 1a. Recheck after simultaneous agent activity (important correction)
+
+The repository changed during this review: draft PRs #8–#15 appeared after the original seven were inspected. Drafts #8 (hermes_gpt_bridge), #9 (gpt_bridge/observability), #12 (gpt_companion/journal), and this PR #16 (gateway/gpt_bridge_observer) **each implement a different event schema and observer strategy**. These must not all be activated as authoritative event sources; event IDs, sequence partitioning and status vocabulary would diverge. PR #14 introduced a coordination gate, and #15 changes CDP browser cleanup. Convene **one integration/schema owner** and issue a canonical contract (producer incarnation, version, event ID, per-source seq, task/run/attempt/fence, effect receipt and trust provenance) plus migration adapters. Prefer merging only components that satisfy a shared contract and independent CI/fault tests. This PR intentionally remains draft and serves as a strict parser/fault-test candidate, not a replacement for PR #12's persistent journal or PR #1's authoritative ledger.
+
+Correction of evidence precedence: earlier findings about PR #6 are **revision-specific**, not permanently true. Rechecks must cite latest blob/commit and distinguish repaired behavior from remaining unverified crash windows.
 
 ## 2. Implemented P0 observer: deliberately non-authoritative
 
