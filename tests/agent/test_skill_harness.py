@@ -152,3 +152,54 @@ def test_prefix_confusion_does_not_pass_containment(tmp_path):
     sibling.mkdir()
     assert not path_within_root(sibling / "SKILL.md", root)
     assert path_within_root(root / "SKILL.md", root)
+
+
+@pytest.mark.parametrize("yaml_input", [
+    "schema_version: 1\nschema_version: 2\n",
+    "capabilities:\n  side_effects: none\n  side_effects: external_write\n",
+    "capabilities:\n  approval_required: [true]\n  approval_required: []\n",
+])
+def test_duplicate_yaml_keys_are_rejected(yaml_input):
+    from agent.skill_harness import parse_skill_harness_yaml
+
+    with pytest.raises(SkillHarnessError, match="Duplicate harness YAML key"):
+        parse_skill_harness_yaml(yaml_input)
+
+
+@pytest.mark.parametrize("yaml_input", [
+    "foo: &anchor [danger]\nbar: *anchor\n",
+    "activation: &shared\n  when: [test]\nnot_when: *shared\n",
+])
+def test_aliases_are_rejected(yaml_input):
+    from agent.skill_harness import parse_skill_harness_yaml
+
+    with pytest.raises(SkillHarnessError, match="aliases are prohibited"):
+        parse_skill_harness_yaml(yaml_input)
+
+
+def test_parser_rejects_non_string_mapping_keys():
+    from agent.skill_harness import parse_skill_harness_yaml
+
+    with pytest.raises(SkillHarnessError, match="keys must be strings"):
+        parse_skill_harness_yaml("1: impossible\n")
+
+
+def test_loader_rejects_duplicate_manifest_before_policy_validation(tmp_path):
+    yaml_input = """schema_version: 1
+skill: demo-skill
+capabilities:
+  side_effects: none
+  side_effects: external_write
+"""
+    (tmp_path / "harness.yaml").write_text(yaml_input, encoding="utf-8")
+    with pytest.raises(SkillHarnessError, match="Duplicate harness YAML key"):
+        load_skill_harness(tmp_path, "demo-skill")
+
+
+def test_strict_parser_still_accepts_safe_dump(manifest):
+    from agent.skill_harness import parse_skill_harness_yaml
+
+    text = yaml.safe_dump(manifest)
+    assert validate_skill_harness(
+        parse_skill_harness_yaml(text), "demo-skill"
+    )["schema_version"] == 1
