@@ -35,6 +35,12 @@ OBSERVED_SOURCE = read a named code revision; OBSERVED_METADATA = GitHub source/
 | E22 | PR #3 review comment id 7078018227 | Requested metadata-only logs, sanitized errors and same-session concurrency test; ContextVar fix in executor thread appears correctly scoped | APPLIED |
 | E23 | PR #5 reread gateway/platforms/api_server.py blob 6dfe64f54a209220f5696b8188b8c0220e22f945 | Owner changed Responses to adapter-scoped cache + full fingerprint, generic 500 and complete response cache; prior E08/E09 source defects resolved in branch, still not merged or proven E2E | OBSERVED_SOURCE_FIX; CI_PENDING |
 | E24 | PR #5 follow-up review comment id 7078079361 | Acknowledged concrete source corrections and remaining head-SHA/CI and merge-owner gates | APPLIED |
+| E25 | Further PR #5 review gateway/idempotency.py blob bf98f9ff6422dc0a318c0e9ba35a572ae2932690 | Failed compute clears in-flight reservation and caches only successes; an effect can have committed before failure, making immediate same-key retry unsafe | OBSERVED_SOURCE + HYPOTHESIS of external duplicate |
+| E26 | PR #5 review comment id 7078086649 | Requested synthetic "effect commits then throws" test and uncertainty quarantine; PR #6 has sticky unknown state | APPLIED |
+| E27 | EXTENSION_TRANSPORT_AND_RECOVERY_SDD.md + LOCAL_CONNECTIVITY_TRIAGE_RUNBOOK.md | MV3/native host replay/ack, unknown outcome handling and read-only Windows/tunnel diagnostics documented | DESIGNED; NOT_DEPLOYED |
+| E28 | GPT_API_CANDIDATE_DECISION.md | Conditional, source-based preference for PR #6; PR #4 and #5 distinct strengths retained as test/review input. No merge authorization | DESIGN_REVIEW |
+| E29 | scripts and tests revisions through 830211e9f57e152e278fb50865822d5f5d0357c9 | Added moving head/base guard, offline provenance protection, 30/100-agent synthetic collision and pagination; 23 offline tests authored, latest-head CI not yet confirmed | PATCHED; CI_PENDING |
+| E30 | Workflow revision eb108a59bb7f1201c9ecb2b5772f90806cf27553 | Removed redundant push+pull_request double scheduling; added concurrency cancellation of superseded revisions and merge_group acceptance | PATCHED; CI_PENDING |
 
 ## Source discrepancies requiring canonical integration
 
@@ -82,6 +88,6 @@ On the in-review ACP session-isolation PR #3, the terminal approval ContextVar i
 5. Inspect actual extension repository/manifest/native host, test MV3 worker restart, page navigation, host dropout and persisted checkpoint.
 6. 30/100 simulated agents, lease-fence recovery, STOP propagation, sustained soak and operator-approved promotion.
 
-This investigation was synchronous and source-based. Nothing here constitutes ongoing monitoring or a claimed repair of the user-installed browser extension.
+This investigation was synchronous and source-based. Nothing here constitutes ongoing monitoring or a claimed repair of the user-installed browser extension. The last VERIFIED_CI here still refers to the earlier 13-test revision, not the subsequently authored 23-test revision. After rapid branch updates, some generic workflow runs were queued or cancelled, and the coordination workflow had duplicate triggers; the trigger redundancy was removed at commit eb108a59bb7f1201c9ecb2b5772f90806cf27553. Until an exact latest-head CI run finishes, the new 23-test suite is NOT marked as verified.
 
 Related: INTEGRATION_AND_ATOMIC_DIAGNOSIS_SDD.md and draft PR #14.
