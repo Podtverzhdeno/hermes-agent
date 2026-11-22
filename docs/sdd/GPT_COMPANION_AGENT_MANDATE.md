@@ -101,7 +101,7 @@ followup_gate: <objective test>
 
 ## 8. Выполненное и не выполненное на дату фиксации
 
-**Реально реализовано в GPT Companion PR #12:** безопасное хранилище неавторитетных событий, идемпотентность `event_id`, source-local sequence/failure detector, границы worker/gateway, обработка позднего backfill и clock skew, fake-completion guard, metadata allowlist, SQLite chain, Python CLI для разового расследования и локальный opt-in read-only polling watcher (не установлен и не запущен). Прогон 52 offline tests на Python 3.13.5; 100 source **синтетически**, не 100 действующих GPT-агентов.
+**Реально реализовано в GPT Companion PR #12:** безопасное хранилище неавторитетных событий, идемпотентность `event_id`, source-local sequence/failure detector, границы worker/gateway, обработка позднего backfill и clock skew, fake-completion guard, metadata allowlist, SQLite chain, Python CLI для разового расследования и локальный opt-in read-only polling watcher (не установлен и не запущен). Прогон 54 offline tests на Python 3.13.5; 100 source **синтетически**, не 100 действующих GPT-агентов.
 
 **Не реализовано и не объявляется существующим:** живое подключение к ChatGPT/browser/Hermes hooks, auth ingress, длительный watchdog, операторский сервер/дашборд, автофиксы, verified external effects, распределённый consensus, автоматическая синхронизация в Obsidian, сквозные prod тесты; локальная связь с владельцем через MCP не подтверждена.
 
