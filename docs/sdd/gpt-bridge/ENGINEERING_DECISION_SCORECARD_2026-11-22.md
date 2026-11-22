@@ -18,7 +18,7 @@ Baseline weights: S 30%, E 20%, M 15%, F 10%, T 10%, C 5%, P 10%. Sum = 100%. Tw
 |---|---|---:|---:|---:|---|
 | Preserve original run ID on idempotent replay | 5/5/5/4/5/4/5 | **4.85** | **4.90** | **4.85** | P0 source bug in PR #4; user-visible misleading causality; owning PR needs regression |
 | Capability-negotiated native Runs API / SSE | 5/5/5/3/5/4/5 | **4.75** | **4.85** | **4.75** | Verified modern upstream; current April fork/installed extension not verified; 24h key ledger, 5min event buffer, authoritative run status |
-| Read-only PR collision and stacked-SHA scanner | 4/5/5/4/5/4/5 | **4.55** | **4.45** | **4.65** | PR #22 guard and synthetic tests; 3+ rival scanners; full integration unverified |
+| Read-only PR collision and stacked-SHA scanner | 4/5/5/4/5/4/5 | **4.55** | **4.45** | **4.65** | PR #22 guard, synthetic tests and atomic report bundle receipts; 3+ rival scanners; full integration unverified |
 | Safe externally-owned CDP detach + redaction | 5/5/4/3/4/3/5 | **4.45** | **4.55** | **4.40** | Main source logs raw CDP endpoint and can close attached session; #13/#15 compete |
 | One authenticated read-only event schema | 5/4/5/3/4/3/4 | **4.30** | **4.50** | **4.25** | Multiple observers; authentication/retention contract not yet chosen |
 | Effect reservation, STOP fencing, unknown quarantine | 5/4/5/2/4/2/5 | **4.25** | **4.50** | **4.15** | Safety must-have, but privileged gateway + external receipts not implemented |
