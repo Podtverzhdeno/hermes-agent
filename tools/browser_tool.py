@@ -654,8 +654,8 @@ def _create_cdp_session(task_id: str, cdp_url: str) -> Dict[str, str]:
     """Create a session that connects to a user-supplied CDP endpoint."""
     import uuid
     session_name = f"cdp_{uuid.uuid4().hex[:10]}"
-    logger.info("Created CDP browser session %s → %s for task %s",
-                session_name, cdp_url, task_id)
+    logger.info("Created CDP browser session %s for task %s",
+                session_name, task_id)
     return {
         "session_name": session_name,
         "bb_session_id": None,
