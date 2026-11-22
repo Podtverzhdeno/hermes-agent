@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "skill": "dspy",
+  "purpose": "Optimize language-model programs with bounded evaluation and data disclosure.",
+  "risk": "external_write",
+  "routing": {
+    "trigger": [
+      "Optimize this DSPy RAG program on a fixed dataset",
+      "Compare two DSPy teleprompter runs and metrics",
+      "Create a DSPy module with a reproducible held-out evaluation"
+    ],
+    "do_not_trigger": [
+      "Ask a general question about Python classes",
+      "Upload private prompts without consent",
+      "Merge an unrelated branch"
+    ]
+  },
+  "preflight": [
+    "Pin DSPy/provider versions, model ID, data split and evaluation metric.",
+    "Confirm whether prompts and examples may be sent to an external model.",
+    "Bound token spend and ensure test sets are not reused as training data."
+  ],
+  "workflow": [
+    "Define input/output signature and baseline with held-out cases.",
+    "Run bounded optimization with approved provider/data-sharing scope.",
+    "Evaluate optimized vs baseline with paired examples.",
+    "Record artifact, prompt version and costs for reproducibility."
+  ],
+  "actions": [
+    {
+      "operation": "dspy.plan",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "program-contract"
+      ]
+    },
+    {
+      "operation": "dspy.optimize",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "program-contract",
+        "data-consent",
+        "paired-results"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "program-contract",
+      "source": "artifact",
+      "how_to_verify": "Pin program version, dataset split, model and metric."
+    },
+    {
+      "id": "data-consent",
+      "source": "human",
+      "how_to_verify": "Owner approves external data transfer and model API budget."
+    },
+    {
+      "id": "paired-results",
+      "source": "model_eval",
+      "how_to_verify": "Compare held-out outcome by matching examples with/without optimization."
+    }
+  ],
+  "failure_modes": [
+    "If dataset confidentiality is unclear, do not send it to external provider.",
+    "Never report an in-sample improvement as held-out generalization."
+  ]
+}
