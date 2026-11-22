@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Optional
 
 
+SCHEMA_VERSION = 2
 ACTIVE = ("running", "verifying")
 TERMINAL = ("succeeded", "failed", "cancelled", "blocked")
 
@@ -69,6 +70,13 @@ class AutopilotLedger:
             db.close()
 
     def _initialize(self):
+        # Refuse a newer schema BEFORE creating or changing any table.
+        with self._db() as db:
+            version = int(db.execute("PRAGMA user_version").fetchone()[0])
+            if version > SCHEMA_VERSION:
+                raise LedgerConflict(
+                    f"database schema v{version} is newer than supported v{SCHEMA_VERSION}"
+                )
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
@@ -147,6 +155,23 @@ class AutopilotLedger:
                     created_at REAL NOT NULL
                 );
             """)
+        # Additive migrations for the April-fork research prototype. The
+        # operator must stop all active workers and take a consistent SQLite
+        # online backup before replacing a deployed binary; this is NOT a
+        # zero-downtime multi-host migration facility.
+        with self._db(write=True) as db:
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
+            if "resume_without_attempt" not in columns:
+                db.execute("""
+                    ALTER TABLE tasks ADD COLUMN
+                    resume_without_attempt INTEGER NOT NULL DEFAULT 0
+                """)
+            if "project_generation" not in columns:
+                db.execute("""
+                    ALTER TABLE tasks ADD COLUMN
+                    project_generation INTEGER NOT NULL DEFAULT 0
+                """)
+            db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
     def _event(self, db, task_id: str, kind: str, detail: dict):
         db.execute(
