@@ -193,6 +193,7 @@ Each terminal task record must answer `who/what/when/why/proof/next_safe_action`
 | `MCP_DISCONNECTED` | Connector transport close/session termination | Mark evidence stale; reconnect with backoff |
 | `BROWSER_WORKER_SUSPENDED` | MV3 lifecycle disconnection with durable cursor | Reconnect UI observer; never reissue task |
 | `WORKER_LEASE_LOST` | Current ledger fence exceeds worker fence | Reject writes; replacement rereads contract |
+| `CROSS_SESSION_INTERRUPT` | Two task identities share process-wide cancellation signal and a cancellation appears in unrelated tool trace | Quarantine concurrent terminal execution; apply task-scoped cancellation; do not assume user cancelled both |
 | `CONTEXT_EXHAUSTED` | Model/provider token-limit evidence | Checkpoint + bounded summarize; new worker |
 | `BUDGET_EXHAUSTED` | Parent DAG budget account evidence | Stop dispatch; surface cost decision |
 | `OUTPUT_SCHEMA_INVALID` | Deterministic validator rejection | Bounded repair only if side-effect-free |
@@ -247,6 +248,16 @@ Never train a self-fixing agent on its own unverified "success" reports; preserv
 10. **Monotonicity:** use monotonic duration within process and durable logical sequence across restarts; wall-clock skew never changes verified causal order.
 
 Local SQLite WAL is appropriate for *one-host* prototype if all writers are on that host, writer contention is measured and migrations are disciplined. It is not a distributed lock service and must not sit on a network filesystem. Consider a managed durable workflow engine only once multi-host scale and operating costs justify it.
+
+### 6.1 P0: global cancellation signal is incompatible with concurrent agents
+
+**OBSERVED in main fork source:** `tools/interrupt.py` defines a module-global `threading.Event`. `run_agent.py` calls `_set_interrupt(True)` on one agent's interrupt and `_set_interrupt(False)` on reset/start. Because ACP uses concurrent workers, a single task's cancellation may stop unrelated terminal tools; a second task's reset may erase the first task's cancellation. This is a source-derived, reproducible risk, not a confirmed production incident.
+
+**REQUIRED DESIGN:** per-task cancellation capabilities, nested cancellation scopes, owner/parent->child propagation only by explicit relationship, OS process and manual-thread propagation, and distinct task/worker/cancellation identity. The Autopilot ledger cancellation state remains authoritative; process-local tokens are cached projections, not a second authority. Tool gateway checks the current `task_id`, `lease_fence` and cancel state before each mutation.
+
+**NEGATIVE GATES:** two parallel sessions cancel one without affecting the other; starting a second worker cannot clear an existing cancellation; cancellation with an unresolved remote effect goes through reconciliation, not replay. Test CLI backward compatibility separately.
+
+The GitHub repository has Issues disabled (HTTP 410). Record this work in the SDD and review log instead of falsely claiming an Issue was created.
 
 ## 7. Security and privacy design
 
