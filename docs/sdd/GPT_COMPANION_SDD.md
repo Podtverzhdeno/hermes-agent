@@ -441,3 +441,14 @@ Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolve
 **Future model:** `{task_report, worker_processes[], controller_state, verified_outcome}` is preferable to flattening all terminal events into one scalar. A worker death does not prove the run failed; an LLM report does not prove the artifacts passed checks; a browser page rendering does not imply the provider committed an effect.
 
 **Verification status:** code and test cases are committed to a stacked draft PR. No automatic background monitoring, deployed Hermes upgrade, or user/browser authorization has been conducted. CI must be checked at the final exact SHA before readiness claims.
+
+
+### ADR-036: A busy database is not a corrupted database (P1, implemented in stacked audit)
+
+**Finding C-10:** the newly added watcher caught every `sqlite3.DatabaseError` and always emitted `JOURNAL_INTEGRITY_FAILED`. This mislabeled normal SQLite lock/contention, storage exhaustion and I/O faults as corruption. For dozens of workers, `SQLITE_BUSY` is materially different from hash-chain tampering or `SQLITE_CORRUPT`: the operator would otherwise waste effort on the wrong repair.
+
+**Fix:** use SQLite primary result code (mask extended error code with `0xFF`) and metadata-only, stable diagnosis: `WATCH_DB_LOCKED` for `SQLITE_BUSY/LOCKED`; `WATCH_STORAGE_FULL` for `SQLITE_FULL`; `WATCH_IO_ERROR` for `SQLITE_IOERR`; `JOURNAL_INTEGRITY_FAILED` only for `SQLITE_CORRUPT/NOTADB`; `WATCH_DB_UNAVAILABLE` for absent/unknown code. Do **not** copy SQLite exception text or filesystem paths into stderr output. All these are hard failures of the watcher, not evidence that a GPT model stopped.
+
+**Tests:** table-driven SQLite code classification including unknown codes and one CLI injection of `SQLITE_BUSY` with a sensitive local path in error text, verifying only the normalized reason appears. Release metrics should distinguish lock wait p95, disk pressure, I/O faults and true journal integrity failures; do not automatically delete or rebuild the event DB.
+
+**Future enhancement:** reason-code taxonomy must be shared with the operator dashboard and alert routing. A single `JOURNAL_INTEGRITY_FAILED` banner for all SQLite failures is unacceptable for incident diagnosis.
