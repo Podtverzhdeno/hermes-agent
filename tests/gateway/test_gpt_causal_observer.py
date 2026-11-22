@@ -6,7 +6,21 @@ import threading
 import unittest
 import uuid
 
-from gateway.gpt_causal_observer import CausalObserver, InvalidEvent, EventConflict
+# Load the isolated stdlib observer without importing gateway/__init__.py:
+# the real Hermes gateway package requires optional third-party dependencies
+# unrelated to this no-network observer contract.
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+_spec = spec_from_file_location(
+    "hermes_gpt_causal_observer_offline",
+    Path(__file__).resolve().parents[2] / "gateway" / "gpt_causal_observer.py",
+)
+_observer = module_from_spec(_spec)
+_spec.loader.exec_module(_observer)
+CausalObserver = _observer.CausalObserver
+InvalidEvent = _observer.InvalidEvent
+EventConflict = _observer.EventConflict
 
 
 def event(seq, kind="worker.heartbeat", producer="boot-a", **extra):
