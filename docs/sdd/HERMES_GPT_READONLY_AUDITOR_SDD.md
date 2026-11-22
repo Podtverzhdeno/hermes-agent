@@ -119,3 +119,53 @@ Any automatic fixer is **proposal-only** until: reproducible redacted failing te
 - W3C trace context: https://www.w3.org/TR/trace-context-1/
 - OpenTelemetry GenAI spans: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
 - Chrome MV3 service worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+
+
+## 9. Multi-agent stop taxonomy: reuse native Hermes Kanban, NOT another orchestrator
+
+**Directly source-verified** in official `website/docs/user-guide/features/kanban-tutorial.md`, `kanban-worker-lanes.md`, `hermes_cli/kanban_ops.py`, `agent/kanban_turn_recovery.py` (2026-11-22 upstream pin as above). These describe the modern native task authority, not the old April fork's installed behavior.
+
+| Observed task state / result | Why progress appears stopped | Required read-only evidence and safe action |
+|---|---|---|
+| `todo`, unsatisfied parent | Task graph intentionally blocks dependent work | `hermes kanban show <task_id>`: parent IDs and states; do NOT bypass by re-submitting child |
+| `ready` but no worker yet | Dispatcher runs at a default **60-second interval** (configurable) | Read actual dispatch interval, queue capacity, last tick and current claims before labeling stalled |
+| `running`, no recent updates | Could be model wait, tool wait, OS worker dead, or lease expired | `kanban_show` run+event log, claimed PID fingerprint, task + task_run `claim_expires`, latest heartbeat |
+| `blocked` after `spawn_failed` | Circuit breaker; default `kanban.failure_limit=2` consecutive failures (task override possible) | `hermes kanban runs <task_id>` and `hermes kanban tail <task_id>`; inspect `gave_up` evidence; only owner unblocks after cause fixed |
+| `blocked` with explicit reason | Human escalation, not technical hang | Ask the authorized owner; never auto-unblock |
+| `review` | Structured code/test/release approval lane | Match chosen same-card or downstream review model; check reviewer and failing CI; no self-approval |
+| `crashed` | Worker process exited without terminal lifecycle tool, or actually died | Inspect pid/exit code/worker log and claim cleanup; reconcile possible external effects before replacement |
+| `timed_out` | Worker exceeded `max_runtime` | Confirm watcher outcome, lease state and external action receipt before retry |
+| `gave_up` | Failure breaker exhausted, final run outcome | Requires cause repair and explicit unblocking; no perpetual retry |
+| `reclaimed` | Stale claim/expired lease reclaimed by native dispatcher | Confirm old worker fenced before successor writes; do not add a competing lease store |
+| `run.queued` in API after owner retirement | Native run remains queued for a new owner (not failed) | `GET /v1/runs/{id}` + native run SSE and owner state; do NOT create second run |
+
+**Dangerous topology:** `hermes_cli/kanban_ops.py` explicitly warns that the gateway now embeds the dispatcher by default, and running both the gateway and deprecated standalone `hermes kanban daemon` races for task claims. For a fleet, verify **one intended dispatcher per authoritative board** and active claim fencing. Do not launch the standalone daemon as a generic hang fix.
+
+**Existing built-in audit surfaces:** `kanban_show` exposes task events and run attempts; task events include `claimed`, `heartbeat`, `completed`, `blocked`, `review_requested`, `changes_requested`, `gave_up`, `crashed`, `timed_out`, `reclaimed`, `claim_extended`. `hermes kanban runs <task_id>` and `hermes kanban tail <task_id>` provide an existing trace. The native `worker_claim_is_live` proof checks exact DB/task/run/lease/pid coordinates and fails closed on mismatch, expiry, or missing identity. Do not duplicate these mechanisms in the GPT bridge.
+
+**Review strategy:** choose either native same-card `kanban_request_review` OR a precreated downstream review/QA/release card. Official `kanban-worker-lanes.md` warns that combining both can strand or duplicate the review lane. For dozens of agents, release ownership and review choice must be recorded with each task, not guessed from chat text.
+
+**Potential existing visualization:** the official plugin catalog lists community `hermes-kanban-graph` (repository `Senci/hermes-kanban-graph`, pinned `6dee7313...`) as a read-only dependency/run graph. Its disclosure says it reads worker `state.db` including latest assistant messages and tool-call arguments. **Do not auto-install or expose this dashboard** without source, permissions, provenance, PII, retention and local-only binding review; prefer native Kanban CLI/Desktop status first. Read-only database access can still leak sensitive content through a web UI.
+
+### 9.1. Strict relative evaluation (planning estimates, not measurements)
+
+Weighted risk reduction 30%, verified-source confidence 20%, compatibility/reuse 20%, operational reversibility 20%, cost 10%; scores 1–5 and safety veto independent of score.
+
+| Option | Risk | Evidence | Reuse | Reversible | Cost | Weighted /5 | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Native Kanban task/run events and CLI + GPT run correlation | 5 | 5 | 5 | 5 | 4 | **4.90** | P0 preferred |
+| Native claim/lease/failure-limit checks and explicit review rules | 5 | 5 | 5 | 4 | 4 | **4.70** | P0 reuse, do not clone |
+| Consent-gated redacted dependency graph built from explicit summaries | 4 | 4 | 4 | 4 | 3 | **3.90** | P1 after schema and privacy review |
+| Community graph plugin with full worker state.db read | 4 | 3 | 4 | 3 | 3 | **3.50** | Hold for source/privacy audit |
+| Second uncoordinated GPT-run/kanban scheduler | 1 | 5 | 1 | 1 | 1 | **1.80** | REJECT by architecture veto |
+| Automatic forced restart/replay of unknown external effects | 1 | 5 | 1 | 1 | 1 | **1.80** | REJECT by safety veto |
+
+A low numerical score does not indicate a performance benchmark. Safety requirements supersede quantitative ranking. Unknown local extension code and absent user authorization remain release blockers.
+
+### 9.2. Source links for operator reference
+
+- Native Kanban tutorial and circuit-breaker example: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/website/docs/user-guide/features/kanban-tutorial.md
+- Worker lanes and review patterns: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/website/docs/user-guide/features/kanban-worker-lanes.md
+- Embedded dispatcher warning: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/hermes_cli/kanban_ops.py
+- Fail-closed claim proof: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/agent/kanban_turn_recovery.py
+- Community graph plugin metadata (source/privacy audit required): https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/plugin-catalog/kanban-graph.yaml
