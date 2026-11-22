@@ -347,3 +347,122 @@ The following are **GitHub Actions observations at these PR heads** (not evidenc
 **Keep PR #25 DRAFT and unmerged.** Offline audit is validated for its stated deterministic test contract at SHA `c4227c7`, but live native Hermes event translation, source authentication, trusted verifier, local Windows version discovery, extension manifest, CDP ownership, durable cross-worker ingress and system-level fault/soak testing are not verified. If the native upstream runs API differs in deployed installation, use capability discovery and mark `manual_required`, not silent fallback to an April fork handler. The observed full-suite CI failure is also unresolved for an end-to-end release gate.
 
 Primary research for this release arbitration: Chrome MV3 lifecycle (`https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/`), Temporal activities and idempotency (`https://docs.temporal.io/activities`, `https://docs.temporal.io/activity-definition`), W3C trace propagation (`https://www.w3.org/TR/trace-context-1/`) and native Hermes API/kanban documentation in current upstream. Their existence is **not** evidence the user's installed Hermes contains matching versions or permissions.
+
+## 17. Owner-specific GPT extension discovery contract — historical profile vs current evidence
+
+**This section corrects a blind spot:** prior owner-provided configuration is not the same as the upstream Hermes fork's source tree. It must inform the *discovery path* without being misrepresented as a current tested installation. The current code in PR #25 still has no access to Windows extension files or live session logs.
+
+### 17.1 Historical owner facts with explicit observation dates
+
+| Item | Historical evidence (NOT live verified in this review) | What must be proven afresh |
+|---|---|---|
+| Windows project root | `C:\Users\Vadim\Tunnel` | Actual installed source/version and trust boundary for the Hermes GPT extension; do not assume the fork's `gateway/` is the browser extension |
+| Candidate unpacked extension | `C:\Users\Vadim\Tunnel\chat-launch-smoke-desktop-test\web-extension` (owner's 2026-11-11 configuration) | `manifest.json` identity, installed extension ID, service worker/background scripts, declared origins/permissions, host bridge protocol and *current* file digests |
+| Prior version | Extension `0.6.6` noted on 2026-11-11 | Current running extension's version, build provenance and compatibility with installed native host |
+| Local browser bridge | Port `18763` expected, **not running in that earlier snapshot** | Whether any loopback bridge currently listens; connection/auth handshake, protocol version and lifecycle under suspension |
+| Separate MCP tunnel | Observer endpoint `127.0.0.1:8765/mcp`, editor `8766`; profile `local-workspace` | Port/credential health and **actual allowed workspace roots**; do not conflate observer MCP with GPT browser/CDP transport |
+| GPT CDP lane | Model/backend identifier `web-chatgpt-high-cdp` and successful prior canary tokens (2026-11-14) | Current authorization, owner consent, session/target provenance, broker version and whether that lane is used by this Hermes extension at all |
+
+**Current scoped connector observation:** in this review a later `Local_WorkSpace.list_workspaces` returned only the `shelter` Obsidian project root with read/write scope; the separately configured read-only connector returned only `temp-folder`. Earlier calls to the same connector returned `Session terminated`. Thus **connector liveness has partially recovered**, but it does not authorize access to `C:\Users\Vadim\Tunnel` or enable inspection of the real extension. Do not expand scope, escape workspace restrictions or write the unrelated shelter vault as a workaround.
+
+### 17.2 Minimum non-invasive Windows/extension discovery sequence (DESIGNED, not executed here)
+
+1. Discover the **actual configured workspace permission** before reading paths. If `Tunnel` is not in the allowed roots, mark `SOURCE_SCOPE_UNAVAILABLE` and request separately scoped operator-approved read-only access *only when necessary*. Never infer permission from remembered paths.
+2. If access is granted, inventory the candidate extension with bounded metadata: SHA-256 of `manifest.json`/package entrypoints, declared `permissions`, `host_permissions`, `background.service_worker`, `externally_connectable`, native host allowlisted extension IDs and `minimum_chrome_version`. **Never copy cookies/tokens or full user chat history into SDD.**
+3. Probe loopback listener presence at port `18763`, but **do not** assume a TCP listener proves a valid authenticated bridge. The extension and host must negotiate `protocol_version`, `capability_digest`, installation/host identity and supported read-only actions; keep any existing WebSocket/CDP port owned by its actual process. A protocol mismatch is `INCOMPATIBLE_EXTENSION_CONTRACT`, not an agent timeout.
+4. Validate `web-chatgpt-high-cdp` as a **separate, optional** provider lane. Do not merge it with an MV3 Extension Transport simply because both can display ChatGPT. Record observed transport/owner (`documented API`, `CDP`, `MV3/native messaging`, `manual`) for each task; controls must be scoped to the lane that actually executed it.
+5. Reconstruct a single canary run using authorized, metadata-only events with exact `task_id / attempt_id / producer incarnation / effect state`; read authoritative native Hermes `/v1/capabilities` and `/v1/runs` where supported. Refuse to fabricate prior events from UI text.
+6. Only after code/source parity: controlled non-mutating E2E cases for disconnected browser, suspended MV3 service worker, shared browser ownership, delayed CDP ACK, stale session, 429 backoff, process restart and provider timeout. Store outcome + process/extension/Git SHAs in the evidence log.
+
+### 17.3 Stop reason decision matrix for the actual extension lane
+
+| Symptom | Competing possible causes | Evidence required for causal diagnosis | Safe response |
+|---|---|---|---|
+| UI panel silent but native run alive | MV3 worker suspended; panel disconnected; native host idle | Native Hermes run status and extension lifecycle events at known versions | Reconnect **view** and cursor, no task restart |
+| Browser bridge port absent | Native bridge not launched; crash; port changed; firewall policy | Local process/listener owner + versioned host config | `BRIDGE_UNAVAILABLE`; no blind CDP/DOM fallback |
+| CDP session gone | Target navigated/closed; shared browser detached; external owner stopped process | Browser incarnation/target ID/provenance and last confirmed action ACK | Mark uncertain pending external effect if write was reserved; never kill/restart externally owned browser |
+| Tool status stalls after click | Unknown click ACK; user interstitial; rate limit; approval gate | Effect reservation, target/origin digest, privileged receipt and approval trace | `EFFECT_OUTCOME_UNKNOWN` until read-back or explicit human resolution |
+| 30 agents all fail together | Shared provider quota; shared browser/Gateway death; observer/discovery outage | Gateway-wide independent health and shared `Retry-After`, not only worker timestamps | Global cooldown and bounded fan-out for safe reads; effect-preserving halt for mutations |
+| Agent completes text but no verified result | Incomplete CI, stale repository SHA, missing destination sync, model hallucination | Independent GitHub SHA/CI receipt and owner worktree hash | `verifying`/`blocked`, never `succeeded` on conversation text alone |
+
+**Gate ownership:** Hermes authoritative run ledger controls state; verified tool/effect gateway enforces actions; the extension is an operator companion; this PR's parser remains offline. Each of these four components must have one named owner and independently tested interface. A working CDP canary from a week ago is not proof a deployed extension remains available today.
+
+### 17.4 Escalating PR storm — new snapshot
+
+A later owner-connected GitHub query returned **30 open PRs** (#1–#30) during the same review, compared with 25 earlier. Recent #26 and #30 add *further* causal observers, while #27/#28/#29 add further merge/ancestry guards. They are mostly **alternative designs**, not 5 new independent engines needed in one deployment. This is evidence of a coordination failure mode, not a verdict that every draft is defective. Do not race to build a sixth observer. The system integration owner should freeze/refresh the exact inventory at decision time, select one adapter contract, one controlled release gate and preserve all useful negative tests as reusable fixtures.
+
+## 18. SOURCE-VERIFIED WebGPT topology: the companion is in `Podtverzhdeno/Tunnel`
+
+**Correction from first-hand repository inspection (2026-11-22):** We located the public, connected GitHub repository `https://github.com/Podtverzhdeno/Tunnel`. It is the owner-published portable MCP/Web Companion source mirror. The separate `Podtverzhdeno/hermes-agent` fork's generic GPT API is **not** the whole extension. This is a source-level finding; it still does not prove which binary/extension revision is running on Windows right now.
+
+### 18.1 Actual source map and state authorities
+
+| Component | Source path / verified blob on Tunnel main | Authority / evidence limit |
+|---|---|---|
+| Legacy MV3 extension | `chat-launch-smoke-desktop-test/web-extension/manifest.json` SHA `609c794c17f8f7833de22b509205acbb2b1d9088`; version **0.6.6**; service worker `background.js`; host permissions loopback `127.0.0.1:18763` and `https://chatgpt.com/*` | Browser actuator and operator tab companion only; no authority to certify Hermes result from UI |
+| Browser task controller | `.../web-extension/background.js` SHA `e6f2fa517c493759ca86a0557bacd3fa1a4046ae` | Session-scoped task storage; `finish`, watchdog, heartbeat, tab cleanup; must not infer durable effect from a missing content-script ACK |
+| Content-script Send path | `.../web-extension/background_content.js` SHA `a611a8cbc771658aa5209d991e647e3dadfb7f29` | DOM observation; `button.click()` occurs **before** the `send_clicked` stage message (lines 110–111), so a crash can hide a possibly sent prompt |
+| Local bridge | `.../web-companion/bridge.py` SHA `eaf301ac15ad301464159438d6431cbc91d3e323`; authenticated HTTP, port 18763 | Source of bridge queue/active/done records and limited event acknowledgments; no external independent proof of ChatGPT or Telegram delivery |
+| Bridge telemetry | `bridge.py` `_event` lines around 392–454 | For each UUID, writes **last 60** `at/stage/reason` metadata events to `bridge-state/diagnostics/<id>.json` via temporary file + rename under process lock; entries have no guaranteed monotonic producer sequence or immutable globally ordered history |
+| Relay observer | `Hermes-WebGPT/monitoring/queue_monitor.py` SHA `c22e457ec2e37f3a6fa9b8c411c7185c9bcddecd` | Read-only SQLite `requests(id,state,reason,created)` with explicit WAL visibility and baseline; cannot prove phase timing, report quality or final Telegram delivery |
+| Local stack health | `scripts/status-stack.py` SHA `3ce6bdbe6a0117c924bb1705a91baf14306e7bc6` | Read-only MCP auth/bridge health/extension heartbeat + Chain2/3 preview; a fresh heartbeat only proves one operational signal, not loaded code/worker trust |
+| Acceptance requirements | `docs/HERMES_FUNCTIONAL_SPEC_RU.md` SHA `d7dcb16f4dc5065404d43f8b6b83b1e03b3df15b` | Five saved URLs and automatic sessions, explicit per-session stop, no send replay, Telegram delivery, browser ownership, revision-specific E2E gates are **requirements**, not assumed implemented features |
+
+**Version mismatch is architectural, not cosmetic.** The Tunnel README and `docs/PORTABLE_QA_20261111.md` distinguish (a) checked-in MV3 **0.6.6** source, (b) portable ZIP base **0.8.5**, and (c) archived **0.9.7** snapshot not auto-installed. The bridge `completion_client_ready()` at source line ~41 explicitly expects heartbeat version `0.6.6`; using a different packaged extension without its corresponding bridge could block report-gated task admission. This mismatch is a deterministic **compatibility hypothesis**; observe actual installed versions before changing the equality. Do not "fix" by accepting arbitrary client versions or lowering host/extension authentication requirements.
+
+### 18.2 Five concrete, privacy-safe causality points
+
+1. `RELAY_QUEUED/CLAIMED`: authoritative Relay SQLite request state and time, stamped with hashed stable request ID, independent claim/fence identity and bridge task UUID link established at dispatch; no raw prompt or bearer in snapshot.
+2. `BROWSER_INTENT_RESERVED`: durable gateway/bridge-owned receipt with `(request, attempt, tab owner, origin, action digest)` and explicit uncertainty. The current content script's `button.click()` → `send_clicked` event ordering is **not** an atomic pre-send reservation and must never be represented as one.
+3. `MESSAGE_SAVED_OBSERVED`: the browser confirms matching saved user message and expected conversation binding. DOM evidence is useful but never a trusted external write ACK. Network delay, account conflict, manual editor input and navigation remain distinct hypotheses.
+4. `BRIDGE_RECEIPT_ACCEPTED`/`REPORT_ACKED`: exact bound bridge report/ACK and independent reviewer acceptance when applicable. A bridge acknowledgment is not proof of independently correct agent work; the existing `completion_mode=report` gates remain advisory until approved review verifies artifact/role/revision.
+5. `HERMES_RECEIVED` / `TELEGRAM_DELIVERED`: distinct native Hermes/Telegram receipts, including destination chat/thread and provider send outcome; a successful web UI `assistant_confirmed` cannot infer either one.
+
+Per-job bridge event arrays retain only 60 events. Therefore without a separately versioned append-only journal and producer sequence source, **do not** declare the first entry `seq=1`, invent parent events or claim full trace coverage from the rolling file. At 60 entries, status is at least `coverage_undetermined`, even if no visible gap exists. The offline oracle introduced by this PR cannot consume these legacy event arrays directly without a reviewed *lossy* translator that labels uncertainty. Avoid lying with fabricated causal UUIDs or timestamps.
+
+### 18.3 Source-confirmed destructive tab action risk — distinct from last-tab guard
+
+In `web-extension/background.js` main, `finish(job, status, url,...)` strictly calls `verifiedOwnedTab()` only for **completionMode** jobs. Its **noncompletion** branch considers a tab eligible for destruction if its current URL merely starts with `https://chatgpt.com/`, not if it is still the job's originally assigned conversation. After ~420 seconds, the watchdog may call `finish(task,"unknown")` with no verified saved URL. The operator can meanwhile navigate the same task-created tab ID to an unrelated personal ChatGPT conversation, and the finish path still sees an eligible origin. This is an **observed source predicate, not a confirmed real data-loss incident**.
+
+Current draft Tunnel PRs #11 and #17 independently change browser lifespan/last-tab cleanup but retain a broad origin predicate for ordinary tasks; the #11 last-tab *park* behavior can still replace a navigated conversation with `about:blank`, and #17 may still remove it if there are siblings. A reviewer was sent a specific acceptance-gap comment on **Tunnel PR #17**, comment ID `7078269962`.
+
+**Release-veto acceptance cases:** same job UUID/tab ID but navigated unrelated conversation → never close or blank; unknown outcome lacking bound URL → preserve tab; terminal report with exact verified URL → close only after owner/target checks; one vs two browser tabs; old content-script message after navigation; concurrent tabs; manually typed text. These must be independently tested on synthetic Chrome and controlled installed Windows browser. Merely checking the host origin and last-window count does not establish task ownership; for destructive actions, default to preserve+typed diagnostic when provenance is incomplete.
+
+### 18.4 Existing agent work: do not fork competing components
+
+Read the **actual** Tunnel concurrent PR graph before introducing another monitor:
+
+- #13 provides a non-mutating Hermes-WebGPT incident triage + optional foreground sampler.
+- #16 provides a **7-file MV3 source/mirror integrity gate** (34/34 targeted tests, source-pinned CI success reported at its exact head). It also separately flagged click-before-durable-intent; do not duplicate its scanner.
+- #19 adds rollback-alert logic to the *existing* `queue_monitor.py`; do not independently patch that same file without selecting a merge owner.
+- #11 and #17 both change extension browser lifecycle with overlapping semantics; select one cumulative reviewed patch.
+- #5 changes Web Companion completion/receipt safety. Preserve its consent/report ACK and noReplay assumptions in any integration.
+
+The correct first integration artifact is a **cross-repository contract map and version-pinned negative test matrix** tying existing Tunnel instrumentation to modern Hermes native run state. An extra invasive collector or autonomous UI loop is lower value and raises merge risk. Separate detection from authorized recovery; a brief offline diagnosis is valuable even if it is not the always-on production service requested.
+
+## 19. Executable compatibility oracle for the **actual** Tunnel bridge metadata
+
+Added `hermes_observer/tunnel_legacy.py` as a **pure, stateless, read-only** adapter for one saved `Podtverzhdeno/Tunnel` bridge v0.6.6 `diagnostics/<job>.json` source window. The adapter deliberately refuses to convert an old 60-element rolling array to fully sourced `event_id`/`source_event_seq` or claim successful Telegram delivery. It does not add a second control-plane observer, poll network/SQLite, mutate job state, parse prompts, or read any filesystem path. It is independently importable by a future **selected** authenticated gateway after policy review.
+
+### 19.1 API and the deliberately negative guarantee
+
+`from hermes_observer.tunnel_legacy import summarize_legacy_trace` accepts **bytes** of a single previously exported JSON array, using strict `<=32768`-byte cap, `<=60` records, mandatory exact `at` UTC + allowlisted `stage`, optional safe `reason`, duplicate key rejection, malformed/future-unverifiable shape refusal, time-regression suspicion. A large integer or very deeply nested JSON is a controlled `LegacyTraceError`, not a crash or a trace of the raw payload.
+
+Returned metadata consists only of a declared 
+`UNTRUSTED_OFFLINE_DIAGNOSTIC_ONLY` evidence class; opaque stage signals and type-coded hypotheses; `coverage_complete=false` for **all** arrays; `window_at_capacity` if 60 entries; immutable `external_effect_retry_allowed=false`, `mutation_allowed=false`, `final_delivery_verified=false`, `source_provenance_authenticated=false`. The last visible stage never becomes `verified outcome`. Source `button.click()` may occur even if `send_clicked` has not been persisted; an absent stage is not a negative proof.
+
+This component is a **compatibility negative-test oracle**, intentionally NOT a client of the Hermes native `/v1/runs` SSE endpoint. There is no assertion that its input came from a trusted running extension or that a bridge/worker was alive. The adapter itself has no CLI/network access, so an installed runtime or independent monitor must supply and authenticate a *read-only* snapshot after verifying approved source path, exact version and snapshot boundary. Never hand it arbitrary private ChatGPT documents.
+
+### 19.2 Integration interface and acceptance boundaries
+
+- Attach an independent `source_reference={repository, commit, host_build, extension_worker_version, collection_scope, collection_time}` when a selected future ingest service reads bridge diagnostics. That wrapper, not this helper, owns file permissions, OS credentials and privacy retention; source-provided fields are not authenticated provenance.
+- Preserve `window_at_capacity` vs event count but never infer missing count, first global sequence or no-replay clearance. Rolling array can omit older stages even when only 59 remain after an external reset/truncate.
+- Compare separate Relay `queue_monitor.py` status and bridge `last_observed_stage_claim` only through authenticated exact job/attempt binding, not by timestamp proximity. Do not infer `Telegram-delivered` from `bridge receipt_accepted` or a DOM assistant message.
+- If a current client emits a different schema/version, **reject** until an independently reviewed per-version adapter is chosen. Never silently accept arbitrary keys or widen the stage set to make a green dashboard.
+- Require a future controlled E2E: pre-click crash, after-click lost stage, report ACK loss, extension crash at 60-event rollover, same `job_id` contested by stale producer, manual tab navigation, failed Telegram delivery and clock rollback. It must establish evidence provenance and observed no-replay under owner-approved host conditions; this branch contains no such live proof.
+
+### 19.3 Tests and remaining trust gap
+
+**Local regression:** 49 pre-existing causal event tests + 24 new legacy adapter negative/positive tests = **73/73 PASS** on Python 3.13.5; a separate fixed-seed 9,000-case malformed/mixed source-window fuzz found no unhandled exception or unsafe privilege output. Source test suite is deterministic with stdlib only. The newly discovered >4300-digit JSON integer `ValueError` was corrected and explicitly regressed, plus nested depth, duplicates, secret fields, invalid stages, non-UTC times, rollovers, clock regression, weak ACKs, and click-without-receipt.
+
+**Scope of claim:** The previous GitHub Actions green 3.11/3.12/3.13 result was at an **earlier head** with 49 tests; the new adapter/73 cases and exact current head require **fresh GitHub Actions conclusion** before declaring that matrix green. None of these tests prove a live Windows installed source or real browser behavior.
