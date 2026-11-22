@@ -1,7 +1,7 @@
 ---
 name: evaluating-llms-harness
 description: Evaluates LLMs across 60+ academic benchmarks (MMLU, HumanEval, GSM8K, TruthfulQA, HellaSwag). Use when benchmarking model quality, comparing models, reporting academic results, or tracking training progress. Industry standard used by EleutherAI, HuggingFace, and major labs. Supports HuggingFace, vLLM, APIs.
-version: 1.0.0
+version: 1.1.0
 author: Orchestra Research
 license: MIT
 dependencies: [lm-eval, transformers, vllm]
@@ -12,6 +12,21 @@ metadata:
 ---
 
 # lm-evaluation-harness - LLM Benchmarking
+
+## Reproducible evaluation contract
+
+The sibling harness.json separates evaluation setup from actual
+benchmark execution. Pin model weights/revision, tokenizer, dataset and
+task definitions, evaluator version/commit, prompts, few-shot count,
+decoding settings, seed, hardware and sample count. Record raw evaluation
+artifacts and metric denominators, not a rounded score alone. Treat a
+partial OOM run, API failure or inconsistent prompt template as
+incomparable until repaired. Benchmark leaderboard claims require
+identical tasks, versions, sampling policies and uncertainty; if those
+cannot be established, report non-comparable results. Do not upload
+private prompts or user data to public experiment trackers by default.
+
+
 
 ## Quick start
 
