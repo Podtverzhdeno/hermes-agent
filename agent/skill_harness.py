@@ -28,6 +28,51 @@ class SkillHarnessError(ValueError):
     """A harness contract cannot be safely loaded or validated."""
 
 
+
+class _StrictHarnessLoader(yaml.SafeLoader):
+    """Safe YAML parser with no aliases or duplicate mapping keys.
+
+    Refuse key shadowing rather than silently accepting the final value of
+    a duplicated 'side_effects' or 'approval_required' entry.
+    """
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.AliasEvent):
+            raise SkillHarnessError("YAML aliases are prohibited in harness manifests")
+        return super().compose_node(parent, index)
+
+
+def _strict_mapping(loader: _StrictHarnessLoader, node: yaml.MappingNode) -> dict:
+    if not isinstance(node, yaml.MappingNode):
+        raise SkillHarnessError("Harness mapping must use YAML mapping nodes")
+    mapping: dict = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=True)
+        if not isinstance(key, str):
+            raise SkillHarnessError("Harness mapping keys must be strings")
+        if key in mapping:
+            raise SkillHarnessError(f"Duplicate harness YAML key: {key}")
+        mapping[key] = loader.construct_object(value_node, deep=True)
+    return mapping
+
+
+_StrictHarnessLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _strict_mapping
+)
+
+
+def parse_skill_harness_yaml(content: str) -> Any:
+    """Read a bounded, unambiguous YAML document without executing anything."""
+    if not isinstance(content, str):
+        raise SkillHarnessError("Harness YAML must be UTF-8 text")
+    if len(content.encode("utf-8")) > MAX_MANIFEST_BYTES:
+        raise SkillHarnessError("Harness manifest exceeds 32 KiB")
+    try:
+        return yaml.load(content, Loader=_StrictHarnessLoader)
+    except yaml.YAMLError as exc:
+        raise SkillHarnessError(f"Cannot parse harness manifest: {exc}") from exc
+
+
 def validate_skill_lookup_name(name: str) -> Optional[str]:
     """Reject absolute paths, traversal and glob injection in skill lookup names.
 
@@ -175,7 +220,7 @@ def load_skill_harness(skill_dir: Path, expected_name: str) -> Optional[Dict[str
         content = path.read_text(encoding="utf-8")
         if len(content.encode("utf-8")) > MAX_MANIFEST_BYTES:
             raise SkillHarnessError("Harness manifest exceeds 32 KiB")
-        parsed = yaml.safe_load(content)
+        parsed = parse_skill_harness_yaml(content)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise SkillHarnessError(f"Cannot parse harness manifest: {exc}") from exc
     checked = validate_skill_harness(parsed, expected_name)
