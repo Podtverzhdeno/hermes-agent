@@ -606,3 +606,102 @@ def test_response_and_alias_both_rollback_after_sql_error():
         assert store.get_conversation("failing_alias") is None
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_trace_correlates_replayed_key_without_logging_private_data(caplog):
+    import json as _json
+    import logging
+    from gateway.platforms.api_server import request_trace_middleware
+
+    adapter = _adapter()
+    calls = 0
+
+    async def fake_run(**kwargs):
+        nonlocal calls
+        calls += 1
+        return {"final_response": "ok"}, {}
+
+    adapter._run_agent = fake_run
+    app = web.Application(middlewares=[request_trace_middleware])
+    app.router.add_post("/v1/chat/completions", adapter._handle_chat_completions)
+    payload = {"messages": [{"role": "user", "content": "SECRET_PROMPT_CANARY"}]}
+    headers = {
+        "Authorization": "Bearer test-key",
+        "Idempotency-Key": "SECRET_IDEMPOTENCY_KEY",
+    }
+    with caplog.at_level(logging.INFO, logger="gateway.platforms.api_server"):
+        async with TestClient(TestServer(app)) as client:
+            first = await client.post("/v1/chat/completions", json=payload, headers=headers)
+            second = await client.post("/v1/chat/completions", json=payload, headers=headers)
+            assert first.status == second.status == 200
+            assert calls == 1
+            first_request_id = first.headers["X-Hermes-Request-Id"]
+            second_request_id = second.headers["X-Hermes-Request-Id"]
+            assert first_request_id != second_request_id
+    events = [
+        _json.loads(record.message.split("hermes_api_event ", 1)[1])
+        for record in caplog.records
+        if record.name == "gateway.platforms.api_server"
+        and record.message.startswith("hermes_api_event ")
+    ]
+    first_event = next(e for e in events if e["event"] == "idempotency_new")
+    replay_event = next(e for e in events if e["event"] == "idempotency_replay")
+    assert first_event["request_id"] == first_request_id
+    assert replay_event["request_id"] == second_request_id
+    assert first_event["entry_id"] == replay_event["entry_id"]
+    assert first_event["entry_id"].startswith("hid_")
+    assert "SECRET_PROMPT_CANARY" not in caplog.text
+    assert "SECRET_IDEMPOTENCY_KEY" not in caplog.text
+    assert "test-key" not in caplog.text
+    adapter._response_store.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_key_has_matching_trace_ref_for_reconciliation(caplog):
+    import json as _json
+    import logging
+    cache = _IdempotencyCache()
+
+    async def commits_then_fails():
+        raise RuntimeError("SECRET_EXTERNAL_ERROR")
+
+    with caplog.at_level(logging.INFO, logger="gateway.platforms.api_server"):
+        with pytest.raises(RuntimeError):
+            await cache.get_or_set("chat:never_log_raw_key", "fingerprint", commits_then_fails)
+        await asyncio.sleep(0)
+        with pytest.raises(IdempotencyUncertainOutcome):
+            await cache.get_or_set("chat:never_log_raw_key", "fingerprint", commits_then_fails)
+    events = [
+        _json.loads(record.message.split("hermes_api_event ", 1)[1])
+        for record in caplog.records
+        if record.name == "gateway.platforms.api_server"
+        and record.message.startswith("hermes_api_event ")
+    ]
+    grouped = [e for e in events if e["event"] in (
+        "idempotency_new", "idempotency_outcome_unknown",
+        "idempotency_reconciliation_required",
+    )]
+    assert len(grouped) == 3
+    assert len({x["entry_id"] for x in grouped}) == 1
+    assert "never_log_raw_key" not in caplog.text
+    assert "SECRET_EXTERNAL_ERROR" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_request_tracer_does_not_log_raw_exception_message(caplog):
+    import logging
+    from gateway.platforms.api_server import request_trace_middleware
+
+    request = MagicMock()
+    request.method = "POST"
+    request.headers = {}
+
+    async def fails(_):
+        raise RuntimeError("PRIVATE_RUNTIME_ERROR_SECRET")
+
+    with caplog.at_level(logging.INFO, logger="gateway.platforms.api_server"):
+        with pytest.raises(RuntimeError):
+            await request_trace_middleware(request, fails)
+    assert "PRIVATE_RUNTIME_ERROR_SECRET" not in caplog.text
+    assert '"error_class":"RuntimeError"' in caplog.text
