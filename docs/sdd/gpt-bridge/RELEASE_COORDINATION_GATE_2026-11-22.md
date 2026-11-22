@@ -183,3 +183,24 @@ Read-only connector queries around 2026-11-22T10:55Z, repeated against exact cur
 - PR #10 targets the intentionally isolated snapshots/autopilot-ledger-6c0d2e-20261122 branch rather than an open PR. Its PR description explicitly documents that choice. PARENT_NOT_IN_SNAPSHOT means manual graph review for eventual integration, not an accusation of bad code.
 
 Open Draft PR count reached 30 in the later connector scan. These are deliberately *revision-pinned, time-local findings*. Re-run all comparisons after parent/child updates; do not promote stale findings into global status.
+
+
+
+## 13. Upstream feature parity and current browser extension evidence
+
+The inspected fork main is version 0.6.0. Upstream Hermes v0.23.3 (released Nov 19, 2026) ships functionality that should NOT be reinvented without a migration audit:
+- Its durable Kanban stores tasks and handoffs and has exact-PR completion contracts, verifying required GitHub checks for the current revision with independent acceptance. https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/kanban.md
+- Its API distinguishes canonical durable admission identities from legacy process-local idempotency and has /v1/runs, typed cancelled/error/incomplete terminal responses, and controlled streaming replay. Therefore old-fork "reject keyed SSE" applies only while canonical durable admission is unavailable, not to every future Hermes version. https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md
+- Community Hermes Browser Extension v0.4.1 (MIT) already supports explicit page-context consent, per-tab and per-controller leases, capability diagnostics with state/reason/source/age, Browser Context Protocol v2 and deliberate **no automatic resend** after an uncertain HTTP response. Firefox has restricted control. Its companion-plugin requires a compatible Hermes gateway; this old fork cannot be presumed compatible. Extension v0.4.1 reports that it does not use nativeMessaging. Prefer leveraging its compatible permissions and browser protocol rather than inventing broad new transport privileges. https://github.com/abundantbeing/hermes-browser-extension/blob/main/README.md
+
+Security finding (static, configuration-contingent): The old fork gateway _check_auth explicitly returns success when API_SERVER_KEY is absent, yet API_SERVER_HOST can be configured for non-loopback binding. This can expose tool-capable APIs without authentication if a user deploys it with an externally reachable listener. The default host is loopback; no evidence that this user's instance is exposed. Gate any non-loopback bind on strong authentication and restrict CORS/origin; do not merge broad network exposure into gateway candidate fixes.
+
+### Owner-reviewable periodic monitor
+
+Added .github/workflows/gpt-stack-guard.yml on this isolated Draft PR:
+- Offline Python 3.11 unit tests on relevant PR changes (no secrets).
+- An optional 4-hour schedule or workflow_dispatch read-only GitHub PR graph scan using read-only token, posting structured JSON artifact retained 14 days.
+- No automatic code writes, merges, or remediation. Non-green audits fail the job, not silently certify safety.
+- Scheduled GitHub Actions only run from the default branch after an owner-reviewed merge; this workflow is **not yet running periodically from the draft branch**. Four-hour checks are a recency/cost compromise, not continuous per-second detection.
+
+Priority after PR #29 review: migrate to modern Kanban and canonical API admission where compatible; then instrument exact authorized tool effects and independent verification. The extra scheduled scanner does not replace an always-running local Hermes/GPT runtime watcher; this was not deployed because the local Workspace connection terminated.
