@@ -56,8 +56,10 @@ def _date(v: Any) -> datetime:
 
 
 def validate(data: Any) -> dict[str, Any]:
-    if not isinstance(data, dict) or set(data) != {
-            "schema_version", "captured_at", "main_sha", "source_verification", "proposals", "decisions"}:
+    required = {"schema_version", "captured_at", "main_sha",
+                "source_verification", "proposals", "decisions"}
+    if not isinstance(data, dict) or not required <= set(data) or (
+            set(data) - required - {"reported_open_pr_count"}):
         raise InvalidSnapshot("invalid top-level snapshot fields")
     if type(data["schema_version"]) is not int or data["schema_version"] != 1:
         raise InvalidSnapshot("unsupported snapshot schema")
@@ -79,6 +81,10 @@ def validate(data: Any) -> dict[str, Any]:
     proposals = data["proposals"]
     if not isinstance(proposals, list) or not (1 <= len(proposals) <= _MAX_PRS):
         raise InvalidSnapshot("invalid proposal count")
+    total = data.get("reported_open_pr_count")
+    if total is not None and (type(total) is not int or
+                              not 0 <= total <= _MAX_PRS):
+        raise InvalidSnapshot("invalid reported_open_pr_count")
     seen_prs, seen_heads = set(), set()
     for item in proposals:
         if not isinstance(item, dict) or set(item) != {"pr", "head", "head_sha", "base", "base_sha", "files", "domains", "draft"}:
@@ -131,6 +137,13 @@ def evaluate(data: dict[str, Any], *, now: datetime | None = None,
     if not data["source_verification"]["live_monitor_connected"]:
         add("LIVE_MONITOR_UNAVAILABLE")
 
+    reported_count = data.get("reported_open_pr_count")
+    if reported_count is None:
+        add("PR_INVENTORY_COUNT_UNKNOWN")
+    elif reported_count != len(data["proposals"]):
+        add("PR_INVENTORY_COUNT_MISMATCH")
+    # A matching self-reported count is NOT independently verified coverage.
+    # Only the canonical authenticated live GitHub scanner can attest coverage.
     proposals = sorted(data["proposals"], key=lambda p: p["pr"])
     by_head = {p["head"]: p for p in proposals}
     by_num = {p["pr"]: p for p in proposals}
@@ -199,6 +212,8 @@ def evaluate(data: dict[str, Any], *, now: datetime | None = None,
         "release_authorized": False,
         "snapshot_captured_at": data["captured_at"],
         "proposals_scanned": len(proposals),
+        "reported_open_pr_count": reported_count,
+        "inventory_coverage_attested": False,
         "findings": sorted(findings, key=lambda f: (f["code"], f.get("prs", []), f.get("path", ""))),
     }
 
