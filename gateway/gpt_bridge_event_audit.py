@@ -252,6 +252,8 @@ class CausalRunAuditor:
         self._status = value
         raw_updated = status.get("updated_at")
         if raw_updated is not None:
+            if isinstance(raw_updated, bool):
+                raise InvalidTelemetry("Invalid run status timestamp")
             try:
                 updated = float(raw_updated)
             except (TypeError, ValueError, OverflowError):
