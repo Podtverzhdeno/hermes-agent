@@ -26,7 +26,7 @@ _STABLE_ID = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,127}$")
 _HEX_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _FIELDS = frozenset({
     "schema_version", "event_id", "run_id", "attempt_id", "emitter_id", "seq",
-    "kind", "observed_at", "operation_id", "revision", "fence", "reason_code",
+    "kind", "observed_at", "task_id", "project_id", "operation_id", "revision", "fence", "reason_code",
     "http_status", "retry_after_seconds", "receipt_digest",
 })
 _KINDS = frozenset({
@@ -65,6 +65,8 @@ class Event:
     seq: int
     kind: str
     observed_at: datetime
+    task_id: str | None = None
+    project_id: str | None = None
     operation_id: str | None = None
     revision: str | None = None
     fence: int | None = None
@@ -97,7 +99,7 @@ class Event:
                             "bridge.response_timed_out", "provider.request_accepted",
                             "provider.response_completed"} and not raw.get("operation_id"):
             raise TraceError(loc + "operation_id is required for causal operation events")
-        for k in ("operation_id", "reason_code"):
+        for k in ("task_id", "project_id", "operation_id", "reason_code"):
             v = raw.get(k)
             if v is not None and (not isinstance(v, str) or not _STABLE_ID.fullmatch(v)):
                 raise TraceError(loc + f"invalid {k}")
