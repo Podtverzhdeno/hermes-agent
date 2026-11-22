@@ -342,3 +342,56 @@ def test_old_epoch_approval_not_inherited_as_new_approval(pair):
 def test_reject_unrecognized_uppercase_reason_instead_of_logging_private_text(pair):
     with pytest.raises(EventValidationError, match="reason catalog"):
         add(pair[0], details={"reason_code": "PRIVATE_API_KEY_VALUE"})
+
+
+def test_out_of_order_source_events_do_not_claim_recovered_tab(pair):
+    s, _ = pair
+    add(s, event_id="attached", source_seq=2, kind="cdp.attached",
+        details={"target_id": "tabA"})
+    add(s, event_id="late-detach", source_seq=1, kind="cdp.detached",
+        details={"target_id": "tabA"})
+    observed = s.diagnose_task(task_id="task1")
+    assert observed["status"] == "observation_inconsistent"
+    assert observed["reason"] == "PRODUCER_EVENTS_OUT_OF_ORDER"
+    assert observed["producer_out_of_order_events"] == 1
+    assert observed["confidence"] == "none"
+
+
+def test_gap_in_producer_sequence_blocks_reported_completion(pair):
+    s, _ = pair
+    add(s, source_seq=1)
+    add(s, event_id="e3", source_seq=3, kind="task.completed")
+    observed = s.diagnose_task(task_id="task1")
+    assert observed["status"] == "telemetry_incomplete"
+    assert observed["producer_sequence_gaps"] == 1
+    assert observed["confidence"] == "none"
+
+
+def test_independent_producer_sequences_do_not_cross_poison(pair):
+    s, _ = pair
+    add(s, producer_id="worker-A")
+    add(s, event_id="browser", kind="worker.heartbeat", producer_id="browser-A",
+        source="browser_extension")
+    observed = s.diagnose_task(task_id="task1")
+    assert observed["status"] == "observed_active"
+    assert observed["producer_sequence_gaps"] == 0
+
+
+def test_previous_epoch_sequence_gap_does_not_poison_new_epoch(pair):
+    s, _ = pair
+    add(s, fence=1)
+    add(s, event_id="old-gap", source_seq=3, fence=1, kind="worker.heartbeat")
+    add(s, event_id="new", fence=2, kind="task.started")
+    observed = s.diagnose_task(task_id="task1")
+    assert observed["status"] == "observed_active"
+    assert observed["fence"] == 2
+
+
+def test_collector_clock_rollback_is_not_interpreted_as_activity(pair):
+    s, clock = pair
+    add(s)
+    clock.advance(-5)
+    observed = s.diagnose_task(task_id="task1")
+    assert observed["status"] == "observation_inconsistent"
+    assert observed["reason"] == "COLLECTOR_CLOCK_ROLLBACK"
+    assert observed["confidence"] == "none"
