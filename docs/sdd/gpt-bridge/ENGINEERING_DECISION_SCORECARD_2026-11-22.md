@@ -17,6 +17,7 @@ Baseline weights: S 30%, E 20%, M 15%, F 10%, T 10%, C 5%, P 10%. Sum = 100%. Tw
 | Candidate | Scores /5 | Base | Safety-heavy | Evidence-heavy | Evidence/constraint |
 |---|---|---:|---:|---:|---|
 | Preserve original run ID on idempotent replay | 5/5/5/4/5/4/5 | **4.85** | **4.90** | **4.85** | P0 source bug in PR #4; user-visible misleading causality; owning PR needs regression |
+| Capability-negotiated native Runs API / SSE | 5/5/5/3/5/4/5 | **4.75** | **4.85** | **4.75** | Verified modern upstream; current April fork/installed extension not verified; 24h key ledger, 5min event buffer, authoritative run status |
 | Read-only PR collision and stacked-SHA scanner | 4/5/5/4/5/4/5 | **4.55** | **4.45** | **4.65** | PR #22 guard and synthetic tests; 3+ rival scanners; full integration unverified |
 | Safe externally-owned CDP detach + redaction | 5/5/4/3/4/3/5 | **4.45** | **4.55** | **4.40** | Main source logs raw CDP endpoint and can close attached session; #13/#15 compete |
 | One authenticated read-only event schema | 5/4/5/3/4/3/4 | **4.30** | **4.50** | **4.25** | Multiple observers; authentication/retention contract not yet chosen |
@@ -33,7 +34,7 @@ All arithmetic derives from the seven explicit ordinal inputs above. Small diffe
 
 **P0a, merge/integration correctness (deliverable already drafted):** choose ONE read-only PR scanner (#14 vs #18 vs #22/#24); use fork-qualified ancestry and rename-source checks, exact SHA required-check policy and timestamped report. Never merge three scanners because they all look “green”. PR #22's checker is not active on main until reviewed and merged. The 30-agent control plane must have one integration owner.
 
-**P0b, API request accounting:** single API integrator reconciles #4/#5/#6/#11. Preserve one canonical `operation_id/run_id` across same-key retries; track each `request_id` separately. Reject or explicitly implement keyed streaming before worker dispatch. Distinguish transport completed from run, tool and independently verified artifact. Without this, an observer can draw a wrong causal graph.
+**P0b, API and native Runs capability lane:** test `GET /v1/capabilities` on a separate Windows canary and prefer the documented read-only `GET /v1/runs/{id}` + SSE observer when supported; no guessed internal ChatGPT DOM. Runs key retention is 24h, SSE unconsumed buffer about 5min, and `resolve-unknown` is authority-scoped and does not prove absence of remote tool effects. Single API integrator reconciles #4/#5/#6/#11. Preserve one canonical `operation_id/run_id` across same-key retries; track each `request_id` separately. Reject or explicitly implement keyed streaming before worker dispatch. Distinguish transport completed from run, tool and independently verified artifact. Without this, an observer can draw a wrong causal graph.
 
 **P0c, browser ownership:** one browser integrator reconciles #13/#15. Neither agent-browser close nor daemon PID kill should terminate externally owned CDP. Redact URL and error paths; prove this in isolated Windows browser tests.
 
