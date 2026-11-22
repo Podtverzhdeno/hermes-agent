@@ -1,6 +1,6 @@
 # SDD — Hermes GPT integration, observability and multi-agent recovery
 
-**Version:** 0.4 (2026-11-22)  
+**Version:** 0.5 (2026-11-22)  
 **Status:** review proposal + isolated read-only monitor and control-plane fixes; not a production activation.  
 **Parent:** docs/autopilot/ARCHITECTURE.md, PR #1, base snapshot 7e9100901819ee44c16b4ddcb79a6bcb7909f591.  
 **Ownership:** this SDD and observability code are in a stacked feature branch; concurrent skill-harness branch is not modified.  
@@ -262,6 +262,24 @@ P3 / real connector and CI:
 - 24–72 hour supervised soak with injected shutdowns, clock skew, disk pressure, retry storm and provider outage.
 
 Shipping gate: zero unauthorized writes, zero blind retries of unknown effects, zero false “verified success” against required trusted failure, exact revision matching, recoverable read-only work after hard stop, observable blocked tasks, operator-visible monitor heartbeat and audited human override. No production/unattended activation before these pass and approval policies are configured.
+
+### Security ADR-003 — verifier trust and causal evidence immutability
+
+The experimental ledger's `trusted=True` flag is a **caller assertion**, not proof of source authentication. Production design MUST replace arbitrary model/worker supplied `trusted` with an authenticated adapter that verifies the GitHub job/run URL, completed job status, required step execution, exact target SHA, approved issuer identity and evidence artifact digest. A runner status marked “success” while a required check was skipped is **not** acceptable.
+
+Evidence for the same `task,kind,source,revision` is immutable when trusted. Exact duplicate delivery is idempotent; a contradictory trusted result must be rejected, not silently overwrite an earlier failure. Each independent CI run gets a stable distinct source/run ID; a passing rerun cannot retroactively erase a previous failing run without an explicit new approval/policy decision. Current isolated ledger fix enforces a restricted form of this; production needs append-only attestation with explicit supersession semantics.
+
+Do NOT expose `record_evidence(trusted=True)`, `decide_approval` or `reconcile_effect(proof_ref)` as unguarded GPT tools. These prototype Python methods assume a trusted control plane **outside** their implementation. Proof references that are plain strings are labels, not cryptographic or provider-backed evidence.
+
+### Multi-PR convergence ADR-004 — 27 drafts, one owner per resource
+
+The live 2026-11-22 review expanded from 10 to 27 draft PRs. See `docs/autopilot/MULTI_AGENT_INTEGRATION_MATRIX_2026-11-22.md`. Four source modules have direct concurrent authors: `gateway/platforms/api_server.py` (#4/#5/#6/#11), `gpt_companion/journal.py` (#12/#17/#23), `tools/browser_tool.py` (#13/#15), and the event auditor (#4/#26). Others propose six overlapping PR collision guards. **No merged head is currently asserted safe.**
+
+Choose a single code owner/reviewer for each critical path. The integration controller must lock a target branch SHA, collect a complete GitHub PR/head/file/check snapshot, reject if it drifts during collection, report semantic capability overlap even with different filenames, and verify required actual test steps. A “clean” collision report is never release authorization. For browser cleanup specifically, an externally owned CDP browser must not be terminated during Hermes session close, and raw CDP URLs must not be logged.
+
+### Why the worker stopped: source-proven Windows hypotheses
+
+Prior Hermes v0.22.5 issue #147613 observed a worker at admission sequence 15 with no prompt delivery while Python waited indefinitely in `get_version_info -> git subprocess.run(timeout=3) -> reader thread join`. PR #151449 proposes to skip live Git version lookup in Windows managed workers but was **open** as checked; don't call that an accepted upstream fix. Separate issues show missing `prompt.request` frame (#146955), native NumPy import hang (#148389) and gateway event-loop lag/receipt losses under concurrent workers (#152364). These are *specific tested investigation paths*, not evidence of current local user's process. A future observer should distinguish `worker bound`, `prompt acknowledged`, `model request emitted`, `first useful progress`, and `external effect reconciled` as separate durable milestones.
 
 ## L. Immediate priorities and ownership
 
