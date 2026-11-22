@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: writing-plans
+activation:
+  when: ["Translate a multi-step feature spec into an implementation plan with acceptance checks","Break a cross-module task into dependency-ordered, reviewable work packages"]
+  not_when: ["User requests implementation directly and a trivial one-file patch suffices","No requirements or repository context exists to name real integration points"]
+capabilities:
+  tools: ["read_file","search_files","git (read-only)"]
+  side_effects: local_write
+  approval_required: ["Overwrite established plans or replace approved scope and milestones"]
+lifecycle:
+  preflight: ["Confirm objective, owner decisions, repository revision and actual architecture","Identify non-goals, dependencies, external effects and ownership boundaries"]
+  execute: ["Define small tasks with input/output contract, touched paths and dependencies","Give each task local checks, integration checks and rollback or escalation criteria"]
+  verify: ["Review plan for missing interfaces, ambiguous ownership and unverifiable claims","Trace every acceptance criterion back to a concrete user requirement"]
+  recover: ["On conflicting requirements, record explicit alternatives without guessing an authoritative decision","Preserve already-approved plan revisions"]
+budget:
+  max_tool_calls: 28
+  max_reference_bytes: 131072
+evidence:
+  required: ["Requirement-to-task traceability matrix","Dependency, risk, testing and completion-criteria map"]
+output:
+  format: "Versioned implementation plan with concrete steps and verification gates"
+  acceptance: ["No invented existing code paths","No implementation commands asserted as executed"]

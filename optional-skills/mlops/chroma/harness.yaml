@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: chroma
+activation:
+  when: ["Build a local Chroma document collection for semantic retrieval","Diagnose Chroma persistence, metadata filtering and embedding errors"]
+  not_when: ["Need pure approximate nearest-neighbor search with no document or metadata store","Production distributed vector search requires unavailable Chroma capabilities"]
+capabilities:
+  tools: ["python","read_file","terminal"]
+  side_effects: local_write
+  approval_required: ["Delete or reinitialize a populated collection","Upload private embeddings or documents to an external service"]
+lifecycle:
+  preflight: ["Pin chromadb version, client mode and persistent-data path","Record embedding model/version, vector dimension, ID rules and data sensitivity"]
+  execute: ["Create explicit test collection with stable document IDs and metadata schema","Keep source-to-chunk lineage and embedding normalization consistent"]
+  verify: ["Check insert/query/update persistence across fresh client initialization","Evaluate recall@k and metadata-filter correctness on a labeled query set"]
+  recover: ["On schema/dimension mismatch, preserve original collection and stage a migration","Avoid deleting production data to recover a failed ingestion"]
+budget:
+  max_tool_calls: 36
+  max_reference_bytes: 196608
+evidence:
+  required: ["Collection settings, embedding dimension and version","Round-trip test, filter tests and relevant query scores"]
+output:
+  format: "Chroma integration contract, tests and dataset-scope receipt"
+  acceptance: ["No silent collection replacement or private-data upload","No retrieval-quality claims without relevance judgments"]

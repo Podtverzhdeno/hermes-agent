@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: code-review
+activation:
+  when: ["Review a local diff, patch or source file for actionable defects","Assess security, correctness and regression risks before shipping"]
+  not_when: ["Write a new implementation from a specification","Post a review to a remote pull request"]
+capabilities:
+  tools: ["read_file","search_files","terminal (read-only commands)"]
+  side_effects: none
+  approval_required: []
+lifecycle:
+  preflight: ["Identify target revision, changed lines, requirements and threat surfaces","Inspect adjacent callers and tests before assigning severity"]
+  execute: ["Prioritize correctness, authorization, concurrency, data integrity and breaking behavior","Trace each candidate finding to specific changed lines and a failing scenario"]
+  verify: ["Validate each finding against actual code and call paths","Classify confirmed issues separately from hypotheses; suppress style-only noise"]
+  recover: ["If tests cannot run, label findings static-only and state the blocker"]
+budget:
+  max_tool_calls: 24
+  max_reference_bytes: 196608
+evidence:
+  required: ["Repository revision and file:line anchor for each finding","Concrete failure scenario and recommended minimal correction"]
+output:
+  format: "Prioritized review with severity, file:line, evidence and remaining risks"
+  acceptance: ["No invented line anchors or test outcomes","No blocking verdict based on unsupported speculation"]

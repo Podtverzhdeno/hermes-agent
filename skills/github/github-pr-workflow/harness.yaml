@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: github-pr-workflow
+activation:
+  when: ["Create or update a GitHub pull request with CI checks","Review PR readiness and coordinate safe branch updates"]
+  not_when: ["Read or review local code without creating a PR","Modify a repository whose intended account is unknown"]
+capabilities:
+  tools: ["git","gh","GitHub API (authenticated client)"]
+  side_effects: external_write
+  approval_required: ["Merge, close, force-push, delete branch or change repository settings","Post externally visible comments unless already explicitly requested"]
+lifecycle:
+  preflight: ["Verify repository, authenticated identity, branch, HEAD and clean status","Check authorization, target base, branch rules and existing PRs"]
+  execute: ["Make bounded commits on a topic branch and create/update PR","Never read tokens from plaintext credential files or echo credentials"]
+  verify: ["Read back commit SHA, PR diff and required check conclusions","Distinguish pending, failed, skipped and absent CI; no invented green status"]
+  recover: ["On remote timeout, look up branch/PR before retrying mutation","Keep branch unchanged when authority or CI state is uncertain"]
+budget:
+  max_tool_calls: 38
+  max_reference_bytes: 262144
+evidence:
+  required: ["PR URL and exact head/base SHA","CI check names, conclusions and verification timestamp"]
+output:
+  format: "PR link, SHA, validation matrix and merge blockers"
+  acceptance: ["No unauthorized merge/force-push","No credentials included in messages, logs or prompts"]

@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: faiss
+activation:
+  when: ["Build or benchmark FAISS indices for dense nearest-neighbor search","Select Flat, IVF, HNSW or PQ using measured recall-latency-memory"]
+  not_when: ["Need document metadata lifecycle and security filters as a database feature","Need text-only keyword retrieval without embeddings"]
+capabilities:
+  tools: ["python","numpy","faiss","terminal"]
+  side_effects: local_write
+  approval_required: ["Allocate expensive GPU resources or overwrite a persisted production index"]
+lifecycle:
+  preflight: ["Record faiss build, dimensionality, dtype, metric, normalization and target platform","Define query distribution, ground-truth exact neighbors and hardware constraints"]
+  execute: ["Build a Flat exact-search baseline before ANN tuning","Train IVF/PQ on distinct appropriate samples; control random seeds and index parameters"]
+  verify: ["Measure recall@k, latency distribution, index bytes and memory at fixed settings","Round-trip serialize/read a non-sensitive index and verify ID mapping stability"]
+  recover: ["If an index is incompatible with saved metadata, avoid lossy writes","On insufficient training vectors, refuse unjustified IVF/PQ comparisons"]
+budget:
+  max_tool_calls: 36
+  max_reference_bytes: 196608
+evidence:
+  required: ["Version, exact baseline and tuned index configuration","Recall-latency-memory table with matched dataset and query set"]
+output:
+  format: "FAISS index selection with measured tradeoffs and regression tests"
+  acceptance: ["No fabricated GPU speedup or recall results","No mismatch between vector metric and embedding normalization"]

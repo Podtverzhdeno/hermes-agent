@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: evaluating-llms-harness
+activation:
+  when: ["Compare language models on reproducible benchmark suites","Validate LM evaluation harness task configuration and model adapters"]
+  not_when: ["Need to measure real-world agent task completion without suitable benchmarks","Only want anecdotal opinions about models without runnable experiments"]
+capabilities:
+  tools: ["lm_eval","python","terminal","read_file"]
+  side_effects: local_write
+  approval_required: ["Start paid hosted-model benchmarks or costly remote GPU evaluation","Download gated datasets or models contrary to access conditions"]
+lifecycle:
+  preflight: ["Record evaluation harness version, model revision and tokenizer chat template","Pin tasks, few-shot policy, seeds, sample limits, contamination controls and hardware"]
+  execute: ["Dry-run a small sample and then execute matched baseline/candidate settings","Collect per-task raw outputs and sample counts where privacy permits"]
+  verify: ["Check benchmark task versions, normalization, aggregation and stderr","Repeat or bootstrap uncertainty when score differences are near evaluation noise"]
+  recover: ["Resume from trustworthy checkpoints without double-counting samples","Report partial failed tasks separately and do not silently average them"]
+budget:
+  max_tool_calls: 55
+  max_reference_bytes: 262144
+evidence:
+  required: ["Exact model/task revision, command and sample size","Per-task metrics, uncertainty, run artifacts and resource cost"]
+output:
+  format: "Reproducible model benchmark comparison with uncertainty ledger"
+  acceptance: ["No cherry-picked aggregate or claims beyond benchmark domain","No remote GPU or API spend without approval"]

@@ -1,0 +1,22 @@
+schema_version: 1
+skill: pytorch-fsdp
+activation:
+  when: ["Implement or debug PyTorch FSDP1/FSDP2 distributed training", "Validate checkpointing and multi-rank correctness after sharding changes"]
+  not_when: ["Single-GPU inference optimization with no distributed training", "Generic model recommendations without PyTorch runtime inspection"]
+capabilities:
+  tools: ["read_file", "terminal", "patch", "web_search"]
+  side_effects: local_write
+  approval_required: ["Provision paid GPU clusters, kill training jobs or delete checkpoints"]
+lifecycle:
+  preflight: ["Capture installed torch/CUDA versions, device topology and rank setup", "Record existing checkpoints and clean workspace status"]
+  execute: ["Use PyTorch APIs matching installed version and apply fully_shard bottom-up where appropriate", "Change one memory or communication strategy per controlled experiment"]
+  verify: ["Run minimal multi-rank train/save/reload test with finite loss and matching gradients", "Measure peak memory and throughput against identical baseline conditions"]
+  recover: ["On OOM or deadlock, retain logs and avoid deleting unrelated jobs", "Revert only owned changes and confirm checkpoint integrity before retry"]
+budget:
+  max_tool_calls: 44
+  max_reference_bytes: 196608
+evidence:
+  required: ["Installed PyTorch and GPU environment details", "Per-rank test logs and saved/restored checkpoint evidence"]
+output:
+  format: "Version-aware FSDP diagnosis, measured tradeoffs and verification ledger"
+  acceptance: ["No unmeasured speedup or memory claims", "No launch on paid GPU resources without authorization"]

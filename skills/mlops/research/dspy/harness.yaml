@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: dspy
+activation:
+  when: ["Optimize a DSPy program using labeled examples and a fixed evaluation metric","Develop a version-pinned DSPy module, prompt optimizer or RAG program"]
+  not_when: ["Only need a simple single-turn static prompt without examples or evaluation","User requests unmeasured optimization claims without train/dev split"]
+capabilities:
+  tools: ["python","dspy","read_file","terminal"]
+  side_effects: external_write
+  approval_required: ["Paid provider LM calls or fine-tuning jobs","Publishing evaluation data or sensitive training examples"]
+lifecycle:
+  preflight: ["Pin installed DSPy version, model/provider and optimizer API","Define immutable train/dev/holdout splits and metric failure modes"]
+  execute: ["Construct explicit module signatures and deterministic baseline","Run optimizer with capped API budget and a non-leaking training split"]
+  verify: ["Compare baseline and optimized artifacts on held-out data","Track cost, latency, variance and failure categories, not only a single score"]
+  recover: ["On API cost or parsing faults, abort without exposing examples","Restore baseline program and check output signature compatibility"]
+budget:
+  max_tool_calls: 50
+  max_reference_bytes: 196608
+evidence:
+  required: ["Optimizer and model versions, dataset split and metric definition","Baseline and candidate holdout outcomes with cost/latency"]
+output:
+  format: "Versioned DSPy experiment card and artifact verification"
+  acceptance: ["No test-set leakage or fabricated improvement","No paid optimization without authorization"]

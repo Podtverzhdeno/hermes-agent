@@ -1,0 +1,22 @@
+schema_version: 1
+skill: hermes-agent
+activation:
+  when: ["Configure, debug or extend Hermes Agent itself", "Coordinate Hermes tools, gateway, Skills, harnesses and multi-agent workflows"]
+  not_when: ["Implement unrelated application features without Hermes internals", "Use a third-party agent framework with no Hermes installation"]
+capabilities:
+  tools: ["read_file", "git", "terminal", "GitHub connector", "pytest"]
+  side_effects: external_write
+  approval_required: ["Push or merge changes, alter GitHub settings, deploy gateways or publish Skills", "Install dependencies, change credentials, restart external services or delete sessions"]
+lifecycle:
+  preflight: ["Pin repository fork, exact HEAD SHA, local runtime, user write scope and dirty state", "Check local code paths and current CLI help rather than copying upstream usage"]
+  execute: ["Make bounded, task-owned changes on isolated branch or worktree", "For delegated agents, define file ownership, budgets, evidence and integration checks"]
+  verify: ["Run targeted and surrounding tests; verify exact PR HEAD and CI conclusions", "Confirm Skill selection, negative routing and permission boundaries without secret exposure"]
+  recover: ["Reconcile uncertain external writes before retrying", "Restore only owned edits and preserve unrelated user work and active sessions"]
+budget:
+  max_tool_calls: 90
+  max_reference_bytes: 262144
+evidence:
+  required: ["Current fork/branch/HEAD and affected module paths", "Executed test receipts, GitHub diff and external side effects"]
+output:
+  format: "Reproducible Hermes engineering change report with risks and verification ledger"
+  acceptance: ["No unverified claims of successful CI or production safety", "No unrequested push, installation, credential change or deployment"]

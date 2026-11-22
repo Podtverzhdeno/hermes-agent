@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: google-workspace
+activation:
+  when: ["Retrieve or modify Google Workspace resources using scoped OAuth","Handle Gmail, Calendar, Drive, Sheets and Docs with documented operations"]
+  not_when: ["Use a Google account or resource not identified by the user","Work on local files that need no Google services"]
+capabilities:
+  tools: ["google_api.py","setup.py"]
+  side_effects: external_write
+  approval_required: ["Send mail, delete resources, change sharing, invite people or overwrite important documents","Extend OAuth scopes or switch accounts"]
+lifecycle:
+  preflight: ["Resolve intended Google account, permitted scopes and target resource IDs","Check duplicate events/messages and inspect current resource before mutations"]
+  execute: ["Prefer read-only discovery and least-privilege OAuth scopes","Use idempotency checks and separate drafting from sending"]
+  verify: ["Read back updated resource identifiers and values","Record skipped or failed operations separately from successes"]
+  recover: ["On timeout, query the resource before retrying","Avoid duplicate sends, invitations or events"]
+budget:
+  max_tool_calls: 36
+  max_reference_bytes: 262144
+evidence:
+  required: ["Resource IDs and before/after state without credential leakage","Permission and side-effect acknowledgement where required"]
+output:
+  format: "Operation receipt per resource and outstanding uncertainties"
+  acceptance: ["No unrequested external communications","No raw secrets included in outputs"]

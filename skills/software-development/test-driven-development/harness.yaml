@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: test-driven-development
+activation:
+  when: ["Implement a behavior change where an executable test harness is available","Repair a regression with a deterministic failing test"]
+  not_when: ["Prepare a concept-only draft with no runnable code","Edit non-executable assets without a test seam"]
+capabilities:
+  tools: ["read_file","search_files","terminal","patch"]
+  side_effects: local_write
+  approval_required: ["External deployments, destructive rewrites and modifications to protected branches"]
+lifecycle:
+  preflight: ["Define intended observable behavior and test seams","Confirm test runner, fixture isolation and uncommitted changes"]
+  execute: ["Write and run a focused failing test before the minimal correction","Refactor in small reversible increments"]
+  verify: ["Capture RED and GREEN outputs where available","Run nearby regression tests and flag unexecuted environments"]
+  recover: ["If a meaningful RED test is impossible, document constraint and choose characterization tests","Protect user work when unwinding a failed implementation"]
+budget:
+  max_tool_calls: 48
+  max_reference_bytes: 262144
+evidence:
+  required: ["Failing test tied to requirement","Passing test evidence and regression scope"]
+output:
+  format: "Behavior change, test evidence, changed files and residual risks"
+  acceptance: ["No fabricated RED/GREEN output","No unrelated user changes overwritten"]

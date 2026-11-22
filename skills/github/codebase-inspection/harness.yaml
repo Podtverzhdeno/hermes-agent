@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: codebase-inspection
+activation:
+  when: ["Count LOC or compare language composition in a specified repository","Measure comment/code/blank line ratios with reproducible scope"]
+  not_when: ["Infer code quality or team performance from LOC alone","Review a PR for correctness rather than measure source"]
+capabilities:
+  tools: ["read_file","git (read-only)","pygount"]
+  side_effects: none
+  approval_required: []
+lifecycle:
+  preflight: ["Record exact root, revision, tracked/untracked scope and exclusion rules","Verify installed counter version and relevant code/asset types"]
+  execute: ["Run scoped read-only source measurements with generated and dependency directories excluded","Separate tracked, test and generated contributions when requested"]
+  verify: ["Validate totals against tool output and sample the language parser","State when ignored, vendored or submodule content affects comparability"]
+  recover: ["If the counter is unavailable, avoid unapproved installs and report limitation"]
+budget:
+  max_tool_calls: 16
+  max_reference_bytes: 65536
+evidence:
+  required: ["Repository revision, tool version and exact measurement command","Per-language counts, explicit exclusions and incomplete-file warnings"]
+output:
+  format: "Reproducible LOC ledger with scope, exclusions and uncertainty"
+  acceptance: ["No unsupported claims about software quality","No modification of system packages or unrequested paths"]

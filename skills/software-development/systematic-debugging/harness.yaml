@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: systematic-debugging
+activation:
+  when: ["A reproducible bug, test regression or surprising runtime behavior needs diagnosis","A fix failed and the root cause is not established"]
+  not_when: ["Plan a new feature without a reported failure","Conduct a non-debugging code review of a clean diff"]
+capabilities:
+  tools: ["read_file","search_files","terminal","patch"]
+  side_effects: local_write
+  approval_required: ["Destructive workspace actions, production changes and remote-side effects"]
+lifecycle:
+  preflight: ["Capture exact error, runtime version, reproducer and baseline status","Record workspace cleanliness and expected behavior"]
+  execute: ["Reproduce first, trace the earliest divergence and rank falsifiable hypotheses","Change the smallest surface after supporting evidence is gathered"]
+  verify: ["Run the original reproducer, targeted regression and nearby tests","Check negative cases, cross-platform compatibility and observable side effects"]
+  recover: ["If reproduction is impossible, preserve diagnostics and give bounded hypotheses","Revert unsuccessful experiments without discarding unrelated user edits"]
+budget:
+  max_tool_calls: 48
+  max_reference_bytes: 262144
+evidence:
+  required: ["Reproduction command and observed error","Before/after evidence for the proposed root cause and fix"]
+output:
+  format: "Diagnosis, tested fix, verification results and unresolved uncertainty"
+  acceptance: ["Root-cause claim is supported by evidence","Regressions checked or explicitly not verified"]

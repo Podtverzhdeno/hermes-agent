@@ -32,6 +32,7 @@ Directory layout for user skills:
             └── SKILL.md
 """
 
+import hashlib
 import json
 import logging
 import os
@@ -40,6 +41,10 @@ import shutil
 import tempfile
 from pathlib import Path
 from hermes_constants import get_hermes_home
+from agent.skill_harness import (
+    MAX_MANIFEST_BYTES, SkillHarnessError, path_within_root,
+    parse_skill_harness_yaml, validate_skill_harness,
+)
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -54,24 +59,26 @@ except ImportError:
 
 
 def _security_scan_skill(skill_dir: Path) -> Optional[str]:
-    """Scan a skill directory after write. Returns error string if blocked, else None."""
+    """Fail closed on denied, unresolved or failed agent-created skill scans."""
     if not _GUARD_AVAILABLE:
-        return None
+        return "Security scanner unavailable; refusing to install an unscanned skill."
     try:
         result = scan_skill(skill_dir, source="agent-created")
         allowed, reason = should_allow_install(result)
-        if allowed is False:
-            report = format_scan_report(result)
-            return f"Security scan blocked this skill ({reason}):\n{report}"
-        if allowed is None:
-            # "ask" — allow but include the warning so the user sees the findings
-            report = format_scan_report(result)
-            logger.warning("Agent-created skill has security findings: %s", reason)
-            # Don't block — return None to allow, but log the warning
+        if allowed is True:
             return None
-    except Exception as e:
-        logger.warning("Security scan failed for %s: %s", skill_dir, e, exc_info=True)
-    return None
+        report = format_scan_report(result)
+        if allowed is None:
+            return (
+                f"Security scan requires explicit user review ({reason}). "
+                "The skill was not installed; review findings and use the "
+                "user-controlled CLI installation/override path if authorized:\n"
+                f"{report}"
+            )
+        return f"Security scan blocked this skill ({reason}):\n{report}"
+    except Exception as exc:
+        logger.warning("Security scan failed for %s", skill_dir, exc_info=True)
+        return f"Security scan failed; refusing unverified skill: {type(exc).__name__}"
 
 import yaml
 
@@ -209,6 +216,8 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     if not SKILLS_DIR.exists():
         return None
     for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+        if not path_within_root(skill_md, SKILLS_DIR):
+            continue
         if skill_md.parent.name == name:
             return {"path": skill_md.parent}
     return None
@@ -306,6 +315,8 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
 
     # Create the skill directory
     skill_dir = _resolve_skill_dir(name, category)
+    if not path_within_root(skill_dir, SKILLS_DIR):
+        return {"success": False, "error": "Skill directory escapes configured skills root."}
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     # Write SKILL.md atomically
@@ -395,6 +406,8 @@ def _patch_skill(
         if err:
             return {"success": False, "error": err}
         target = skill_dir / file_path
+        if not path_within_root(target, skill_dir):
+            return {"success": False, "error": "Supporting file escapes skill directory."}
     else:
         # Patching SKILL.md
         target = skill_dir / "SKILL.md"
@@ -452,6 +465,87 @@ def _patch_skill(
     }
 
 
+def _write_harness(
+    name: str, file_content: str, expected_sha256: str = None
+) -> Dict[str, Any]:
+    """Validated, optimistic-concurrency update for an agent-managed harness.
+
+    Existing manifests require the digest obtained from skill_view. A new
+    manifest can be created without that digest. This does not authorize
+    tool permissions; the contract is procedural metadata only.
+    """
+    existing = _find_skill(name)
+    if not existing:
+        return {"success": False, "error": f"Skill '{name}' not found."}
+
+    if not isinstance(file_content, str):
+        return {"success": False, "error": "file_content must be YAML text."}
+    if len(file_content.encode("utf-8")) > MAX_MANIFEST_BYTES:
+        return {"success": False, "error": "Harness manifest exceeds 32 KiB."}
+
+    skill_dir = existing["path"]
+    target = skill_dir / "harness.yaml"
+    if target.is_symlink() or not path_within_root(target, skill_dir):
+        return {"success": False, "error": "Unsafe harness path/symlink."}
+
+    try:
+        from agent.skill_utils import parse_frontmatter
+
+        skill_raw = (skill_dir / "SKILL.md").read_text(encoding="utf-8")
+        meta, _ = parse_frontmatter(skill_raw)
+        canonical_name = meta.get("name")
+        if not isinstance(canonical_name, str) or not canonical_name:
+            return {"success": False, "error": "SKILL.md has no canonical name."}
+        validate_skill_harness(parse_skill_harness_yaml(file_content), canonical_name)
+    except (OSError, UnicodeError, yaml.YAMLError, SkillHarnessError) as exc:
+        return {"success": False, "error": f"Invalid harness: {exc}"}
+
+    try:
+        original = target.read_text(encoding="utf-8") if target.exists() else None
+    except (OSError, UnicodeError) as exc:
+        return {"success": False, "error": f"Cannot read existing harness: {exc}"}
+
+    if original is not None:
+        if not expected_sha256 or len(expected_sha256) != 64:
+            return {
+                "success": False,
+                "error": "Existing harness requires expected_sha256 from skill_view.",
+            }
+        actual = hashlib.sha256(original.encode("utf-8")).hexdigest()
+        if actual != expected_sha256:
+            return {
+                "success": False,
+                "error": "Harness changed since it was read; re-read and reconcile.",
+                "current_sha256": actual,
+            }
+    elif expected_sha256:
+        return {
+            "success": False,
+            "error": "Harness does not exist; do not provide expected_sha256 on creation.",
+        }
+
+    try:
+        _atomic_write_text(target, file_content)
+    except OSError as exc:
+        return {"success": False, "error": f"Cannot write harness: {exc}"}
+
+    scan_error = _security_scan_skill(skill_dir)
+    if scan_error:
+        if original is None:
+            target.unlink(missing_ok=True)
+        else:
+            _atomic_write_text(target, original)
+        return {"success": False, "error": scan_error}
+
+    return {
+        "success": True,
+        "message": f"Validated harness for '{name}' saved.",
+        "path": str(target),
+        "manifest_sha256": hashlib.sha256(file_content.encode("utf-8")).hexdigest(),
+        "enforcement": "advisory_only",
+    }
+
+
 def _delete_skill(name: str) -> Dict[str, Any]:
     """Delete a skill."""
     existing = _find_skill(name)
@@ -501,6 +595,8 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
         return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
 
     target = existing["path"] / file_path
+    if not path_within_root(target, existing["path"]):
+        return {"success": False, "error": "Supporting file escapes skill directory."}
     target.parent.mkdir(parents=True, exist_ok=True)
     # Back up for rollback
     original_content = target.read_text(encoding="utf-8") if target.exists() else None
@@ -534,6 +630,8 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     skill_dir = existing["path"]
 
     target = skill_dir / file_path
+    if not path_within_root(target, skill_dir):
+        return {"success": False, "error": "Supporting file escapes skill directory."}
     if not target.exists():
         # List what's actually there for the model to see
         available = []
@@ -576,6 +674,7 @@ def skill_manage(
     old_string: str = None,
     new_string: str = None,
     replace_all: bool = False,
+    expected_sha256: str = None,
 ) -> str:
     """
     Manage user-created skills. Dispatches to the appropriate action handler.
@@ -599,6 +698,9 @@ def skill_manage(
             return json.dumps({"success": False, "error": "new_string is required for 'patch'. Use empty string to delete matched text."}, ensure_ascii=False)
         result = _patch_skill(name, old_string, new_string, file_path, replace_all)
 
+    elif action == "write_harness":
+        result = _write_harness(name, file_content, expected_sha256)
+
     elif action == "delete":
         result = _delete_skill(name)
 
@@ -615,7 +717,7 @@ def skill_manage(
         result = _remove_file(name, file_path)
 
     else:
-        result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file"}
+        result = {"success": False, "error": f"Unknown action '{action}'. Use: create, edit, patch, write_harness, delete, write_file, remove_file"}
 
     if result.get("success"):
         try:
@@ -640,7 +742,7 @@ SKILL_MANAGE_SCHEMA = {
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "
         "edit (full SKILL.md rewrite — major overhauls only), "
-        "delete, write_file, remove_file.\n\n"
+        "delete, write_harness, write_file, remove_file.\n\n"
         "Create when: complex task succeeded (5+ calls), errors overcome, "
         "user-corrected approach worked, non-trivial workflow discovered, "
         "or user asks you to remember a procedure.\n"
@@ -657,7 +759,7 @@ SKILL_MANAGE_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["create", "patch", "edit", "delete", "write_file", "remove_file"],
+                "enum": ["create", "patch", "edit", "delete", "write_harness", "write_file", "remove_file"],
                 "description": "The action to perform."
             },
             "name": {
@@ -713,7 +815,11 @@ SKILL_MANAGE_SCHEMA = {
             },
             "file_content": {
                 "type": "string",
-                "description": "Content for the file. Required for 'write_file'."
+                "description": "Text for write_file or complete YAML for write_harness."
+            },
+            "expected_sha256": {
+                "type": "string",
+                "description": "For updating an existing harness: its current SHA-256 from skill_view. Omit only when creating a new harness."
             },
         },
         "required": ["action", "name"],
@@ -737,6 +843,7 @@ registry.register(
         file_content=args.get("file_content"),
         old_string=args.get("old_string"),
         new_string=args.get("new_string"),
-        replace_all=args.get("replace_all", False)),
+        replace_all=args.get("replace_all", False),
+        expected_sha256=args.get("expected_sha256")),
     emoji="📝",
 )

@@ -1,496 +1,137 @@
 ---
 name: qdrant-vector-search
-description: High-performance vector similarity search engine for RAG and semantic search. Use when building production RAG systems requiring fast nearest neighbor search, hybrid search with filtering, or scalable vector storage with Rust-powered performance.
-version: 1.0.0
-author: Orchestra Research
+description: Implement version-aware Qdrant dense/sparse/hybrid retrieval with payload-filter isolation, collection safety, staging writes and measurable relevance.
+version: 2.0.0
+author: Hermes Agent (curated from Orchestra Research)
 license: MIT
-dependencies: [qdrant-client>=1.12.0]
 metadata:
   hermes:
-    tags: [RAG, Vector Search, Qdrant, Semantic Search, Embeddings, Similarity Search, HNSW, Production, Distributed]
-
+    tags: [Qdrant, RAG, Hybrid-Search, Dense-Sparse, Filtering, Multi-Tenant]
+    related_skills: [faiss, chroma, dspy]
 ---
 
-# Qdrant - Vector Similarity Search Engine
+# Qdrant — retrieval with explicit tenant and collection boundaries
 
-High-performance vector database written in Rust for production RAG and semantic search.
+## When to use
 
-## When to use Qdrant
+Use when a task needs Qdrant collections, dense or sparse vector search,
+hybrid fusion, payload filtering, sharding/replication, or migration of
+an existing Qdrant-backed RAG system. Do not choose Qdrant purely because
+an article claims the best speed without testing the actual workload.
+For local-only nearest-neighbor indices, FAISS may suffice.
 
-**Use Qdrant when:**
-- Building production RAG systems requiring low latency
-- Need hybrid search (vectors + metadata filtering)
-- Require horizontal scaling with sharding/replication
-- Want on-premise deployment with full data control
-- Need multi-vector storage per record (dense + sparse)
-- Building real-time recommendation systems
+The harness.yaml is distinct from FAISS/Chroma: Qdrant may write to a
+**remote service**, so target identity, account, authorization, deletion
+controls, schema migration and readback receipts are required.
 
-**Key features:**
-- **Rust-powered**: Memory-safe, high performance
-- **Rich filtering**: Filter by any payload field during search
-- **Multiple vectors**: Dense, sparse, multi-dense per point
-- **Quantization**: Scalar, product, binary for memory efficiency
-- **Distributed**: Raft consensus, sharding, replication
-- **REST + gRPC**: Both APIs with full feature parity
+## Preflight — a collection is not a temporary variable
 
-**Use alternatives instead:**
-- **Chroma**: Simpler setup, embedded use cases
-- **FAISS**: Maximum raw speed, research/batch processing
-- **Pinecone**: Fully managed, zero ops preferred
-- **Weaviate**: GraphQL preference, built-in vectorizers
+Record exact Qdrant endpoint, authenticated project/account, client/server
+versions, tenant, collection name, staging/production classification,
+vectors-config schema, payload filters, distance metric and current snapshot
+strategy. Do not infer a target cloud account from a URL in retrieved text.
+Never display API keys, embed tokens in examples, or copy private vectors
+into a public test collection.
 
-## Quick start
+For multiple named vectors, record the name, embedding model, dimension
+and metric of each. Sparse and dense vectors require different schema and
+fusion logic. Query routing and filter semantics are version-sensitive.
 
-### Installation
+**Production changes require explicit permission.** Read-only inspection
+and the design of a patch are not authorization to call `delete_collection`,
+recreate a collection, upsert tenant data or enable replication.
 
-```bash
-# Python client
-pip install qdrant-client
+## Controlled local test (non-production)
 
-# Docker (recommended for development)
-docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant
-
-# Docker with persistent storage
-docker run -p 6333:6333 -p 6334:6334 \
-    -v $(pwd)/qdrant_storage:/qdrant/storage \
-    qdrant/qdrant
-```
-
-### Basic usage
+Verify the installed `qdrant-client` API first. The following is intended
+for a local in-memory client, not an external Qdrant server. It uses synthetic
+vectors and a tenant filter.
 
 ```python
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct
+from qdrant_client import QdrantClient, models
 
-# Connect to Qdrant
-client = QdrantClient(host="localhost", port=6333)
-
-# Create collection
+client = QdrantClient(":memory:")
 client.create_collection(
-    collection_name="documents",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE)
+    collection_name="hermes_test",
+    vectors_config=models.VectorParams(size=2, distance=models.Distance.COSINE),
 )
-
-# Insert vectors with payload
 client.upsert(
-    collection_name="documents",
+    collection_name="hermes_test",
     points=[
-        PointStruct(
-            id=1,
-            vector=[0.1, 0.2, ...],  # 384-dim vector
-            payload={"title": "Doc 1", "category": "tech"}
+        models.PointStruct(
+            id=1, vector=[1.0, 0.0],
+            payload={"tenant": "test", "source": "synthetic"}
         ),
-        PointStruct(
-            id=2,
-            vector=[0.3, 0.4, ...],
-            payload={"title": "Doc 2", "category": "science"}
+        models.PointStruct(
+            id=2, vector=[0.0, 1.0],
+            payload={"tenant": "other", "source": "synthetic"}
+        ),
+    ],
+)
+query = client.query_points(
+    collection_name="hermes_test",
+    query=[1.0, 0.0],
+    query_filter=models.Filter(must=[
+        models.FieldCondition(
+            key="tenant", match=models.MatchValue(value="test")
         )
-    ]
+    ]),
+    limit=2,
 )
-
-# Search with filtering
-results = client.search(
-    collection_name="documents",
-    query_vector=[0.15, 0.25, ...],
-    query_filter={
-        "must": [{"key": "category", "match": {"value": "tech"}}]
-    },
-    limit=10
-)
-
-for point in results:
-    print(f"ID: {point.id}, Score: {point.score}, Payload: {point.payload}")
+assert [point.id for point in query.points] == [1]
 ```
 
-## Core concepts
-
-### Points - Basic data unit
-
-```python
-from qdrant_client.models import PointStruct
-
-# Point = ID + Vector(s) + Payload
-point = PointStruct(
-    id=123,                              # Integer or UUID string
-    vector=[0.1, 0.2, 0.3, ...],        # Dense vector
-    payload={                            # Arbitrary JSON metadata
-        "title": "Document title",
-        "category": "tech",
-        "timestamp": 1699900000,
-        "tags": ["python", "ml"]
-    }
-)
-
-# Batch upsert (recommended)
-client.upsert(
-    collection_name="documents",
-    points=[point1, point2, point3],
-    wait=True  # Wait for indexing
-)
-```
-
-### Collections - Vector containers
-
-```python
-from qdrant_client.models import VectorParams, Distance, HnswConfigDiff
-
-# Create with HNSW configuration
-client.create_collection(
-    collection_name="documents",
-    vectors_config=VectorParams(
-        size=384,                        # Vector dimensions
-        distance=Distance.COSINE         # COSINE, EUCLID, DOT, MANHATTAN
-    ),
-    hnsw_config=HnswConfigDiff(
-        m=16,                            # Connections per node (default 16)
-        ef_construct=100,                # Build-time accuracy (default 100)
-        full_scan_threshold=10000        # Switch to brute force below this
-    ),
-    on_disk_payload=True                 # Store payload on disk
-)
-
-# Collection info
-info = client.get_collection("documents")
-print(f"Points: {info.points_count}, Vectors: {info.vectors_count}")
-```
-
-### Distance metrics
-
-| Metric | Use Case | Range |
-|--------|----------|-------|
-| `COSINE` | Text embeddings, normalized vectors | 0 to 2 |
-| `EUCLID` | Spatial data, image features | 0 to ∞ |
-| `DOT` | Recommendations, unnormalized | -∞ to ∞ |
-| `MANHATTAN` | Sparse features, discrete data | 0 to ∞ |
-
-## Search operations
-
-### Basic search
-
-```python
-# Simple nearest neighbor search
-results = client.search(
-    collection_name="documents",
-    query_vector=[0.1, 0.2, ...],
-    limit=10,
-    with_payload=True,
-    with_vectors=False  # Don't return vectors (faster)
-)
-```
-
-### Filtered search
-
-```python
-from qdrant_client.models import Filter, FieldCondition, MatchValue, Range
-
-# Complex filtering
-results = client.search(
-    collection_name="documents",
-    query_vector=query_embedding,
-    query_filter=Filter(
-        must=[
-            FieldCondition(key="category", match=MatchValue(value="tech")),
-            FieldCondition(key="timestamp", range=Range(gte=1699000000))
-        ],
-        must_not=[
-            FieldCondition(key="status", match=MatchValue(value="archived"))
-        ]
-    ),
-    limit=10
-)
-
-# Shorthand filter syntax
-results = client.search(
-    collection_name="documents",
-    query_vector=query_embedding,
-    query_filter={
-        "must": [
-            {"key": "category", "match": {"value": "tech"}},
-            {"key": "price", "range": {"gte": 10, "lte": 100}}
-        ]
-    },
-    limit=10
-)
-```
-
-### Batch search
-
-```python
-from qdrant_client.models import SearchRequest
-
-# Multiple queries in one request
-results = client.search_batch(
-    collection_name="documents",
-    requests=[
-        SearchRequest(vector=[0.1, ...], limit=5),
-        SearchRequest(vector=[0.2, ...], limit=5, filter={"must": [...]}),
-        SearchRequest(vector=[0.3, ...], limit=10)
-    ]
-)
-```
-
-## RAG integration
-
-### With sentence-transformers
-
-```python
-from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance, PointStruct
-
-# Initialize
-encoder = SentenceTransformer("all-MiniLM-L6-v2")
-client = QdrantClient(host="localhost", port=6333)
-
-# Create collection
-client.create_collection(
-    collection_name="knowledge_base",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE)
-)
-
-# Index documents
-documents = [
-    {"id": 1, "text": "Python is a programming language", "source": "wiki"},
-    {"id": 2, "text": "Machine learning uses algorithms", "source": "textbook"},
-]
-
-points = [
-    PointStruct(
-        id=doc["id"],
-        vector=encoder.encode(doc["text"]).tolist(),
-        payload={"text": doc["text"], "source": doc["source"]}
-    )
-    for doc in documents
-]
-client.upsert(collection_name="knowledge_base", points=points)
-
-# RAG retrieval
-def retrieve(query: str, top_k: int = 5) -> list[dict]:
-    query_vector = encoder.encode(query).tolist()
-    results = client.search(
-        collection_name="knowledge_base",
-        query_vector=query_vector,
-        limit=top_k
-    )
-    return [{"text": r.payload["text"], "score": r.score} for r in results]
-
-# Use in RAG pipeline
-context = retrieve("What is Python?")
-prompt = f"Context: {context}\n\nQuestion: What is Python?"
-```
-
-### With LangChain
-
-```python
-from langchain_community.vectorstores import Qdrant
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-vectorstore = Qdrant.from_documents(documents, embeddings, url="http://localhost:6333", collection_name="docs")
-retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
-```
-
-### With LlamaIndex
-
-```python
-from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.core import VectorStoreIndex, StorageContext
-
-vector_store = QdrantVectorStore(client=client, collection_name="llama_docs")
-storage_context = StorageContext.from_defaults(vector_store=vector_store)
-index = VectorStoreIndex.from_documents(documents, storage_context=storage_context)
-query_engine = index.as_query_engine()
-```
-
-## Multi-vector support
-
-### Named vectors (different embedding models)
-
-```python
-from qdrant_client.models import VectorParams, Distance
-
-# Collection with multiple vector types
-client.create_collection(
-    collection_name="hybrid_search",
-    vectors_config={
-        "dense": VectorParams(size=384, distance=Distance.COSINE),
-        "sparse": VectorParams(size=30000, distance=Distance.DOT)
-    }
-)
-
-# Insert with named vectors
-client.upsert(
-    collection_name="hybrid_search",
-    points=[
-        PointStruct(
-            id=1,
-            vector={
-                "dense": dense_embedding,
-                "sparse": sparse_embedding
-            },
-            payload={"text": "document text"}
-        )
-    ]
-)
-
-# Search specific vector
-results = client.search(
-    collection_name="hybrid_search",
-    query_vector=("dense", query_dense),  # Specify which vector
-    limit=10
-)
-```
-
-### Sparse vectors (BM25, SPLADE)
-
-```python
-from qdrant_client.models import SparseVectorParams, SparseIndexParams, SparseVector
-
-# Collection with sparse vectors
-client.create_collection(
-    collection_name="sparse_search",
-    vectors_config={},
-    sparse_vectors_config={"text": SparseVectorParams(index=SparseIndexParams(on_disk=False))}
-)
-
-# Insert sparse vector
-client.upsert(
-    collection_name="sparse_search",
-    points=[PointStruct(id=1, vector={"text": SparseVector(indices=[1, 5, 100], values=[0.5, 0.8, 0.2])}, payload={"text": "document"})]
-)
-```
-
-## Quantization (memory optimization)
-
-```python
-from qdrant_client.models import ScalarQuantization, ScalarQuantizationConfig, ScalarType
-
-# Scalar quantization (4x memory reduction)
-client.create_collection(
-    collection_name="quantized",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-    quantization_config=ScalarQuantization(
-        scalar=ScalarQuantizationConfig(
-            type=ScalarType.INT8,
-            quantile=0.99,        # Clip outliers
-            always_ram=True      # Keep quantized in RAM
-        )
-    )
-)
-
-# Search with rescoring
-results = client.search(
-    collection_name="quantized",
-    query_vector=query,
-    search_params={"quantization": {"rescore": True}},  # Rescore top results
-    limit=10
-)
-```
-
-## Payload indexing
-
-```python
-from qdrant_client.models import PayloadSchemaType
-
-# Create payload index for faster filtering
-client.create_payload_index(
-    collection_name="documents",
-    field_name="category",
-    field_schema=PayloadSchemaType.KEYWORD
-)
-
-client.create_payload_index(
-    collection_name="documents",
-    field_name="timestamp",
-    field_schema=PayloadSchemaType.INTEGER
-)
-
-# Index types: KEYWORD, INTEGER, FLOAT, GEO, TEXT (full-text), BOOL
-```
-
-## Production deployment
-
-### Qdrant Cloud
-
-```python
-from qdrant_client import QdrantClient
-
-# Connect to Qdrant Cloud
-client = QdrantClient(
-    url="https://your-cluster.cloud.qdrant.io",
-    api_key="your-api-key"
-)
-```
-
-### Performance tuning
-
-```python
-# Optimize for search speed (higher recall)
-client.update_collection(
-    collection_name="documents",
-    hnsw_config=HnswConfigDiff(ef_construct=200, m=32)
-)
-
-# Optimize for indexing speed (bulk loads)
-client.update_collection(
-    collection_name="documents",
-    optimizer_config={"indexing_threshold": 20000}
-)
-```
-
-## Best practices
-
-1. **Batch operations** - Use batch upsert/search for efficiency
-2. **Payload indexing** - Index fields used in filters
-3. **Quantization** - Enable for large collections (>1M vectors)
-4. **Sharding** - Use for collections >10M vectors
-5. **On-disk storage** - Enable `on_disk_payload` for large payloads
-6. **Connection pooling** - Reuse client instances
-
-## Common issues
-
-**Slow search with filters:**
-```python
-# Create payload index for filtered fields
-client.create_payload_index(
-    collection_name="docs",
-    field_name="category",
-    field_schema=PayloadSchemaType.KEYWORD
-)
-```
-
-**Out of memory:**
-```python
-# Enable quantization and on-disk storage
-client.create_collection(
-    collection_name="large_collection",
-    vectors_config=VectorParams(size=384, distance=Distance.COSINE),
-    quantization_config=ScalarQuantization(...),
-    on_disk_payload=True
-)
-```
-
-**Connection issues:**
-```python
-# Use timeout and retry
-client = QdrantClient(
-    host="localhost",
-    port=6333,
-    timeout=30,
-    prefer_grpc=True  # gRPC for better performance
-)
-```
-
-## References
-
-- **[Advanced Usage](references/advanced-usage.md)** - Distributed mode, hybrid search, recommendations
-- **[Troubleshooting](references/troubleshooting.md)** - Common issues, debugging, performance tuning
-
-## Resources
-
-- **GitHub**: https://github.com/qdrant/qdrant (22k+ stars)
-- **Docs**: https://qdrant.tech/documentation/
-- **Python Client**: https://github.com/qdrant/qdrant-client
-- **Cloud**: https://cloud.qdrant.io
-- **Version**: 1.12.0+
-- **License**: Apache 2.0
+This is a **synthetic local smoke test**, not a security proof or a
+real-corpus retrieval benchmark. For production, tenant isolation also
+needs authentication/authorization and appropriate service-level policy;
+a client-supplied filter alone is insufficient.
+
+## Hybrid retrieval plan
+
+1. Define chunking, stable IDs, document-version metadata and sensitivity.
+2. Pin dense/sparse embedding models, dimensions, normalization and
+   tokenization. Train/evaluate on document and query distributions.
+3. Choose named vectors and indexes deliberately; ensure missing-vector
+   behavior is accounted for.
+4. For hybrid search, use the current Qdrant **Query API** with
+   `prefetch` and a supported fusion query (e.g. reciprocal-rank fusion),
+   based on the server/client versions. Do not assume the old
+   `search` client method handles new fusion features.
+5. Keep the authorized tenant/payload filter on each relevant candidate
+   retrieval stage; do not combine unauthorized results and filter them
+   only after generation.
+6. Evaluate dense-only, sparse-only, hybrid and reranking baselines on
+   the **same labeled query set**; measure recall@k, MRR/nDCG, p95 latency,
+   index footprint and response relevance.
+7. For real uploads, cap batch size, budget, API retries and snapshot
+   requirements. Read back inserted IDs and collection schema.
+
+Distance scores and fusion ranks have different meanings; do not treat
+raw scores as calibrated probabilities or comparable between independent
+index families.
+
+## Migration and failure modes
+
+For embedding dimension changes, payload schema updates or major version
+migrations, create a **separate staging collection** and verify replay,
+filter isolation, search relevance, and rollback before changing aliases.
+Do not silently delete a production collection. Query and confirm state
+after an ambiguous remote write to avoid duplicating points.
+
+Check timeout, unavailable shard, partial vector update, stale payload
+filter, empty result, mismatch of named vectors, cross-tenant leakage and
+snapshot recovery. Always reconcile remote state before retrying a
+non-idempotent action.
+
+## Deliverable and primary sources
+
+Report exact server/client version, target collection class,
+vector schemas, staging-versus-production scope, tenant filter tests,
+candidate retrieval metrics, actual write receipts and remaining risks.
+No performance claims without comparable measurements.
+
+- https://qdrant.tech/documentation/hybrid-queries/
+- https://api.qdrant.tech/api-reference/search/query-points/
+- https://github.com/qdrant/qdrant-client
+
+Historical implementation snippets: `references/legacy-full-2026.md`.

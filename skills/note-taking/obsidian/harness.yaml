@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: obsidian
+activation:
+  when: ["Search, summarize, link or carefully edit notes in a specified Obsidian vault","Maintain a project knowledge base with traceable notes"]
+  not_when: ["Write to a vault or subtree without confirmed permission","Edit Google Docs rather than Obsidian Markdown"]
+capabilities:
+  tools: ["read_file","search_files","write_file","patch"]
+  side_effects: local_write
+  approval_required: ["Delete or bulk move notes, rewrite non-owned folders or alter workspace config"]
+lifecycle:
+  preflight: ["Resolve the actual vault root and verify write scope, canonical paths and file hashes","Check whether vault is read-only or shared with other agents"]
+  execute: ["Prefer smallest atomic edit with expected file hash and local backup","Preserve YAML frontmatter, wikilinks, encoding and unrelated changes"]
+  verify: ["Read back modified file, compare expected diff and verify links","Confirm all writes stayed inside authorized note subtree"]
+  recover: ["On conflict, re-read and reconcile rather than overwrite","Restore only agent-owned edits from a verified backup"]
+budget:
+  max_tool_calls: 34
+  max_reference_bytes: 262144
+evidence:
+  required: ["Vault-relative paths and original/new hashes","Concise diff and link integrity check"]
+output:
+  format: "Change log with affected notes, links and validation"
+  acceptance: ["No writes outside explicitly authorized subtree","No lost concurrent edits or silent deletion"]

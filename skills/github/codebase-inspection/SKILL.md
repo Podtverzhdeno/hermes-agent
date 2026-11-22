@@ -1,115 +1,96 @@
 ---
 name: codebase-inspection
-description: Inspect and analyze codebases using pygount for LOC counting, language breakdown, and code-vs-comment ratios. Use when asked to check lines of code, repo size, language composition, or codebase stats.
-version: 1.0.0
+description: Reproducibly measure codebase LOC, languages and comment/code ratios with declared scope, generated-file exclusions and no modification of system Python.
+version: 2.0.0
 author: Hermes Agent
 license: MIT
-metadata:
-  hermes:
-    tags: [LOC, Code Analysis, pygount, Codebase, Metrics, Repository]
-    related_skills: [github-repo-management]
 prerequisites:
   commands: [pygount]
+metadata:
+  hermes:
+    tags: [LOC, Codebase, Reproducibility, pygount, Metrics]
+    related_skills: [github-repo-management, code-review]
 ---
 
-# Codebase Inspection with pygount
+# Codebase Inspection — reproducible, non-invasive metrics
 
-Analyze repositories for lines of code, language breakdown, file counts, and code-vs-comment ratios using `pygount`.
+## When to use
 
-## When to Use
+Use for requests about repository size, language breakdown, comment-to-code
+ratios, source-file counts or size changes. Do **not** infer complexity,
+quality, developer productivity, defects or maintainability solely from LOC.
+For software defect review use `code-review`. Read `harness.yaml` for scope,
+evidence, time budget and exact acceptance conditions.
 
-- User asks for LOC (lines of code) count
-- User wants a language breakdown of a repo
-- User asks about codebase size or composition
-- User wants code-vs-comment ratios
-- General "how big is this repo" questions
+## Preflight
 
-## Prerequisites
+1. Resolve the requested repository and absolute project root; inspect current
+   revision and working-tree status without changing anything.
+2. Confirm **measurement scope**: tracked files, all files, test code,
+   vendored/generated sources, notebooks, embedded languages and submodules.
+3. Check for tool availability: `pygount --version`. Do not install software
+   automatically or change a system Python environment just to count lines.
+4. If tool installation is authorized, use `python -m venv .venv` inside an
+   isolated writable workspace or a user-approved environment, then install
+   a pinned version. Never use `pip --break-system-packages`.
+
+## Measure
+
+Run in the selected project root, with a reviewed exclusion set:
 
 ```bash
-pip install --break-system-packages pygount 2>/dev/null || pip install pygount
-```
-
-## 1. Basic Summary (Most Common)
-
-Get a full language breakdown with file counts, code lines, and comment lines:
-
-```bash
-cd /path/to/repo
 pygount --format=summary \
-  --folders-to-skip=".git,node_modules,venv,.venv,__pycache__,.cache,dist,build,.next,.tox,.eggs,*.egg-info" \
+  --folders-to-skip=".git,.venv,venv,node_modules,__pycache__,dist,build,.next" \
   .
 ```
 
-**IMPORTANT:** Always use `--folders-to-skip` to exclude dependency/build directories, otherwise pygount will crawl them and take a very long time or hang.
-
-## 2. Common Folder Exclusions
-
-Adjust based on the project type:
+For programmatic comparison:
 
 ```bash
-# Python projects
---folders-to-skip=".git,venv,.venv,__pycache__,.cache,dist,build,.tox,.eggs,.mypy_cache"
-
-# JavaScript/TypeScript projects
---folders-to-skip=".git,node_modules,dist,build,.next,.cache,.turbo,coverage"
-
-# General catch-all
---folders-to-skip=".git,node_modules,venv,.venv,__pycache__,.cache,dist,build,.next,.tox,vendor,third_party"
+pygount --format=json \
+  --folders-to-skip=".git,.venv,venv,node_modules,__pycache__,dist,build,.next" \
+  . > code-metrics.json
 ```
 
-## 3. Filter by Specific Language
+The second command **writes a report** and therefore requires authorization
+for the output destination; prefer a temporary/report directory rather than
+placing generated metrics in a protected repo. Verify current CLI syntax
+against `pygount --help` before running it in a version-sensitive setup.
 
-```bash
-# Only count Python files
-pygount --suffix=py --format=summary .
+If the user asks for tracked files only, build a tracked-file manifest via
+`git ls-files -z` and use an appropriate per-file parser; do not imply the
+default `pygount .` output excludes ignored/untracked files automatically.
+Record exclusions explicitly. Avoid scanning unrelated home directories,
+credential stores, private repos, build artifacts or mounted volumes.
 
-# Only count Python and YAML
-pygount --suffix=py,yaml,yml --format=summary .
-```
+## Interpret carefully
 
-## 4. Detailed File-by-File Output
+Report **code / comments / blank lines**, language totals, files included,
+exclusions, revision and tool version. Ratios and file counts can shift with
+parser heuristics, generated artifacts, notebooks and language classifications.
+Do not compare two repositories without matching scope, exclusion rules and
+tool versions. Source-line counts are not equal to runtime instructions or
+function points.
 
-```bash
-# Default format shows per-file breakdown
-pygount --folders-to-skip=".git,node_modules,venv" .
+Common issues:
+- Hidden generated or vendored directories inflate totals;
+- Multiple languages in one file can be categorized unexpectedly;
+- Binary/minified files are not normal code-line units;
+- Submodules may be omitted or counted differently;
+- Extremely large trees require bounded enumeration and resource controls;
+- Dirty working trees make SHA-only reports incomplete.
 
-# Sort by code lines (pipe through sort)
-pygount --folders-to-skip=".git,node_modules,venv" . | sort -t$'\t' -k1 -nr | head -20
-```
+## Verification and recovery
 
-## 5. Output Formats
+Re-run a small known-file sample to validate language and comment detection.
+Check that the reported sum matches the per-language totals using the
+reported parser semantics. If some files failed decoding, state the number
+and path class without leaking their contents. Do not delete reports or
+modify user source code as part of measurement.
 
-```bash
-# Summary table (default recommendation)
-pygount --format=summary .
+**Output:** exact project/revision, scope, excluded paths, tool version,
+per-language code/comment/blank counts, caveats and a reproducible command.
+If the tool was unavailable, give a bounded alternative rather than fake
+counts.
 
-# JSON output for programmatic use
-pygount --format=json .
-
-# Pipe-friendly: Language, file count, code, docs, empty, string
-pygount --format=summary . 2>/dev/null
-```
-
-## 6. Interpreting Results
-
-The summary table columns:
-- **Language** — detected programming language
-- **Files** — number of files of that language
-- **Code** — lines of actual code (executable/declarative)
-- **Comment** — lines that are comments or documentation
-- **%** — percentage of total
-
-Special pseudo-languages:
-- `__empty__` — empty files
-- `__binary__` — binary files (images, compiled, etc.)
-- `__generated__` — auto-generated files (detected heuristically)
-- `__duplicate__` — files with identical content
-- `__unknown__` — unrecognized file types
-
-## Pitfalls
-
-1. **Always exclude .git, node_modules, venv** — without `--folders-to-skip`, pygount will crawl everything and may take minutes or hang on large dependency trees.
-2. **Markdown shows 0 code lines** — pygount classifies all Markdown content as comments, not code. This is expected behavior.
-3. **JSON files show low code counts** — pygount may count JSON lines conservatively. For accurate JSON line counts, use `wc -l` directly.
-4. **Large monorepos** — for very large repos, consider using `--suffix` to target specific languages rather than scanning everything.
+Reference: https://pygount.readthedocs.io/en/latest/usage/

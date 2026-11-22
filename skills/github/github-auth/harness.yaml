@@ -1,0 +1,22 @@
+schema_version: 1
+skill: github-auth
+activation:
+  when: ["Set up or diagnose GitHub authentication for a verified account", "Select between connected GitHub, GitHub CLI, credential manager and SSH"]
+  not_when: ["Reading a public repository without authentication", "A request to store or display literal credential values"]
+capabilities:
+  tools: ["git (read-only)", "gh auth", "GitHub connector"]
+  side_effects: local_write
+  approval_required: ["Install tools, create SSH keys or alter global git configuration", "Rotate or revoke authentication credentials"]
+lifecycle:
+  preflight: ["Verify host, account, repo and minimum required scope", "Check authentication status without disclosing remotes or tokens"]
+  execute: ["Prefer secure OS-backed authorization and existing scoped connectors", "Never extract tokens from local credentials or embed tokens in Git remote URLs"]
+  verify: ["Check authenticated identity and target repository read scope", "Test write access only when a matching write operation was authorized"]
+  recover: ["Report missing permissions rather than seeking unrestricted credentials", "On exposure, recommend user-controlled revocation and rotation"]
+budget:
+  max_tool_calls: 20
+  max_reference_bytes: 65536
+evidence:
+  required: ["Verified hostname and account identity without secret values", "Read-only access probe and required permissions"]
+output:
+  format: "Safe authentication readiness and scope report"
+  acceptance: ["No tokens or private keys surfaced in output", "No unrequested elevation of repository permissions"]
