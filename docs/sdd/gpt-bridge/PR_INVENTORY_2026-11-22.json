@@ -1,0 +1,265 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-11-22T10:44:54.770Z",
+  "main_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+  "source_verification": {
+    "local_extension_verified": false,
+    "live_monitor_connected": false
+  },
+  "decisions": {
+    "api_pr": null,
+    "observer_pr": null,
+    "control_plane": null
+  },
+  "proposals": [
+    {
+      "pr": 1,
+      "head": "feat/autopilot-durable-ledger-20261122",
+      "head_sha": "c315a8da93e21de4cb8f918c61375632a3b1855f",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        ".github/workflows/autopilot-offline.yml",
+        "AGENTS.md",
+        "autopilot/__init__.py",
+        "autopilot/ledger.py",
+        "autopilot/policy.py",
+        "docs/autopilot/ARCHITECTURE.md",
+        "docs/autopilot/OWNER_ACCEPTANCE_CONTRACT.md",
+        "docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md",
+        "pyproject.toml",
+        "tests/autopilot/test_ledger.py",
+        "tests/autopilot/test_offline_contract.py",
+        "tests/autopilot/test_policy.py"
+      ],
+      "domains": [
+        "control_plane"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 2,
+      "head": "feat/skill-harness-contracts-20261122",
+      "head_sha": "185af1ba4174dfdaa535e90581e0f1b6a983e772",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "agent/skill_harness.py",
+        "docs/skill-harness-architecture.md",
+        "scripts/audit_skill_harness.py",
+        "skills/github/github-auth/SKILL.md",
+        "skills/github/github-auth/harness.yaml",
+        "skills/github/github-code-review/SKILL.md",
+        "skills/github/github-code-review/harness.yaml",
+        "skills/github/github-pr-workflow/SKILL.md",
+        "skills/github/github-pr-workflow/harness.yaml",
+        "skills/github/github-repo-management/SKILL.md",
+        "skills/github/github-repo-management/harness.yaml",
+        "skills/mcp/native-mcp/harness.yaml",
+        "skills/mlops/training/pytorch-fsdp/SKILL.md",
+        "skills/mlops/training/pytorch-fsdp/harness.yaml",
+        "skills/mlops/training/pytorch-fsdp/references/archive-checkpoint-parallelism.md",
+        "skills/mlops/training/pytorch-fsdp/references/archive-distributed-foundations.md",
+        "skills/mlops/training/pytorch-fsdp/references/legacy-generated-2025.md",
+        "skills/mlops/training/pytorch-fsdp/references/other.md",
+        "skills/note-taking/obsidian/SKILL.md",
+        "skills/note-taking/obsidian/harness.yaml",
+        "skills/productivity/google-workspace/harness.yaml",
+        "skills/research/arxiv/harness.yaml",
+        "skills/software-development/code-review/SKILL.md",
+        "skills/software-development/code-review/harness.yaml",
+        "skills/software-development/subagent-driven-development/harness.yaml",
+        "skills/software-development/systematic-debugging/harness.yaml",
+        "skills/software-development/test-driven-development/harness.yaml",
+        "tests/agent/test_skill_harness.py",
+        "tests/skills/test_pytorch_fsdp_archives.py",
+        "tests/tools/test_skill_harness_integration.py",
+        "tests/tools/test_skill_manager_guard_fail_closed.py",
+        "tests/tools/test_skill_manager_path_boundaries.py",
+        "tests/tools/test_skill_manager_write_harness.py",
+        "tools/skill_manager_tool.py",
+        "tools/skills_tool.py"
+      ],
+      "domains": [
+        "skills"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 3,
+      "head": "fix/acp-approval-session-isolation-20261122",
+      "head_sha": "fd9071f1a21f94e5e7800551330d4abd9ea1677d",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "acp_adapter/permissions.py",
+        "acp_adapter/server.py",
+        "docs/ACP_APPROVAL_FOLLOWUP.md",
+        "tests/test_acp_approval_isolation.py",
+        "tools/approval.py",
+        "tools/terminal_tool.py"
+      ],
+      "domains": [
+        "security"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 4,
+      "head": "feat/gpt-bridge-observability-20261122",
+      "head_sha": "5b8497b510b0a8543e8a2e30aaac5861bf30f264",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "docs/sdd/HERMES_GPT_BRIDGE_OBSERVABILITY_SDD.md",
+        "docs/sdd/HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md",
+        "gateway/gpt_bridge_diagnostics.py",
+        "gateway/platforms/api_server.py",
+        "tests/gateway/test_gpt_bridge_diagnostics.py"
+      ],
+      "domains": [
+        "api",
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 5,
+      "head": "feat/gpt-bridge-atomic-diagnostics-20261122",
+      "head_sha": "55b4b7017c527bcf7b595922ea5dd19a4ca96025",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "docs/sdd/gpt-hermes-bridge/README.md",
+        "docs/sdd/gpt-hermes-bridge/architecture-and-runtime.md",
+        "docs/sdd/gpt-hermes-bridge/decision-record-and-rollout.md",
+        "docs/sdd/gpt-hermes-bridge/failure-injection-and-observability.md",
+        "docs/sdd/gpt-hermes-bridge/implementation-log-2026-11-22.md",
+        "docs/sdd/gpt-hermes-bridge/upstream-parity-and-pr-coordination-2026-11-22.md",
+        "gateway/idempotency.py",
+        "gateway/platforms/api_server.py",
+        "scripts/hermes_gpt_run_observer.py",
+        "tests/gateway/test_api_idempotency.py"
+      ],
+      "domains": [
+        "api",
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 6,
+      "head": "sdd/gpt-observability-2026-11-22",
+      "head_sha": "4d25945034de4f8d066fa981e109e2a67d44eea4",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        ".github/workflows/gpt-gateway-regression.yml",
+        "docs/sdd/2026-11-22-gpt-investigation-log.md",
+        "docs/sdd/gpt-extension-observability-2026-11-22.md",
+        "gateway/platforms/api_server.py",
+        "tests/gateway/test_api_server.py",
+        "tests/gateway/test_api_server_idempotency.py"
+      ],
+      "domains": [
+        "api",
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 7,
+      "head": "docs/gpt-bridge-sdd-observability-20261122",
+      "head_sha": "ef0cd1d8bcd457bdc30d4f41bbeab63228620cf0",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "docs/gpt_bridge/SDD.md",
+        "docs/gpt_bridge/WORK_LOG_2026-11-22.md"
+      ],
+      "domains": [
+        "docs"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 8,
+      "head": "feat/hermes-gpt-bridge-observability-20261122",
+      "head_sha": "c594dc7ea7613d73a4c2fd73bf757b3d78066dd7",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "docs/sdd/HERMES_GPT_BRIDGE_OBSERVABILITY.md",
+        "hermes_gpt_bridge/__init__.py",
+        "hermes_gpt_bridge/diagnostics.py",
+        "scripts/gpt_bridge_trace_doctor.py",
+        "tests/hermes_gpt_bridge/test_diagnostics.py"
+      ],
+      "domains": [
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 9,
+      "head": "feat/gpt-bridge-observability-sdd-20261122",
+      "head_sha": "8fb2d37e5df6344ecb96ce5a56fa08e0f4ebdfe6",
+      "base": "main",
+      "base_sha": "7e9100901819ee44c16b4ddcb79a6bcb7909f591",
+      "files": [
+        "docs/gpt-bridge/AUDIT_2026-11-22.md",
+        "docs/gpt-bridge/INCIDENT_RUNBOOK.md",
+        "docs/gpt-bridge/SDD.md",
+        "gpt_bridge/__init__.py",
+        "gpt_bridge/cli.py",
+        "gpt_bridge/observability.py",
+        "pyproject.toml",
+        "tests/gpt_bridge/test_cli.py",
+        "tests/gpt_bridge/test_observability.py"
+      ],
+      "domains": [
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 10,
+      "head": "feat/autopilot-observability-sdd-20261122",
+      "head_sha": "1bdfd1b22f77ec6691df3722e45eac211999d758",
+      "base": "feat/autopilot-durable-ledger-20261122",
+      "base_sha": "59adecd63d5d07df413956e4e3d3709ac21ab59f",
+      "files": [
+        "autopilot/diagnostics.py",
+        "autopilot/ledger.py",
+        "docs/autopilot/AUDIT_LOG_2026-11-22_GPT_EXTENSION.md",
+        "docs/autopilot/SDD_GPT_EXTENSION_AND_OBSERVABILITY.md",
+        "scripts/autopilot_watch.py",
+        "tests/autopilot/test_diagnostics.py",
+        "tests/autopilot/test_ledger.py",
+        "tests/autopilot/test_watch.py"
+      ],
+      "domains": [
+        "control_plane",
+        "observer"
+      ],
+      "draft": true
+    },
+    {
+      "pr": 11,
+      "head": "fix/gpt-bridge-request-preflight-20261122-f9ac",
+      "head_sha": "dad8a7977fed6e492996a2dfa312070a86fedef8",
+      "base": "feat/gpt-bridge-observability-20261122",
+      "base_sha": "5b8497b510b0a8543e8a2e30aaac5861bf30f264",
+      "files": [
+        "docs/sdd/gpt-bridge/INTEGRATION_GATE_AND_AUDIT_2026-11-22.md",
+        "gateway/platforms/api_server.py",
+        "tests/gateway/test_gpt_bridge_request_preflight.py"
+      ],
+      "domains": [
+        "api",
+        "docs"
+      ],
+      "draft": true
+    }
+  ]
+}
