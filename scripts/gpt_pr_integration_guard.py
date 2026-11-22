@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import sys
+import tempfile
 import unicodedata
 import urllib.error
 import urllib.parse
@@ -448,6 +450,85 @@ def markdown(report: dict[str, Any]) -> str:
     return '\n'.join(lines) + '\n'
 
 
+def _atomic_write(path: Path, content: bytes) -> None:
+    """Atomic per-file replace; do not claim an atomic multi-file transaction.
+
+    Temp is created beside the target and fsynced before os.replace. A machine
+    power loss can still affect durability; the bundle digest detects
+    incomplete/mixed snapshots on subsequent reads.
+    """
+    temporary: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode='wb', prefix=f'.{path.name}.', suffix='.tmp',
+            dir=path.parent, delete=False,
+        ) as output:
+            temporary = output.name
+            output.write(content)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def _write_bundle(
+    *,
+    snapshot_path: Path | None,
+    report_path: Path | None,
+    markdown_path: Path | None,
+    manifest_path: Path | None,
+    snapshot: dict[str, Any],
+    report: dict[str, Any],
+    summary: str,
+) -> None:
+    files: list[tuple[str, Path, bytes]] = []
+    for label, path, data in (
+        ('snapshot', snapshot_path, json.dumps(snapshot, indent=2, ensure_ascii=False) + '\n'),
+        ('report', report_path, json.dumps(report, indent=2, ensure_ascii=False) + '\n'),
+        ('markdown', markdown_path, summary),
+    ):
+        if path is not None:
+            files.append((label, path, data.encode('utf-8')))
+    destinations = [p.resolve() for _, p, _ in files]
+    if manifest_path is not None:
+        if not files:
+            raise IncompleteSnapshot('Cannot certify a bundle with no output files')
+        destinations.append(manifest_path.resolve())
+    if len(set(destinations)) != len(destinations):
+        raise IncompleteSnapshot('Report output paths overlap; refusing to overwrite evidence')
+
+    for _, path, data in files:
+        _atomic_write(path, data)
+    if manifest_path is not None:
+        # Digest manifest is written LAST. It certifies only file consistency
+        # at collection time, NOT GitHub atomicity, runtime health or merge.
+        manifest = {
+            'schema': 'hermes.pr.bundle.v1',
+            'status': 'FILES_WRITTEN_NOT_RUNTIME_VERIFIED',
+            'snapshot_sha': snapshot['default_head_sha'],
+            'evidence_mode': report['evidence_mode'],
+            'collected_at': snapshot['collected_at'],
+            'files': {
+                name: {'sha256': hashlib.sha256(data).hexdigest(), 'bytes': len(data)}
+                for name, _, data in files
+            },
+        }
+        manifest_raw = (json.dumps(manifest, indent=2, sort_keys=True) + '\n').encode('utf-8')
+        _atomic_write(manifest_path, manifest_raw)
+        # Catch mixed generations from concurrent writers or corrupt
+        # files before the CLI reports success. Readers must verify too.
+        for name, path, content in files:
+            if (path.read_bytes() != content or
+                    hashlib.sha256(path.read_bytes()).hexdigest() != manifest['files'][name]['sha256']):
+                raise IncompleteSnapshot('Report bundle digest mismatch; not complete')
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--repo', default=os.environ.get('GITHUB_REPOSITORY', ''))
@@ -455,6 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--snapshot-out', type=Path)
     ap.add_argument('--report-out', type=Path)
     ap.add_argument('--markdown-out', type=Path)
+    ap.add_argument('--manifest-out', type=Path, help='Written last; per-file SHA-256 receipt')
     ap.add_argument('--strict', action='store_true', help='Exit 2 on blockers')
     args = ap.parse_args(argv)
     try:
@@ -463,13 +545,14 @@ def main(argv: list[str] | None = None) -> int:
             if args.snapshot_in else collect(args.repo, os.environ.get('GITHUB_TOKEN', ''))
         )
         report = analyze(snapshot, evidence_mode=('offline_snapshot' if args.snapshot_in else 'github_api'))
-        if args.snapshot_out:
-            args.snapshot_out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
-        if args.report_out:
-            args.report_out.write_text(json.dumps(report, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
         summary = markdown(report)
-        if args.markdown_out:
-            args.markdown_out.write_text(summary, encoding='utf-8')
+        _write_bundle(
+            snapshot_path=args.snapshot_out,
+            report_path=args.report_out,
+            markdown_path=args.markdown_out,
+            manifest_path=args.manifest_out,
+            snapshot=snapshot, report=report, summary=summary,
+        )
         print(summary)
         return 2 if args.strict and report['counts']['blocker'] else 0
     except (IncompleteSnapshot, OSError, ValueError) as exc:
