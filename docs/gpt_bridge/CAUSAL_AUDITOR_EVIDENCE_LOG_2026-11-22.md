@@ -19,6 +19,7 @@
 | 3 | LOCALLY_TESTED | 30 agents can emit the same sequence 1 without conflict | Scope uniqueness to producer incarnation, not global counter | 30-producer deterministic unittest |
 | 4 | LOCALLY_TESTED | UI green while external effect unknown or verifier SHA stale | Check task completion consistency; never certify success from metadata | success-with-unknown and SHA mismatch tests |
 | 5 | LOCALLY_TESTED | Malicious JSON `reason_code`/`state` list could raise unhandled TypeError | Added explicit type validation, reject malformed fields | Type-confusion regression test added after self-review |
+| 11 | LOCALLY_TESTED | Deeply nested JSON could trigger an unhandled `RecursionError`, and null `occurred_at_utc` could pass a required-field check | Catch decoder recursion failures; require non-null UTC; reject `task.completed` with nonterminal `state_to` | Three new regression tests; 42 total locally passed |
 | 10 | LOCALLY_TESTED | File/event volume can exhaust resources with dozens of producers | Added 64 MiB total-byte cap, 50-worker/5000-event replay soak, and capped findings with full counts | Synthetic tests only, not a production load benchmark |
 | 6 | LOCALLY_TESTED | Receipt-less ack or cross-producer ack without causal link can falsely clear unknown | Require evidence IDs and causal ordering to related reservation | ack-before-reserve, cross-producer causation tests |
 | 7 | LOCALLY_TESTED | Two distinct reservations for one effect key/fence might be treated as an ordinary dedup | Flag multiple reservations; do not infer safe replay | duplicate-reservation test |
@@ -34,7 +35,7 @@ python -m unittest discover -s tests/hermes_observer -v
 python -m py_compile hermes_observer/audit.py
 ```
 
-As of authoring this log: 39 tests passed locally in the isolated container (`Ran 39 tests ... OK`) after fixes. This is not full Hermes integration CI, not proof of Windows extension behavior, and not a production run. Recheck this count and attach exact head SHA once GitHub CI executes.
+As of authoring this log: 42 tests passed locally in the isolated container (`Ran 39 tests ... OK`) after fixes (including adversarial JSON depth, null required timestamps, and false task completion while `running`). This is not full Hermes integration CI, not proof of Windows extension behavior, and not a production run. Recheck this count and attach exact head SHA once GitHub CI executes.
 
 ## Potential fault stories and evidence still needed
 
