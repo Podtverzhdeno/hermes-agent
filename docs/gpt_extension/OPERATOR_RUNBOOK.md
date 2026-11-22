@@ -60,3 +60,12 @@ For a user-authorized `web-chatgpt-high-cdp` backend, verify authenticated lane 
 A ChatGPT UI answer or token canary is only transport evidence. It must be correlated to a task and verified against independently accessible GitHub/CI/file artifacts before declaring task success. One tab, one active writer; other agents queue rather than sharing clicks or typing.
 
 Use the pure `gpt_extension/cdp_diagnostics.py` module for evidence interpretation only. The current local bridge and actual extension health were not observed because Local Workspace MCP returned `Session terminated`.
+
+
+## 9. CDP subprocess credential exposure and incident containment
+
+If a CDP-connected agent-browser subprocess fails, **do not** attach raw stderr/stdout, process command line, OS crash logs, WebSocket URL, browser cookies or screenshots to a GitHub issue. The branch deliberately redacts CDP subprocess diagnostics; preserve only typed error category, task/fence/lane, sanitized duration and provider receipt.
+
+A credential-bearing CDP URL is still passed as the child process' `--cdp` argument in the legacy fork and may be visible to other OS processes. For secure rollout, first verify installed CLI capabilities and migrate to a supported credential-free local target or credential handling outside process argv. Newer agent-browser documents `AGENT_BROWSER_CDP`, `AGENT_BROWSER_CDP_HEADERS` and `--pin-tab`, but these require runtime compatibility/security tests, not blind configuration changes. If bearer leakage is suspected, revoke/rotate the token through its provider and stop new remote CDP commands until authorization is verified.
+
+External browser process ownership remains a separate invariant: never issue a destructive close against a user-owned Edge/Chrome instance. Cross-review with PR #15 before merging the same `tools/browser_tool.py` file.
