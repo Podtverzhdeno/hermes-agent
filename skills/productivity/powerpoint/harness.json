@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "skill": "powerpoint",
+  "purpose": "Read and modify PowerPoint decks while preserving structure and visuals.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Create a PowerPoint deck from this outline",
+      "Inspect layout and speaker notes in the uploaded PPTX",
+      "Correct slides in the existing presentation using its template"
+    ],
+    "do_not_trigger": [
+      "Create a GitHub repository",
+      "Write a LaTeX math proof only",
+      "Publish a slide deck publicly without permission"
+    ]
+  },
+  "preflight": [
+    "Verify ownership, source deck, template/license and exact output path.",
+    "Preserve a copy of original slides and inspect layout restrictions."
+  ],
+  "workflow": [
+    "Extract slide content, notes, dimensions and layout structure.",
+    "Edit or create deck according to approved structure and style.",
+    "Render slides and visually inspect overlaps, typography and images.",
+    "Verify produced PPTX opens and notes/media are preserved."
+  ],
+  "actions": [
+    {
+      "operation": "pptx.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "deck-snapshot"
+      ]
+    },
+    {
+      "operation": "pptx.edit",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "deck-snapshot",
+        "pptx-output",
+        "visual-proof"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "deck-snapshot",
+      "source": "artifact",
+      "how_to_verify": "Record slide count, aspect ratio, master/template and source revision."
+    },
+    {
+      "id": "pptx-output",
+      "source": "file_hash",
+      "how_to_verify": "Check exact file output and structural integrity after save."
+    },
+    {
+      "id": "visual-proof",
+      "source": "artifact",
+      "how_to_verify": "Inspect rendered slides for cropping, overflow and alignment defects."
+    }
+  ],
+  "failure_modes": [
+    "Do not assume syntactic PPTX validity proves visual correctness.",
+    "On missing fonts/masters, preserve original and disclose rendering difference."
+  ]
+}
