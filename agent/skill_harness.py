@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+import hashlib
 import json
 import re
 
@@ -62,8 +63,14 @@ def _lines(items: Any, name: str, minimum: int = 1, maximum: int = 12):
 
 def validate_harness(profile: Any, expected_skill: str) -> dict:
     """Versioned strict schema; unknown keys and risk understatements fail."""
-    if not isinstance(profile, dict) or set(profile) != _KEYS:
-        raise SkillHarnessError("harness must contain exactly the v1 keys")
+    optional = {"skill_git_blob"}  # Drift check, NOT a trust signature.
+    if (not isinstance(profile, dict) or not _KEYS.issubset(profile)
+            or set(profile) - _KEYS - optional):
+        raise SkillHarnessError("harness must contain exactly the supported v1 keys")
+    if "skill_git_blob" in profile:
+        blob = profile["skill_git_blob"]
+        if not isinstance(blob, str) or not re.fullmatch(r"[0-9a-f]{40}", blob):
+            raise SkillHarnessError("invalid Git blob fingerprint")
     if type(profile["schema_version"]) is not int or profile["schema_version"] != 1:
         raise SkillHarnessError("unsupported harness version")
     if not isinstance(profile["skill"], str) or not _NAME.fullmatch(profile["skill"]):
@@ -150,7 +157,26 @@ def load_skill_harness(skill_dir: Path | None, expected_skill: str) -> dict | No
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise SkillHarnessError("unable to load harness.json: " + type(exc).__name__) from exc
-    return validate_harness(data, expected_skill)
+    profile = validate_harness(data, expected_skill)
+    if "skill_git_blob" in profile:
+        skill_md = root / "SKILL.md"
+        if skill_md.is_symlink():
+            raise SkillHarnessError("SKILL.md symlink forbidden for pinned harness")
+        try:
+            raw = skill_md.read_bytes()
+        except OSError as exc:
+            raise SkillHarnessError("unable to read pinned SKILL.md") from exc
+        # The Git blob hash is a *version consistency check*, not an
+        # authenticity guarantee. Never use it to authorize a tool.
+        actual = hashlib.sha1(
+            b"blob " + str(len(raw)).encode("ascii") + b"\\x00" + raw
+        ).hexdigest()
+        if actual != profile["skill_git_blob"]:
+            raise SkillHarnessError(
+                "SKILL.md changed since its harness was reviewed; "
+                "revalidate the contract and renew its fingerprint"
+            )
+    return profile
 
 
 def format_harness_guidance(profile: Mapping[str, Any]) -> str:
