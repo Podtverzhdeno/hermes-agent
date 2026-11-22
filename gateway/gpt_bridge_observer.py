@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
+import hashlib
 import json
 import re
 from typing import Any, Mapping
@@ -162,7 +163,7 @@ class ReadOnlyEventObserver:
         self.max_recent = max_recent
         self.max_event_bytes = max_event_bytes
         self._producers: dict[str, _ProducerCursor] = {}
-        self._recent: OrderedDict[str, tuple[str, int]] = OrderedDict()
+        self._recent: OrderedDict[str, tuple[str, int, str]] = OrderedDict()
         self._recent_seq: dict[tuple[str, int], str] = {}
         self._unresolved: dict[str, set[str]] = {}
 
@@ -172,6 +173,8 @@ class ReadOnlyEventObserver:
         except InvalidBridgeEvent as exc:
             return Observation(False, str(exc))
         producer, seq, event_id = (event["producer_id"], event["source_event_seq"], event["event_id"])
+        digest = hashlib.sha256(json.dumps(event, sort_keys=True, ensure_ascii=False,
+                                           separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
         cursor = self._producers.get(producer)
         if cursor is None:
             if len(self._producers) >= self.max_producers:
@@ -179,7 +182,7 @@ class ReadOnlyEventObserver:
             cursor = _ProducerCursor()
         prior = self._recent.get(event_id)
         if prior is not None:
-            if prior == (producer, seq):
+            if prior == (producer, seq, digest):
                 return Observation(False, "duplicate_event", producer, cursor.contiguous)
             return Observation(False, "event_id_collision", producer, cursor.contiguous)
         old_at_seq = self._recent_seq.get((producer, seq))
@@ -197,11 +200,11 @@ class ReadOnlyEventObserver:
         while cursor.contiguous + 1 in cursor.ahead:
             cursor.contiguous += 1
             del cursor.ahead[cursor.contiguous]
-        self._recent[event_id] = (producer, seq)
+        self._recent[event_id] = (producer, seq, digest)
         self._recent_seq[(producer, seq)] = event_id
         while len(self._recent) > self.max_recent:
             old_event_id, old_identity = self._recent.popitem(last=False)
-            self._recent_seq.pop(old_identity, None)
+            self._recent_seq.pop(old_identity[:2], None)
             # An evicted parent is not proof it never happened; retain only
             # bounded, explicitly incomplete causal observation state.
             self._unresolved.pop(old_event_id, None)
