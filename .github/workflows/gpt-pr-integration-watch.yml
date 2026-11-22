@@ -54,6 +54,12 @@ jobs:
             --repo '${{ github.repository }}' \
             --snapshot-out hermes-pr-snapshot.json \
             --report-out hermes-pr-report.json \
+            --markdown-out hermes-pr-summary.md \
+            --manifest-out hermes-pr-bundle.json
+          python scripts/gpt_pr_integration_guard.py \
+            --verify-manifest hermes-pr-bundle.json \
+            --snapshot-out hermes-pr-snapshot.json \
+            --report-out hermes-pr-report.json \
             --markdown-out hermes-pr-summary.md
           cat hermes-pr-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Preserve timestamped snapshot/report
@@ -65,5 +71,6 @@ jobs:
             hermes-pr-snapshot.json
             hermes-pr-report.json
             hermes-pr-summary.md
+            hermes-pr-bundle.json
           if-no-files-found: warn
           retention-days: 30
