@@ -236,3 +236,27 @@ def test_latest_attempt_snapshot_reads_only_its_attempt(journal):
     assert result["attempt"] == 2
     assert result["state"] == "RECENT_TELEMETRY"
     assert result["reported_reason_code"] is None
+
+
+def test_thirty_producers_have_independent_local_sequence_cursors(journal):
+    # Interleaved ingestion is a realistic 30-agent telemetry shape, not a
+    # simulation of 30 simultaneously running OS processes.
+    for seq, kind in [(1, "worker.started"), (2, "worker.heartbeat"),
+                      (3, "worker.progress")]:
+        for agent_id in range(30):
+            emit(journal, seq, kind, source=f"worker-{agent_id:02d}")
+    result = journal.assess("run-causal")
+    assert result["state"] == "RECENT_TELEMETRY"
+    assert result["missing_sequences"] == 0
+    assert result["unverified_prefix_sources"] == []
+    assert result["diagnostic_flags"] == []
+    assert journal.verify_chain() is True
+
+    # One producer has its own internal hole: other producers cannot fill it.
+    emit(journal, 5, "worker.progress", source="worker-07")
+    result = journal.assess("run-causal")
+    assert result["state"] == "TRACE_INCOMPLETE"
+    assert result["missing_sequences"] == 1
+    assert result["unverified_prefix_sources"] == []
+    assert result["next_action"] == "FETCH_MISSING_EVENTS"
+    assert journal.verify_chain() is True
