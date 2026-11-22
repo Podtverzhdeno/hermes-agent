@@ -208,3 +208,48 @@ Parallel workers must reserve unique file ownership, document expected base/head
 - OWASP browser extension security: https://cheatsheetseries.owasp.org/cheatsheets/Browser_Extension_Vulnerabilities_Cheat_Sheet.html
 
 The sources establish engineering constraints, not a claim that the owner-specific extension or production system has been inspected. Research quality is prioritized over source count.
+
+## 13. Source-backed convergence decision: 25 parallel GPT PRs (second audit)
+
+**New observation, 2026-11-22:** a fresh owner-connected GitHub query returned **25 open PRs** in this fork. This is a moving snapshot, not a persistent guarantee; all exact heads/check runs must be refreshed at merge time. This is itself a multi-agent failure mode: independently correct components can collectively create incompatible protocol authorities and an intractable merge graph. A GitHub PR's successful source build does not prove that *the combination of 25 PRs* is correct.
+
+### A. Same responsibilities, multiple candidates
+
+| Responsibility | Concurrent candidates confirmed by GitHub file lists | Integrator decision | Failure if all are installed |
+|---|---|---|---|
+| OpenAI-compatible `/v1/chat/completions` and `/v1/responses` | #4, #5, #6 each edit `gateway/platforms/api_server.py`; #11 is stacked on #4 | **ONE** baseline implementation after upstream parity review; transplant non-overlapping tests/fixes, do not merge all three | conflicting 409/422/503 semantics, inconsistent replay and false SSE success |
+| Native `/v1/runs` status/event observation | modern NousResearch upstream, #4 `gateway/gpt_bridge_event_audit.py` (SSE), #5 `scripts/hermes_gpt_run_observer.py` (poller) | Use upstream run lifecycle as truth; choose at most one active status-ingress adapter, treating SSE interpretation as pure diagnostics | two consumers can disagree or lose event segments; no durable proof merely from SSE reconnect |
+| Durable task/agent scheduling | upstream Kanban and Runs; #1 Autopilot ledger | upstream lifecycle authority FIRST; integrate only *non-duplicating* effect/evidence invariants from #1 | two task queues claim the same work and independently schedule retries |
+| Metadata-only forensic event auditing | #9 `gpt_bridge`, #12 (+ stacked #23) `gpt_companion`, #16 `gateway/gpt_bridge_observer`, #21 `gateway/gpt_causal_observer`, this PR #25 `hermes_observer` | nominate ONE production journal schema and adapter; treat **this PR as an offline test oracle** unless expressly selected as part of the canonical contract | divergent source sequences, duplicate DB writes, contradictory stop diagnoses and hidden unknown outcomes |
+| Cross-PR collision/merge guard | #14, #18, #22 and #24 | choose ONE maintained integration guard; **never auto-merge** | competing stale inventories certify incompatible branches |
+| ACP approval routing | #3 | separate permission owner; complete end-to-end cross-session tests before enabling unattended effects | wrong-session permission forwarded to another agent |
+
+**Technical incompatibility to block before integration:** the existing `/v1/runs/{id}/events` transport uses native run event names (`run.completed`, `tool.started`, etc.), an opaque `run_id`, and run-local event sequence. This PR's conceptual v1 NDJSON contract requires UUID `event_id`, boot-scoped `producer_id`/sequence, ISO timestamp and tool-effect reservations. They are **not the same protocol**. Never feed native SSE directly into `hermes_observer.audit` or fabricate a provenance claim by renaming fields. A reviewed, separately authenticated translator must preserve native `(run_id, seq, cursor, source_revision)`, replay truncation, and an explicit `derived_from_native_stream` provenance record in a *new versioned* envelope; the current allowlist does not admit that envelope. A transport loss must remain an observation gap.
+
+### B. Native-upstream architecture decision, not another bespoke control plane
+
+The official NousResearch Hermes documentation describes a native Runs API, Kanban task history/worker lanes, and replay/terminal semantics. The April fork's `main` does not represent a safe assumption about the owner's live installation. **Proposed target** for a deployed extension, subject to actual host capability discovery: native Hermes `GET /v1/capabilities` → explicit authorization to connect to the local endpoint → read-only `GET /v1/runs/{id}` / event stream with replay-gap detection → stable run/attempt identity → operator-only UI. Do not poll and subscribe concurrently without a single deduplicating ingest owner. Do not substitute a ChatGPT page/tab's presence for authoritative run status.
+
+Some current docs describe bounded replay and terminal receipts, but exact deployment behavior and expiry rules MUST be measured on the installed version. In particular, `replay.truncated` or equivalent must invalidate continuous-timeline completeness. For long-running workers, progress != heartbeat: preserve `last_progress_at`, `last_heartbeat_at`, last tool boundary, and reason for waiting independently. Before any merge, verify whether endpoint `/v1/runs/{id}/events` is true broadcast or subscriber-specific, whether replay windows hold for the needed downtime, and whether status polling can safely repair a lost event interval. A code comment or 200 HTTP response does not prove coverage.
+
+### C. Ranked choices with veto gates (updated after candidate discovery)
+
+The 100/100 score for the isolated auditor in Section 10 is a **local prototype selection score**, not an argument for shipping a new runtime observer. Ranking for the **integrated system** changes after finding existing upstream capabilities. Updated decision order:
+
+1. **P0 / ACCEPT as target**: native upstream Runs/Kanban + exact capability discovery. Veto deployment if installed version cannot prove supported endpoints or if task authority would split.
+2. **P0 / ACCEPT**: one authenticated event ingress + one canonical durable outbox and replay cursor, with explicit source provenance. Veto if replay gaps are silently skipped.
+3. **P0 / ACCEPT**: a single versioned incident/effect status contract, unknown-effect quarantine, exact-revision verifier; tool gateway owns enforcement. Veto if external writes can replay after timeout without independent reconciliation.
+4. **P0 / ACCEPT**: select one merge-guard implementation and use a continuously refreshed, exact-SHA PR inventory. Veto integration if source branches or stacked parents have moved since evidence capture.
+5. **P1 / KEEP OFFLINE**: this PR's zero-dependency causal audit as a negative-test oracle. Promote to production only after a versioned native translator, compatibility matrix, privacy/security review and real installed-host E2E tests.
+6. **REJECT**: merging all observers/ledgers for extra redundancy. Multiple non-authoritative observers may aid investigations; multiple authoritative stores/retry engines are a correctness and security regression.
+
+### D. PR integration protocol for dozens of agents
+
+- Freeze a single **integration manifest** with `component_owner`, `base_sha`, `head_sha`, `source_contract_hash`, `api_contract_version`, `dependency_parent_shas`, `CI_run_url`, exact paths, and a permanent issue/decision reference. Agents may write isolated branches but must not claim a component they don't own.
+- Refresh the entire PR inventory immediately before integration. A snapshot listing 11 candidates cannot establish safety if the repository has since reached 25. The integrator must recompute path overlap and *semantic* overlap, stacked-branch ancestry, status and exact-head tests.
+- Choose one API base and one observer/ingress design; cherry-pick only independently reviewed, non-duplicating patches and tests. Validate cumulative branch on **one** exact head SHA rather than multiplying individual green checks.
+- Classify mismatches as `CONTRACT_CONFLICT`, `STALE_DEPENDENCY`, `DUPLICATE_STATE_AUTHORITY`, `UNKNOWN_EFFECT`, `CI_SHA_MISMATCH`, or `RUNTIME_UNAVAILABLE`. Emit the source/claim/evidence/reconciliation action without guessing that the first observed timeout caused everything.
+- New GPT extension requirements must have one capability manifest and security review: host identity, permission boundary, session correlation, optional user-approved operator actions, Windows/WSL path ownership and rollback. A different agent's summary is not proof that a browser extension has been installed.
+- R0 read-only monitoring can fail open **only as a clearly labelled incomplete observation**; R1–R3 mutations must fail closed on lost required audit persistence, unclear identity/authorization, stale lease, uncertain effect or unknown target revision.
+
+**Release blocker today:** no connected Local_WorkSpace/Windows host or trusted extension source; no authenticated native exporter; no production monitor running from this PR; multiple unresolved competing PR contracts. The right action is not to hide these under a synthetic score or silently merge them, but to preserve the exact blocker until a verifiable integration gate passes.
