@@ -355,3 +355,17 @@ def test_parameterized_turn_exit_reason_does_not_leak_suffix(reason, expected):
          "turn_exit_reason": reason})
     assert out["stop_reason"] == expected
     assert reason not in json.dumps(out) or reason == expected
+
+
+def test_sse_frame_id_must_match_json_seq():
+    bad = f"id: 7\ndata: {json.dumps(event('run.queued', 6))}\n\n"
+    with pytest.raises(InvalidTelemetry, match="SSE cursor contradicts"):
+        parse_sse_frames(bad)
+
+
+def test_invalid_sse_frame_id_rejected_without_echo():
+    secret = "sk-proj-SHOULD_NOT_BE_ECHOED"
+    bad = f"id: {secret}\ndata: {json.dumps(event('run.queued', 0))}\n\n"
+    with pytest.raises(InvalidTelemetry) as observed:
+        parse_sse_frames(bad)
+    assert secret not in str(observed.value)
