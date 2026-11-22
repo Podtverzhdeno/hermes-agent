@@ -1814,18 +1814,30 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
         session_info = _active_sessions.get(task_id)
     
     if session_info:
+        # A user-supplied CDP endpoint may point at a browser started and
+        # owned by another process (e.g. a personal Edge window). Never let
+        # this Hermes session own its browser-process lifecycle.
+        features = session_info.get("features") or {}
+        external_cdp = isinstance(features, dict) and features.get("cdp_override") is True
         bb_session_id = session_info.get("bb_session_id", "unknown")
         logger.debug("Found session for task %s: bb_session_id=%s", task_id, bb_session_id)
         
         # Stop auto-recording before closing (saves the file)
         _maybe_stop_recording(task_id)
         
-        # Try to close via agent-browser first (needs session in _active_sessions)
-        try:
-            _run_browser_command(task_id, "close", [], timeout=10)
-            logger.debug("agent-browser close command completed for task %s", task_id)
-        except Exception as e:
-            logger.warning("agent-browser close failed for task %s: %s", task_id, e)
+        # Only locally owned / provider-managed browser sessions may receive
+        # the CLI "close" command. For an external CDP override, "close" may
+        # issue Browser.close and terminate the *owner's* visible Edge window.
+        # In attached mode, release Hermes' lease/metadata without touching
+        # the externally owned browser process or its runtime.
+        if external_cdp:
+            logger.info("Detached external CDP task %s without closing browser", task_id)
+        else:
+            try:
+                _run_browser_command(task_id, "close", [], timeout=10)
+                logger.debug("agent-browser close command completed for task %s", task_id)
+            except Exception as e:
+                logger.warning("agent-browser close failed for task %s: %s", task_id, e)
         
         # Now remove from tracking under lock
         with _cleanup_lock:
@@ -1841,9 +1853,14 @@ def cleanup_browser(task_id: Optional[str] = None) -> None:
                 except Exception as e:
                     logger.warning("Could not close cloud browser session: %s", e)
         
-        # Kill the daemon process and clean up socket directory
+        # Avoid killing a daemon/PID or removing a socket belonging to an
+        # externally attached CDP endpoint. Such endpoints are not ours to
+        # terminate, even during atexit, inactivity timeout, or browser_close.
+        # An agent-browser CLI version that persists a CDP proxy daemon may
+        # require a separate, ownership-proven disconnect operation; do not
+        # substitute a destructive browser close.
         session_name = session_info.get("session_name", "")
-        if session_name:
+        if session_name and not external_cdp:
             socket_dir = os.path.join(_socket_safe_tmpdir(), f"agent-browser-{session_name}")
             if os.path.exists(socket_dir):
                 # agent-browser writes {session}.pid in the socket dir
