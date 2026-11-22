@@ -242,3 +242,24 @@ python -m gateway.gpt_bridge_event_audit --run-id run_0123456789abcdef0123456789
 This command does NOT authenticate to Hermes, export any data, start a monitor, or update the Windows extension. A continuously running observer requires separately approved local service activation and access to the actual extension source.
 
 Coverage is specified in `tests/gateway/test_gpt_bridge_event_audit.py`; record real pytest/CI outcomes rather than claiming test success in advance.
+
+
+## 13. External mechanism verification (sources reviewed 2026-11-22)
+
+These facts come from authoritative public engineering documentation and define **test conditions**, not proof of the user's deployed browser behavior:
+
+- **Chrome Manifest V3 service-worker lifetime:** Chrome may terminate an extension service worker after **30 seconds of inactivity**, among other lifecycle conditions. Current Chrome versions can extend lifetime through certain events/active WebSocket traffic; supported behavior has changed across versions. Therefore "no background heartbeat for 30 s" is not automatically "agent crashed". Do not rely on process-global JS variables or a permanent background loop for task truth. Persist critical state using documented extension storage and reconcile after restart. Source: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
+- **Chrome service-worker storage:** the Web Storage API (such as window.localStorage) is not available in the MV3 service-worker context. Confirm actual manifest version and use correct permitted Chrome storage/IndexedDB patterns with retention and encryption decisions. Source: https://developer.chrome.com/docs/extensions/develop/migrate/to-service-workers
+- **OpenTelemetry GenAI:** upstream conventions include `gen_ai.request.stream_cursor` as a streaming resume cursor; map Hermes SSE `id/seq` to this without exporting raw prompt/response content. Tool definitions and GenAI content attributes are not mandatory full-text logs; default to content-free metadata and explicit opt-in for sensitive payloads. Source: https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/gen-ai-spans.md
+- **Durable activity effects:** Temporal documents at-least-once Activity execution and explicit idempotency for external effects. An "exactly once" claim about a browser Send click, API mutation, or externally received message requires receiver-side deduplication/reconciliation; ledger completion alone is insufficient. Sources: https://docs.temporal.io/activity-definition and https://docs.temporal.io/durable-execution
+
+### Consequent practical fault tests
+
+1. Stop an MV3 worker after a command has been acknowledged but before it is delivered to the content script. After restart, the extension must restore correlation and **not** assume a Send happened.
+2. Stop it immediately after a browser submission but before the bubble confirmation. The next worker may **observe only** until actual browser conversation is reconciled.
+3. Replace the content-script document epoch through reload/navigation; stale commands must be rejected even if the target tab ID is unchanged.
+4. Disconnect the bridge socket while upstream Hermes is still running. The transport's lost heartbeat must not mark the run terminal; fetch `/v1/runs/{id}` independently.
+5. Replay an SSE cursor older than the bounded backlog. Expect explicit `replay.truncated` and a visible evidence gap, not a fabricated clean timeline.
+6. Run 30 concurrent candidate client tasks against the documented upstream default of 10 run slots. Expected overload is 429 admission backpressure; the exact deployed cap must be observed rather than assumed.
+
+The isolated implementation and synthetic tests live in [HERMES_GPT_READONLY_AUDITOR_SDD.md](HERMES_GPT_READONLY_AUDITOR_SDD.md) and `gateway/gpt_bridge_event_audit.py`. This is a **diagnostic foundation**, not browser automation or an autonomous fix agent.
