@@ -77,7 +77,7 @@ This command is **one-shot read only** against the public GitHub REST API; `GITH
 
 **Tool limits:** A PR head can change after its final per-PR check, and GitHub snapshots across PRs are not atomic; immediately before merge take a fresh scan, require exact-HEAD CI and repeat the critical path diff. Only the resource owner/reviewer can resolve whether overlapping edits are semantically compatible. This tool cannot see the local Windows browser extension, inspect model execution, or repair provider-side effects.
 
-**Test evidence:** 13 offline `unittest` cases passed in isolated Python environment. They cover unverified CI, collision classes, stale base, observer duplication, incomplete files, wrong check SHA, duplicate PR/head identities, unprotected main, SQLite idempotence, invalid CLI snapshot, restricted repository selector. Network/GitHub live collection and Windows runtime are **not** exercised by those tests.
+**Test evidence:** 17 offline `unittest` cases passed in isolated Python environment. They cover unverified CI, collision classes, stale base, observer duplication, incomplete files, wrong check SHA, duplicate PR/head identities, unprotected main, SQLite idempotence, invalid CLI snapshot, restricted repository selector. Network/GitHub live collection and Windows runtime are **not** exercised by those tests.
 
 ## 6. Prioritized improvements and decisions (not made-up benchmark scores)
 
@@ -113,3 +113,34 @@ This command is **one-shot read only** against the public GitHub REST API; `GITH
 - Implemented new isolated script, offline unit tests, and this SDD. No production code path, credential, local workspace or running browser process was mutated.
 - Known blockers: local MCP session unavailable, no authenticated extension runtime inspection, multiple competing unmerged draft branches, incomplete verified CI of combined integration, no live crash/recovery/soak results.
 - Next reviewer needs to select the canonical observer/API contract and preserve this PR as an independent guard, not merge its conclusions as an operational guarantee.
+
+## 9. Convergence audit: new parallel branches (2026-11-22, later inspection)
+
+At a later GitHub inspection the open PR count rose from 12 to **26** (#1–#26). This is not an isolated incident: the **coordination tools themselves have duplicated** across PRs.
+
+| Candidates | Actually observed | Architectural judgment |
+|---|---|---|
+| #14 `scripts/hermes_gpt_coordination_audit.py` | Read-only GitHub PR + unmerged-branch comparison, path and capability overlap, test workflow | Broad branch coverage is valuable; its scan currently filters only PRs targeting the chosen base. Test whether stacked PRs and 30+ changed files are fully covered. |
+| #22 `scripts/gpt_pr_integration_guard.py` | Full open PR inventory, second end-of-scan listing, stacked ancestry/cycles and observer split, proposed six-hour workflow | **Preferred candidate for single scheduled PR integration watch**, subject to passing CI and review. No live monitoring is enabled until merged and workflow activated. |
+| #18 `scripts/gpt_integration_guard.py` | Current PR draft adds exact `changed_files` reconciliation, per-head check-run classification, main-protection hint and local SQLite snapshot journal | Keep **as independent safety tests/reference**; port verified non-overlapping checks into the nominated #22 guard rather than deploy a second watcher. |
+| #13 vs #15 | Both edit `tools/browser_tool.py`; #15 specifically protects externally owned CDP browser from cleanup | **P0 review**: choose one CDP integration owner, test ownership/cleanup at exact combined SHA. |
+| #17 and #23 → #12 | Two stacked GPT Companion children both edit `gpt_companion/journal.py` and SDD | **P0 review**: choose integration order; test causal unknown-effect and terminal-state invariants together. |
+| #4/#5/#6, #11→#4 | Multiple gateway idempotency wire contracts; stacked parent #4 moved beyond child #11's recorded base | **P0 hold**: no independent merge of the handler; solve keyed streaming/no-dispatch and check the parent SHA. |
+
+### ADR-013 — One integration watch, many independent auditors
+
+**Decision: proposed, not yet accepted.** After comparing the current PRs, nominate #22 as the **single scheduled integration observer candidate** because it includes repeat inventory and a GitHub workflow. PRs #14/#18 should supply targeted verified tests and contracts, not additional always-on monitors. A human integrator must validate this preference against exact-head CI and complete coverage before accepting. Candidate #18 remains draft and non-deployed; do not merge all three scripts merely to claim greater feature count. Run 1/8/32/64 worker and PR mutation tests before production.
+
+**Rationale:** Multiple monitors with competing timestamps can disagree on what is blocked and hide each other's failures. One canonical read-only watch plus independently replayed deterministic test vectors gives clearer incident provenance and less operational overhead. Our script's optional SQLite record is not itself a scheduler or incident truth.
+
+### ADR-014 — Browser extension must negotiate capabilities, not assume an API
+
+Community extension `abundantbeing/hermes-browser-extension` has more than a static page context: current docs describe user-approved real-tab and background-task tab operations with companion plugin and authentication. Its supported integration is separate from this older fork. Before installation, require manifest host permissions, extension+host identity, per-tab allowlist/revocation, user consent, version pinning, session/message origin checks and an E2E test against an isolated current Hermes canary. Chromium MV3 service workers can be suspended; Chrome 116+ `connectNative()` may extend lifetime, but the durable workflow must remain in the native task authority. No DOM read or tab event can certify a tool side effect, and extension control must never bypass approvals.
+
+**References:** https://github.com/abundantbeing/hermes-browser-extension/blob/main/DATA-FLOW.md ; https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/ ; https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging ; https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-09 (Internet-Draft published 2026-11-21; not an RFC).
+
+### Hard practical bug found and fixed in our audit
+
+GitHub's **list pull requests** REST response omits `changed_files`, even though **get a pull request** returns it. Initial code assumed it existed and would fail before producing an operator report. The correction reads per-PR details, checks files count and PR head/base invariants, re-lists all open PRs at the end, and rereads `main` HEAD. Added regression tests cover schema mismatch, a PR created during scan, head movement between list/detail and main ref movement. This is a read-only correctness fix; the report still cannot be a true atomic GitHub snapshot.
+
+**Updated local evidence:** 17 focused offline tests pass on Python 3.13, prior to the latest GitHub commit. No claim of successful remote GitHub integration probe, production Chrome extension operation, Windows access or CI at exact commit unless subsequently verified.
