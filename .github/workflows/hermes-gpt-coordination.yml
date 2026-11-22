@@ -14,6 +14,8 @@ on:
       - 'scripts/hermes_gpt_coordination_audit.py'
       - 'tests/coordination/**'
       - '.github/workflows/hermes-gpt-coordination.yml'
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
