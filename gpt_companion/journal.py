@@ -111,8 +111,9 @@ def _prepare_private_sqlite_path(path: Path) -> None:
     flags |= getattr(os, "O_CLOEXEC", 0)
     fd = os.open(path, flags, 0o600)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            raise OSError("SQLite journal must be a regular file")
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise OSError("SQLite journal must be an unlinked regular private file")
         os.fchmod(fd, 0o600)
     finally:
         os.close(fd)
