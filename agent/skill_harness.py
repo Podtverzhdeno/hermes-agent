@@ -111,7 +111,7 @@ def validate_harness(profile: Any, expected_skill: str) -> dict:
             raise SkillHarnessError("invalid evidence ID in action")
         requirements.extend(names)
         risk = action["risk"]
-        if risk not in _RISKS or action["approval"] != _APPROVAL.get(risk):
+        if not isinstance(risk, str) or risk not in _RISKS or action["approval"] != _APPROVAL.get(risk):
             raise SkillHarnessError("inconsistent approval for action risk")
         if _RISKS.index(risk) > _RISKS.index(highest):
             highest = risk
@@ -129,7 +129,7 @@ def validate_harness(profile: Any, expected_skill: str) -> dict:
         if not isinstance(key, str) or not _NAME.fullmatch(key) or key in seen:
             raise SkillHarnessError("invalid or repeated evidence identifier")
         seen.add(key)
-        if e["source"] not in _SOURCES:
+        if not isinstance(e["source"], str) or e["source"] not in _SOURCES:
             raise SkillHarnessError("invalid evidence source")
         _line(e["how_to_verify"], "how_to_verify")
     if not set(requirements).issubset(seen):
@@ -155,7 +155,7 @@ def load_skill_harness(skill_dir: Path | None, expected_skill: str) -> dict | No
         if path.stat().st_size > MAX_PROFILE_BYTES:
             raise SkillHarnessError("harness.json exceeds byte limit")
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_unique_pairs)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeError, json.JSONDecodeError, RecursionError) as exc:
         raise SkillHarnessError("unable to load harness.json: " + type(exc).__name__) from exc
     profile = validate_harness(data, expected_skill)
     if "skill_git_blob" in profile:
@@ -232,6 +232,8 @@ def assess_evidence_shape(profile: Mapping[str, Any], revision: str,
         if not isinstance(record, dict):
             raise SkillHarnessError("invalid evidence record")
         key = record.get("id")
+        if not isinstance(key, str):
+            raise SkillHarnessError("evidence identifier must be a string")
         if key not in required:
             continue
         if record.get("revision") != revision:
