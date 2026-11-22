@@ -86,6 +86,8 @@ class CollisionAuditTests(unittest.TestCase):
         def fake_get(url, token):
             if "/branches/main" in url:
                 return {"commit": {"sha": S}}
+            if "/pulls/2" in url:
+                return {"head": {"sha": T}, "base": {"ref": "main"}}
             raise AssertionError("unexpected HTTP URL " + url)
         def fake_pages(url, token, limit):
             if "/pulls?state=open" in url:
@@ -103,6 +105,75 @@ class CollisionAuditTests(unittest.TestCase):
         self.assertEqual(result["entries"][0]["head"], T)
         self.assertEqual(result["entries"][0]["files"],
                          ["gateway/platforms/api_server.py"])
+
+
+    def test_pr_changed_during_inventory_is_rejected(self):
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            if "/pulls/2" in url:
+                return {"head": {"sha": S}, "base": {"ref": "main"}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?state=open" in url:
+                return [{"number": 2, "base": {"ref": "main"},
+                         "head": {"sha": T, "ref": "feature",
+                                  "repo": {"full_name": "example/hermes"}}}]
+            if "/pulls/2/files" in url:
+                return [{"filename": "gateway/platforms/api_server.py"}]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "PR moved"):
+                module.collect("example/hermes", prs_only=True)
+
+    def test_branch_compare_uses_exact_sha_not_moving_ref(self):
+        seen = []
+        def fake_get(url, token):
+            seen.append(url)
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            if "/compare/" in url:
+                return {"status": "ahead", "ahead_by": 1,
+                        "files": [{"filename": "src/a.py"}],
+                        "base_commit": {"sha": S}, "commits": [{"sha": T}]}
+            if "/branches/feature" in url:
+                return {"commit": {"sha": T}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?" in url:
+                return []
+            if url.endswith("/branches"):
+                return [{"name": "main", "commit": {"sha": S}},
+                        {"name": "feature", "commit": {"sha": T}}]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            result = module.collect("example/hermes")
+        self.assertIn("/compare/" + S + "..." + T, seen)
+        self.assertEqual(result["entries"][0]["head"], T)
+
+    def test_branch_head_changed_during_scan_is_rejected(self):
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            if "/compare/" in url:
+                return {"status": "ahead", "ahead_by": 1,
+                        "files": [{"filename": "src/a.py"}],
+                        "base_commit": {"sha": S}, "commits": [{"sha": T}]}
+            if "/branches/feature" in url:
+                return {"commit": {"sha": S}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?" in url:
+                return []
+            if url.endswith("/branches"):
+                return [{"name": "feature", "commit": {"sha": T}}]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "Branch moved"):
+                module.collect("example/hermes")
 
     def test_live_collection_failure_never_prints_green(self):
         def bad_get(url, token):
