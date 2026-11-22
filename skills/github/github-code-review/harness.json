@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "skill": "github-code-review",
+  "purpose": "Review code changes with reproducible findings and safe publication.",
+  "risk": "external_write",
+  "routing": {
+    "trigger": [
+      "Review the latest changes in this pull request for regressions",
+      "Give inline code review comments on PR 57",
+      "Inspect this diff for security and correctness"
+    ],
+    "do_not_trigger": [
+      "Create a new branch and push an implementation",
+      "How do I organize an academic bibliography?",
+      "Summarize the last deployment without a diff"
+    ]
+  },
+  "preflight": [
+    "Pin base and head SHAs and obtain a complete diff, not only a summary.",
+    "Identify whether this is local analysis or remote posting; require approval for posting.",
+    "Never read raw credentials from local files or emit secret contents in comments."
+  ],
+  "workflow": [
+    "Map findings to concrete changed lines and severity.",
+    "Check for test gaps, permissions, data loss and backwards compatibility.",
+    "Avoid unfounded high-severity claims; cite code evidence.",
+    "Before posting to GitHub, present the exact comments for owner approval."
+  ],
+  "actions": [
+    {
+      "operation": "review.local",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "diff-snapshot",
+        "findings"
+      ]
+    },
+    {
+      "operation": "review.publish",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "diff-snapshot",
+        "findings",
+        "posted-review"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "diff-snapshot",
+      "source": "git",
+      "how_to_verify": "Record the reviewed base/head commit pair and full diff scope."
+    },
+    {
+      "id": "findings",
+      "source": "artifact",
+      "how_to_verify": "Provide reproducible file/line evidence or explicit no-findings rationale."
+    },
+    {
+      "id": "posted-review",
+      "source": "remote_api",
+      "how_to_verify": "Read back the resulting review ID and comments from the exact PR."
+    }
+  ],
+  "failure_modes": [
+    "A diff that changed during review requires re-review.",
+    "If review publication times out, check remote review IDs before retrying."
+  ]
+}
