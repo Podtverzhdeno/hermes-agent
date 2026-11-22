@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "skill": "faiss",
+  "purpose": "Construct FAISS indexes with verified dimensions, recall and safe artifacts.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Build an IVF FAISS index from these embeddings",
+      "Evaluate FAISS nearest-neighbor recall on held-out vectors",
+      "Persist a local FAISS index for later retrieval"
+    ],
+    "do_not_trigger": [
+      "Create a GitHub issue",
+      "Share my vector dataset publicly",
+      "Send an email about this experiment"
+    ]
+  },
+  "preflight": [
+    "Confirm vector dimension, metric, normalization and training split.",
+    "Select a memory/CPU/GPU budget and permitted output path."
+  ],
+  "workflow": [
+    "Train index only when index family requires it.",
+    "Add stable vector IDs and test deterministic nearest neighbors.",
+    "Measure recall/latency against exact baseline for approximate indexes.",
+    "Save index artifact and verify dimensions, count and load roundtrip."
+  ],
+  "actions": [
+    {
+      "operation": "faiss.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "vector-contract"
+      ]
+    },
+    {
+      "operation": "faiss.build",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "vector-contract",
+        "index-artifact",
+        "retrieval-accuracy"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "vector-contract",
+      "source": "artifact",
+      "how_to_verify": "Record shape, dtype, metric, normalization and splits."
+    },
+    {
+      "id": "index-artifact",
+      "source": "file_hash",
+      "how_to_verify": "Verify local FAISS artifact reload, count, dimension and file hash."
+    },
+    {
+      "id": "retrieval-accuracy",
+      "source": "local_test",
+      "how_to_verify": "Measure recall on held-out exact nearest neighbor labels."
+    }
+  ],
+  "failure_modes": [
+    "Do not misstate approximate recall as exact accuracy.",
+    "If OOM, stop and reduce index size in an isolated worktree, not system settings."
+  ]
+}
