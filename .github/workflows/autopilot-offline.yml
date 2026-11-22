@@ -1,0 +1,59 @@
+name: Autopilot Offline Contract
+
+on:
+  pull_request:
+    paths:
+      - "autopilot/**"
+      - "tests/autopilot/**"
+      - "pyproject.toml"
+      - ".github/workflows/autopilot-offline.yml"
+  push:
+    branches: [main]
+    paths:
+      - "autopilot/**"
+      - "tests/autopilot/**"
+      - ".github/workflows/autopilot-offline.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autopilot-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stdlib-contract:
+    name: Stdlib contract / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: windows-latest
+            python-version: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Validate Python syntax
+        run: python -m compileall -q autopilot tests/autopilot
+      - name: Install isolated pytest runner
+        run: python -m pip install --disable-pip-version-check "pytest>=9.0.2,<10"
+      - name: Run all Autopilot contracts
+        run: python -m pytest tests/autopilot -q -o addopts=
+      - name: Run offline dependency-free contracts
+        env:
+          OPENAI_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: python -m unittest discover -s tests/autopilot -p 'test_offline_contract.py' -v

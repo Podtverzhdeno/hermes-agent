@@ -67,10 +67,9 @@ class AutopilotLedger:
         try:
             db.execute("PRAGMA busy_timeout=10000")
             db.execute("PRAGMA foreign_keys=ON")
+            # SQLite synchronous is connection-local; readers also assert FULL.
+            db.execute("PRAGMA synchronous=FULL")
             if write:
-                # synchronous is connection-local; setting it during schema
-                # initialization alone does not protect future writes.
-                db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
             yield db
             if write:
@@ -96,6 +95,7 @@ class AutopilotLedger:
                     required_evidence TEXT NOT NULL,
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
+                    resume_without_attempt INTEGER NOT NULL DEFAULT 0,
                     attempts INTEGER NOT NULL DEFAULT 0,
                     max_attempts INTEGER NOT NULL,
                     available_at REAL NOT NULL,
@@ -151,6 +151,8 @@ class AutopilotLedger:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
             if "retry_allowed" not in columns:
                 db.execute("ALTER TABLE tasks ADD COLUMN retry_allowed INTEGER NOT NULL DEFAULT 1")
+            if "resume_without_attempt" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN resume_without_attempt INTEGER NOT NULL DEFAULT 0")
 
     def _event(self, db, task_id: str, kind: str, detail: dict):
         db.execute(
@@ -170,6 +172,47 @@ class AutopilotLedger:
             row = dict(self._task(db, task_id))
             row["required_evidence"] = json.loads(row["required_evidence"])
             return row
+
+    def list_tasks(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict]:
+        """Bounded read-only queue projection for operators and restart snapshots."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._db() as db:
+            if status is None:
+                rows = db.execute("""
+                    SELECT * FROM tasks ORDER BY priority DESC, created_at DESC LIMIT ?
+                """, (limit,)).fetchall()
+            else:
+                rows = db.execute("""
+                    SELECT * FROM tasks WHERE status=?
+                    ORDER BY priority DESC, created_at DESC LIMIT ?
+                """, (status, limit)).fetchall()
+            result = [dict(x) for x in rows]
+            for row in result:
+                row["required_evidence"] = json.loads(row["required_evidence"])
+            return result
+
+    def effects(self, task_id: str) -> list[dict]:
+        """Read-only effect journal for crash recovery; never reissue reserved keys."""
+        with self._db() as db:
+            self._task(db, task_id)
+            return [dict(x) for x in db.execute("""
+                SELECT action_key, digest, status, result_ref, created_at, updated_at
+                FROM actions WHERE task_id=? ORDER BY created_at, action_key
+            """, (task_id,))]
+
+    def approval_queue(self, limit: int = 100) -> list[dict]:
+        """Human decision inbox, including exact action digest and expiry."""
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._db() as db:
+            return [dict(x) for x in db.execute("""
+                SELECT approvals.task_id, approvals.action_key, approvals.digest,
+                       approvals.expires_at, tasks.project, tasks.goal, tasks.revision
+                FROM approvals JOIN tasks ON tasks.id=approvals.task_id
+                WHERE tasks.status='waiting_approval' AND approvals.state='pending'
+                ORDER BY approvals.expires_at, approvals.task_id LIMIT ?
+            """, (limit,))]
 
     def history(self, task_id: str) -> list[dict]:
         with self._db() as db:
@@ -220,26 +263,28 @@ class AutopilotLedger:
             self._event(db, task_id, "submitted", {"revision": revision})
             return task_id
 
-    def _recover_expired(self, db, now: float):
-        # An absent worker should not leave expired approvals waiting forever.
-        expired_approvals = db.execute("""
-            SELECT a.task_id, a.action_key FROM approvals AS a
-            JOIN tasks AS t ON t.id=a.task_id
-            WHERE t.status='waiting_approval' AND a.state='pending'
-              AND a.expires_at <= ?
+    def _expire_approvals(self, db, now: float):
+        """Make a timed-out human decision visible instead of hanging forever."""
+        expired = db.execute("""
+            SELECT tasks.id, approvals.action_key
+            FROM tasks JOIN approvals ON tasks.id=approvals.task_id
+            WHERE tasks.status='waiting_approval'
+              AND approvals.state='pending' AND approvals.expires_at <= ?
         """, (now,)).fetchall()
-        for item in expired_approvals:
+        for row in expired:
             db.execute("""
                 UPDATE approvals SET state='expired'
                 WHERE task_id=? AND action_key=? AND state='pending'
-            """, (item["task_id"], item["action_key"]))
+            """, (row["id"], row["action_key"]))
             db.execute("""
                 UPDATE tasks SET status='blocked',updated_at=? WHERE id=?
-            """, (now, item["task_id"]))
-            self._event(db, item["task_id"], "approval_expired",
-                        {"action_key": item["action_key"]})
+            """, (now, row["id"]))
+            self._event(db, row["id"], "approval_expired",
+                        {"action_key": row["action_key"]})
+
+    def _recover_expired(self, db, now: float):
         expired = db.execute(
-            "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until < ?",
+            "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until <= ?",
             (now,),
         ).fetchall()
         for task in expired:
@@ -268,6 +313,7 @@ class AutopilotLedger:
             raise ValueError("invalid worker or lease_seconds")
         now = self.clock()
         with self._db(write=True) as db:
+            self._expire_approvals(db, now)
             self._recover_expired(db, now)
             row = db.execute("""
                 SELECT id FROM tasks
@@ -280,7 +326,8 @@ class AutopilotLedger:
             task_id = row["id"]
             db.execute("""
                 UPDATE tasks SET status='running', owner=?, fence=fence+1,
-                    attempts=attempts+1, lease_until=?, updated_at=? WHERE id=?
+                    attempts=attempts+CASE WHEN resume_without_attempt=1 THEN 0 ELSE 1 END,
+                    resume_without_attempt=0, lease_until=?, updated_at=? WHERE id=?
             """, (worker, now + lease_seconds, now, task_id))
             task = dict(self._task(db, task_id))
             self._event(db, task_id, "claimed", {"worker": worker, "fence": task["fence"]})
@@ -315,6 +362,12 @@ class AutopilotLedger:
             task = self._assert_worker(db, task_id, worker, fence)
             if task["status"] != "running":
                 raise LedgerConflict("approval request allowed only while running")
+            pending_effect = db.execute(
+                "SELECT 1 FROM actions WHERE task_id=? AND status='reserved' LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if pending_effect:
+                raise LedgerConflict("cannot pause with an unresolved external effect")
             old = db.execute(
                 "SELECT digest FROM approvals WHERE task_id=? AND action_key=?",
                 (task_id, action_key),
@@ -355,8 +408,9 @@ class AutopilotLedger:
                 UPDATE approvals SET state=?, reviewer=? WHERE task_id=? AND action_key=?
             """, ("approved" if allowed else "denied", reviewer, task_id, action_key))
             db.execute("""
-                UPDATE tasks SET status=?,available_at=?,updated_at=? WHERE id=?
-            """, ("queued" if allowed else "blocked", now, now, task_id))
+                UPDATE tasks SET status=?,resume_without_attempt=?,
+                    available_at=?,updated_at=? WHERE id=?
+            """, ("queued" if allowed else "blocked", int(allowed), now, now, task_id))
             self._event(db, task_id, "approval_decided",
                         {"action_key": action_key, "approved": allowed, "reviewer": reviewer})
 

@@ -356,3 +356,113 @@ def test_legacy_tasks_table_is_migrated_without_losing_records(tmp_path):
     assert ledger.get("old")["retry_allowed"] == 1
     assert ledger.submit(request_key="old-key", project="proj", goal="goal",
                          revision="sha", required_evidence=["ci"]) == "old"
+
+
+def test_multiple_approvals_do_not_consume_retry_budget(ctx):
+    ledger, clock = ctx
+    task = submit(ledger, max_attempts=1)
+    first = ledger.claim("A1", lease_seconds=15)
+    assert first["attempts"] == 1
+    for i in range(3):
+        action_key = "safe-action-" + str(i)
+        digest = "digest:" + str(i)
+        ledger.request_approval(task, "A1", first["fence"], action_key,
+                                digest, clock() + 100)
+        ledger.decide_approval(task, action_key, digest, "owner", True)
+        first = ledger.claim("A1", lease_seconds=15)
+        assert first["attempts"] == 1
+        assert first["fence"] == i + 2
+        ledger.reserve_effect(task, "A1", first["fence"], action_key, digest)
+        ledger.acknowledge_effect(task, "A1", first["fence"], action_key,
+                                  digest, "receipt:" + str(i))
+    ledger.begin_verification(task, "A1", first["fence"])
+    ledger.record_evidence(task, "tests", "pytest", "git:abc123",
+                           "passed", "pytest:1", trusted=True)
+    ledger.record_evidence(task, "ci", "github", "git:abc123",
+                           "passed", "ci:1", trusted=True)
+    assert ledger.finalize(task, "A1", first["fence"])
+
+
+def test_approval_pause_rejected_while_effect_outcome_unknown(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "mutate", "digest:first",
+                            clock() + 60)
+    ledger.decide_approval(task, "mutate", "digest:first", "owner", True)
+    resumed = ledger.claim("A1", lease_seconds=15)
+    ledger.reserve_effect(task, "A1", resumed["fence"], "mutate", "digest:first")
+    with pytest.raises(LedgerConflict, match="unresolved external effect"):
+        ledger.request_approval(task, "A1", resumed["fence"], "next", "digest:next",
+                                clock() + 60)
+    assert ledger.get(task)["status"] == "running"
+
+
+def test_exact_expiry_boundary_invalidates_lease(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    clock.advance(15)
+    with pytest.raises(LedgerConflict):
+        ledger.heartbeat(task, "A1", token)
+    assert ledger.claim("A2") is None
+    assert ledger.get(task)["status"] == "retry_wait"
+
+
+def test_distinct_connection_uses_full_synchronous_mode(ctx):
+    ledger, _ = ctx
+    with ledger._db() as db:
+        assert db.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+
+
+def test_operator_projections_are_durable_across_reopen(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "commit", "digest:1",
+                            clock() + 10)
+    reopened = AutopilotLedger(ledger.path, clock)
+    listed = reopened.list_tasks(status="waiting_approval")
+    assert len(listed) == 1 and listed[0]["id"] == task
+    assert listed[0]["required_evidence"] == ["ci", "tests"]
+    pending = reopened.approval_queue()
+    assert len(pending) == 1
+    assert pending[0]["action_key"] == "commit"
+    assert pending[0]["digest"] == "digest:1"
+    assert reopened.effects(task) == []
+    with pytest.raises(ValueError):
+        reopened.list_tasks(limit=1001)
+
+
+def test_expired_approval_is_blocked_by_scheduler_sweep(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "commit", "digest:A",
+                            clock() + 10)
+    clock.advance(10)
+    assert ledger.claim("A2") is None
+    assert ledger.get(task)["status"] == "blocked"
+    assert ledger.approval_queue() == []
+    assert "approval_expired" in [x["kind"] for x in ledger.history(task)]
+    with pytest.raises(LedgerConflict):
+        ledger.decide_approval(task, "commit", "digest:A", "owner", True)
+
+
+def test_effects_projection_preserves_unknown_state(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "send", "digest:send",
+                            clock() + 100)
+    ledger.decide_approval(task, "send", "digest:send", "owner", True)
+    worker = ledger.claim("A2", lease_seconds=15)
+    ledger.reserve_effect(task, "A2", worker["fence"], "send", "digest:send")
+    clock.advance(15)
+    assert ledger.claim("A3") is None
+    assert ledger.get(task)["status"] == "needs_reconciliation"
+    effects = ledger.effects(task)
+    assert len(effects) == 1
+    assert effects[0]["status"] == "reserved"
+    assert effects[0]["digest"] == "digest:send"
+    assert effects[0]["result_ref"] is None

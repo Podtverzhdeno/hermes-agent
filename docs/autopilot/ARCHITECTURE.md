@@ -1,6 +1,16 @@
 # Hermes Autopilot — design review and phased implementation
 
 Status: **engineering proposal + independently testable coordination kernel** (2026-11-22).
+
+**Architecture update (2026-11-22):** Modern upstream Hermes v0.23.3 already has
+first-class durable Kanban, worker dispatch, reviewer gates and exact GitHub PR
+completion checks. **Do not deploy this prototype as a second task scheduler.**
+Use the supported upstream Kanban as canonical lifecycle, and adapt the
+prototype's approval/effect/evidence concepts as a narrow publisher sidecar.
+The prior SQLite-vs-Temporal comparison applies to the older April fork and
+research simulation only. See [ADR-001 and upstream parity audit](./UPSTREAM_PARITY_AUDIT_2026-11-22.md)
+for the migration and updated decision.
+
 Target fork snapshot: Podtverzhdeno/hermes-agent @ 7e9100901819ee44c16b4ddcb79a6bcb7909f591 (2026-04-01).
 **Not** an activated unattended agent runner. No production tasks, privileged actions, model calls, browser control, or automatic merges are enabled by this change.
 
@@ -39,7 +49,7 @@ Do not replace those modules wholesale. Autopilot is a **higher-level control pl
 
 ## 3. Architecture
 
-\`\`\`text
+```text
  Owner UI / Telegram / policy file / approved schedule
        │
        ▼
@@ -70,7 +80,7 @@ Do not replace those modules wholesale. Autopilot is a **higher-level control pl
                 │
                 ▼
        Operator dashboard + event audit + local sync
-\`\`\`
+```
 
 Treat prompts as *instructions*, never as the system of record. The system of record is a durable state machine with immutable task identifiers and externally verifiable artifacts.
 
@@ -156,7 +166,7 @@ Prefer native, documented APIs and tool protocols for work execution. If owner-a
 
 ### Proposed minimal event envelope
 
-\`\`\`json
+```json
 {
   "schema_version": 1,
   "event_id": "uuid",
@@ -170,7 +180,7 @@ Prefer native, documented APIs and tool protocols for work execution. If owner-a
   "timestamp": "UTC ISO-8601",
   "correlation_id": "end-to-end trace"
 }
-\`\`\`
+```
 
 Webhook receiver: validate X-Hub-Signature-256 and event/action, deduplicate by X-GitHub-Delivery, persist inbox event before returning 2XX, process asynchronously and reconcile missed events by polling. Do not use webhook arrival order as the only ordering guarantee.
 
@@ -258,7 +268,7 @@ Tests under tests/autopilot exercise concurrent claims, stale workers, crash amb
 ## 11. Operational runbook (prototype)
 
 1. Keep main unchanged and use the feature branch for review.
-2. Run \`python -m pytest tests/autopilot -q\` in the repository environment; follow with full CI.
+2. Run `python -m pytest tests/autopilot -q` in the repository environment; follow with full CI.
 3. Do **not** start background execution: no runner is connected to this ledger yet.
 4. Before integration, create an OS-private directory for the DB; use per-service accounts for trusted verifier/control plane.
 5. For schema upgrades, stop dispatch first; make a SQLite online backup; migrate with rollback.
