@@ -109,8 +109,8 @@ def test_github_issue_skill_uses_provider_auth_not_token_scraping():
     assert "gh auth status" in content
     assert "gh issue view" in content
     assert "gh issue create" in content
-    assert not re.search(r"(?m)^\\s*(?:GITHUB_TOKEN=\\$\\(|grep\\s+.*(?:\\.git-credentials|\\.hermes/\\.env))", content)
-    assert not re.search(r"(?m)^\\s*curl\\s+.*Authorization:", content)
+    assert not any(line.lstrip().startswith(("grep ", "GITHUB_TOKEN=$(")) for line in content.splitlines())
+    assert not any(line.lstrip().startswith("curl ") and "Authorization:" in line for line in content.splitlines())
 
 
 def test_document_skill_requires_authorized_remote_processing():

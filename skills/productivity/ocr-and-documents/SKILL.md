@@ -1,7 +1,7 @@
 ---
 name: ocr-and-documents
-description: Extract text from PDFs and scanned documents. Use web_extract for remote URLs, pymupdf for local text-based PDFs, marker-pdf for OCR/scanned docs. For DOCX use python-docx, for PPTX see the powerpoint skill.
-version: 2.3.0
+description: Privately extract, OCR and verify PDF or scanned-document content with page-level evidence; use PyMuPDF or approved OCR locally, and remote extraction only for public or authorized documents.
+version: 2.4.0
 author: Hermes Agent
 license: MIT
 metadata:
@@ -52,8 +52,7 @@ First record source path/URL, confidentiality, page count and required output. K
 
 **Decision**: Start with PyMuPDF for local text extraction; for scanned pages, PyMuPDF can perform OCR if Tesseract is installed and configured (e.g. `page.get_textpage_ocr()`), or use an approved alternate OCR pipeline. Tables, diagrams, mathematics and handwriting require explicit verification, not tool-choice assumptions.
 
-If the user needs marker capabilities but the system lacks ~5GB free disk:
-> "This document needs OCR/advanced extraction (marker-pdf), which requires ~5GB for PyTorch and models. Your system has [X]GB free. Options: free up space, provide a URL so I can use web_extract, or I can try pymupdf which works for text-based PDFs but not scanned documents or equations."
+If the user needs marker capabilities but local storage is insufficient, explain the measured limit and available local alternatives: PyMuPDF text-layer extraction, optional PyMuPDF/Tesseract OCR, or a smaller page subset. Never recommend uploading private documents to bypass local resource limits.
 
 ---
 
