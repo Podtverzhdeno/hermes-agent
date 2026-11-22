@@ -241,42 +241,71 @@ else:
     security_headers_middleware = None  # type: ignore[assignment]
 
 
+class IdempotencyConflictError(ValueError):
+    """The same key was supplied for different request content."""
+
+
+class IdempotencyCapacityError(RuntimeError):
+    """The bounded cache cannot safely accept another keyed request."""
+
+
 class _IdempotencyCache:
-    """In-memory idempotency cache with TTL and basic LRU semantics."""
+    """Process-local single-flight idempotency; no guarantee after restart.
+
+    Never evict running or unexpired entries: that would duplicate side effects.
+    Values represent full API responses, including stable response/session IDs.
+    """
+
     def __init__(self, max_items: int = 1000, ttl_seconds: int = 300):
         from collections import OrderedDict
         self._store = OrderedDict()
         self._ttl = ttl_seconds
         self._max = max_items
 
-    def _purge(self):
-        import time as _t
-        now = _t.time()
-        expired = [k for k, v in self._store.items() if now - v["ts"] > self._ttl]
-        for k in expired:
-            self._store.pop(k, None)
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)
+    def _purge(self) -> None:
+        now = time.monotonic()
+        for key, item in list(self._store.items()):
+            if item["task"].done() and now - item["ts"] >= self._ttl:
+                self._store.pop(key, None)
+
+    def _on_done(self, key: str, task: "asyncio.Task") -> None:
+        item = self._store.get(key)
+        if item is None or item["task"] is not task:
+            return
+        if task.cancelled() or task.exception() is not None:
+            self._store.pop(key, None)
+        else:
+            self._store[key]["ts"] = time.monotonic()
 
     async def get_or_set(self, key: str, fingerprint: str, compute_coro):
         self._purge()
         item = self._store.get(key)
-        if item and item["fp"] == fingerprint:
-            return item["resp"]
-        resp = await compute_coro()
-        import time as _t
-        self._store[key] = {"resp": resp, "fp": fingerprint, "ts": _t.time()}
-        self._purge()
-        return resp
-
-
-_idem_cache = _IdempotencyCache()
+        if item is not None:
+            if item["fp"] != fingerprint:
+                raise IdempotencyConflictError("Key reused with different input")
+            self._store.move_to_end(key)
+            logger.info("hermes_api_idempotency outcome=%s", (
+                "replay" if item["task"].done() else "join"
+            ))
+            return await asyncio.shield(item["task"])
+        if len(self._store) >= self._max:
+            raise IdempotencyCapacityError("All idempotency slots occupied")
+        task = asyncio.create_task(compute_coro())
+        self._store[key] = {
+            "task": task, "fp": fingerprint, "ts": time.monotonic(),
+        }
+        task.add_done_callback(lambda finished: self._on_done(key, finished))
+        logger.info("hermes_api_idempotency outcome=new")
+        return await asyncio.shield(task)
 
 
 def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
     from hashlib import sha256
     subset = {k: body.get(k) for k in keys}
-    return sha256(repr(subset).encode("utf-8")).hexdigest()
+    canonical = json.dumps(
+        subset, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class APIServerAdapter(BasePlatformAdapter):
@@ -301,6 +330,7 @@ class APIServerAdapter(BasePlatformAdapter):
         self._site: Optional["web.TCPSite"] = None
         self._response_store = ResponseStore()
         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+        self._idem_cache = _IdempotencyCache()
 
     @staticmethod
     def _parse_cors_origins(value: Any) -> tuple[str, ...]:
@@ -467,6 +497,14 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         stream = body.get("stream", False)
+        if stream and request.headers.get("Idempotency-Key"):
+            return web.json_response(
+                _openai_error(
+                    "Idempotency-Key is not supported for streaming requests.",
+                    code="unsupported_idempotency_mode",
+                ),
+                status=400,
+            )
 
         # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
         system_prompt = None
@@ -560,63 +598,74 @@ class APIServerAdapter(BasePlatformAdapter):
                 agent_task, agent_ref, session_id=session_id,
             )
 
-        # Non-streaming: run the agent (with optional Idempotency-Key)
+        # Cache the complete reply, not only generated text.
         async def _compute_completion():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
-
-        idempotency_key = request.headers.get("Idempotency-Key")
-        if idempotency_key:
-            fp = _make_request_fingerprint(body, keys=["model", "messages", "tools", "tool_choice", "stream"])
-            try:
-                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_completion)
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
-        else:
-            try:
-                result, usage = await _compute_completion()
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
-
-        final_response = result.get("final_response", "")
-        if not final_response:
-            final_response = result.get("error", "(No response generated)")
-
-        response_data = {
-            "id": completion_id,
-            "object": "chat.completion",
-            "created": created,
-            "model": model_name,
-            "choices": [
-                {
+            final_response = result.get("final_response", "") or result.get(
+                "error", "(No response generated)"
+            )
+            payload = {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": model_name,
+                "choices": [{
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": final_response,
-                    },
+                    "message": {"role": "assistant", "content": final_response},
                     "finish_reason": "stop",
-                }
-            ],
-            "usage": {
-                "prompt_tokens": usage.get("input_tokens", 0),
-                "completion_tokens": usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
+                }],
+                "usage": {
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+            }
+            return {"payload": payload, "session_id": session_id}
 
-        return web.json_response(response_data, headers={"X-Hermes-Session-Id": session_id})
+        idem_key = request.headers.get("Idempotency-Key")
+        if idem_key and len(idem_key) > 256:
+            return web.json_response(
+                _openai_error("Idempotency-Key too long", code="invalid_idempotency_key"),
+                status=400,
+            )
+        try:
+            if idem_key:
+                fp = _make_request_fingerprint(
+                    {"body": body, "session_id": provided_session_id},
+                    ["body", "session_id"],
+                )
+                completed = await self._idem_cache.get_or_set(
+                    "chat:" + idem_key, fp, _compute_completion,
+                )
+            else:
+                completed = await _compute_completion()
+        except IdempotencyConflictError:
+            logger.warning("hermes_api_idempotency outcome=conflict endpoint=chat")
+            return web.json_response(
+                _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
+                status=409,
+            )
+        except IdempotencyCapacityError:
+            logger.warning("hermes_api_idempotency outcome=capacity endpoint=chat")
+            return web.json_response(
+                _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
+                status=503, headers={"Retry-After": "5"},
+            )
+        except Exception:
+            logger.exception("Agent execution failed in chat completion")
+            return web.json_response(
+                _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
+                status=500,
+            )
+        return web.json_response(
+            completed["payload"],
+            headers={"X-Hermes-Session-Id": completed["session_id"]},
+        )
 
     async def _write_sse_chat_completion(
         self, request: "web.Request", completion_id: str, model: str,
@@ -809,88 +858,81 @@ class APIServerAdapter(BasePlatformAdapter):
         if body.get("truncation") == "auto" and len(conversation_history) > 100:
             conversation_history = conversation_history[-100:]
 
-        # Run the agent (with Idempotency-Key support)
         session_id = str(uuid.uuid4())
 
         async def _compute_response():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
             )
-
-        idempotency_key = request.headers.get("Idempotency-Key")
-        if idempotency_key:
-            fp = _make_request_fingerprint(
-                body,
-                keys=["input", "instructions", "previous_response_id", "conversation", "model", "tools"],
+            final_response = result.get("final_response", "") or result.get(
+                "error", "(No response generated)"
             )
-            try:
-                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_response)
-            except Exception as e:
-                logger.error("Error running agent for responses: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
+            response_id = f"resp_{uuid.uuid4().hex[:28]}"
+            full_history = list(conversation_history)
+            full_history.append({"role": "user", "content": user_message})
+            agent_messages = result.get("messages", [])
+            if agent_messages:
+                full_history.extend(agent_messages)
+            else:
+                full_history.append({"role": "assistant", "content": final_response})
+            response_data = {
+                "id": response_id,
+                "object": "response",
+                "status": "completed",
+                "created_at": int(time.time()),
+                "model": body.get("model", "hermes-agent"),
+                "output": self._extract_output_items(result),
+                "usage": {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+            }
+            if store:
+                self._response_store.put(response_id, {
+                    "response": response_data,
+                    "conversation_history": full_history,
+                    "instructions": instructions,
+                })
+                if conversation:
+                    self._response_store.set_conversation(conversation, response_id)
+            return response_data
+
+        idem_key = request.headers.get("Idempotency-Key")
+        if idem_key and len(idem_key) > 256:
+            return web.json_response(
+                _openai_error("Idempotency-Key too long", code="invalid_idempotency_key"),
+                status=400,
+            )
+        try:
+            if idem_key:
+                fp = _make_request_fingerprint({"body": body}, ["body"])
+                response_data = await self._idem_cache.get_or_set(
+                    "responses:" + idem_key, fp, _compute_response,
                 )
-        else:
-            try:
-                result, usage = await _compute_response()
-            except Exception as e:
-                logger.error("Error running agent for responses: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
-
-        final_response = result.get("final_response", "")
-        if not final_response:
-            final_response = result.get("error", "(No response generated)")
-
-        response_id = f"resp_{uuid.uuid4().hex[:28]}"
-        created_at = int(time.time())
-
-        # Build the full conversation history for storage
-        # (includes tool calls from the agent run)
-        full_history = list(conversation_history)
-        full_history.append({"role": "user", "content": user_message})
-        # Add agent's internal messages if available
-        agent_messages = result.get("messages", [])
-        if agent_messages:
-            full_history.extend(agent_messages)
-        else:
-            full_history.append({"role": "assistant", "content": final_response})
-
-        # Build output items (includes tool calls + final message)
-        output_items = self._extract_output_items(result)
-
-        response_data = {
-            "id": response_id,
-            "object": "response",
-            "status": "completed",
-            "created_at": created_at,
-            "model": body.get("model", "hermes-agent"),
-            "output": output_items,
-            "usage": {
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
-
-        # Store the complete response object for future chaining / GET retrieval
-        if store:
-            self._response_store.put(response_id, {
-                "response": response_data,
-                "conversation_history": full_history,
-                "instructions": instructions,
-            })
-            # Update conversation mapping so the next request with the same
-            # conversation name automatically chains to this response
-            if conversation:
-                self._response_store.set_conversation(conversation, response_id)
-
+            else:
+                response_data = await _compute_response()
+        except IdempotencyConflictError:
+            logger.warning("hermes_api_idempotency outcome=conflict endpoint=responses")
+            return web.json_response(
+                _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
+                status=409,
+            )
+        except IdempotencyCapacityError:
+            logger.warning("hermes_api_idempotency outcome=capacity endpoint=responses")
+            return web.json_response(
+                _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
+                status=503, headers={"Retry-After": "5"},
+            )
+        except Exception:
+            logger.exception("Agent execution failed in Responses API")
+            return web.json_response(
+                _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
+                status=500,
+            )
         return web.json_response(response_data)
 
     # ------------------------------------------------------------------
