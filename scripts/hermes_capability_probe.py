@@ -196,6 +196,12 @@ def main(argv=None):
             "eligible_for_isolated_integration_test": False,
             "production_ready": False,
         }, 3
+    # Provenance is mandatory. An offline fixture cannot prove installed runtime state.
+    report["evidence_source"] = ("OFFLINE_FIXTURE" if args.snapshot is not None
+                                 else "LOCAL_LOOPBACK_GET")
+    report["target_is_loopback"] = args.snapshot is None
+    report["live_capabilities_observed"] = args.snapshot is None and code != 3
+    report["environment_e2e_verified"] = False
     report["observed_at"] = datetime.now(timezone.utc).isoformat()
     payload = json.dumps(report, sort_keys=True, indent=2, ensure_ascii=False)
     if args.output_json:

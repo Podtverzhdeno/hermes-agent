@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 path = Path(__file__).resolve().parents[2] / "scripts" / "hermes_capability_probe.py"
@@ -91,6 +92,10 @@ class ProbeTests(unittest.TestCase):
             self.assertEqual(m.main(["--snapshot", str(f), "--output-json", str(out)]), 0)
             saved = json.loads(out.read_text())
             self.assertTrue(saved["eligible_for_isolated_integration_test"])
+            self.assertFalse(saved["live_capabilities_observed"])
+            self.assertFalse(saved["target_is_loopback"])
+            self.assertEqual(saved["evidence_source"], "OFFLINE_FIXTURE")
+            self.assertFalse(saved["environment_e2e_verified"])
             self.assertFalse(saved["production_ready"])
 
     def test_offline_error_preserves_typed_incident_not_payload(self):
@@ -142,6 +147,31 @@ class ProbeTests(unittest.TestCase):
             rc = m.main(["--snapshot", str(source), "--output-json", str(out)])
             self.assertEqual(rc, 3)
             self.assertEqual(json.loads(out.read_text())["reason_code"], "SNAPSHOT_TOO_LARGE")
+
+    def test_live_get_report_has_distinct_provenance_but_no_e2e(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+                m, "read_capabilities", return_value=canonical()):
+            out = Path(tmp) / "report.json"
+            rc = m.main(["--base-url", "http://127.0.0.1:8642",
+                         "--output-json", str(out)])
+            self.assertEqual(rc, 0)
+            report = json.loads(out.read_text())
+            self.assertEqual(report["evidence_source"], "LOCAL_LOOPBACK_GET")
+            self.assertTrue(report["live_capabilities_observed"])
+            self.assertFalse(report["environment_e2e_verified"])
+            self.assertFalse(report["production_ready"])
+
+    def test_redirect_is_refused_with_proxy_disabled(self):
+        with mock.patch.object(m.urllib.request, "build_opener") as builder:
+            builder.return_value.open.side_effect = m.urllib.error.HTTPError(
+                "http://127.0.0.1:8642/v1/capabilities", 302, "Redirect", {}, None)
+            with self.assertRaises(m.ProbeError) as context:
+                m.read_capabilities("http://127.0.0.1:8642", token="DO_NOT_PRINT")
+            self.assertEqual(context.exception.code, "REDIRECT_FORBIDDEN")
+            handlers = builder.call_args.args
+            self.assertTrue(any(isinstance(h, m.NoRedirect) for h in handlers))
+            self.assertTrue(any(isinstance(h, m.urllib.request.ProxyHandler)
+                                and h.proxies == {} for h in handlers))
 
     def test_valid_but_legacy_returns_nonzero_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:

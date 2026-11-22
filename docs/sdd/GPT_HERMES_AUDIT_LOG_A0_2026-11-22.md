@@ -102,3 +102,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Self CI red test and actual contract fix
 - Exact PR #28 SHA d2cb51aff7cd7815658f242db0f65a29644896c0: offline PR audit 28/28 passed, but capability probe 17 tests had one failure: malformed retention value string '86400' was newly classified as below-24h instead of INVALID TYPE, conflicting with pre-existing negative test. Fixed source contract (non-int => idempotency_retention; int below 86400 => idempotency_retention_below_24h), preserving two distinct root causes; added bool-type edge regression. Re-run CI on exact next SHA before acceptance.
+
+## Report evidence provenance and fake success prevention
+- A0 probe originally emitted the same machine-readable capability success for --snapshot offline fixture as for real loopback GET. This could mislead agents about installed runtime status. Report now mandates evidence_source OFFLINE_FIXTURE or LOCAL_LOOPBACK_GET, live_capabilities_observed separately, target_is_loopback=false for fixtures, and environment_e2e_verified=false universally (only a capabilities GET, not E2E).
+- Added no-network tests for distinct CLI provenance and mocked 302 redirect refusal + disabled proxy, alongside existing negative auth and URL tests. No real local Hermes connection has been made; source reports GET mode but not cryptographic attestation.
