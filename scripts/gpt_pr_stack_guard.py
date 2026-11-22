@@ -62,14 +62,20 @@ def collect(repo, token=None):
     data=pages(prefix+'/pulls?state=open',token)
     items=[]
     for row in data:
+        if not isinstance(row,dict) or not isinstance(row.get('head'),dict) or not isinstance(row.get('base'),dict):
+            raise IncompleteAudit('invalid PR metadata shape')
         number=row.get('number')
         if type(number) is not int or number<1:
             raise IncompleteAudit('invalid PR number')
         detail=get(prefix+f'/pulls/{number}',token)
+        if not isinstance(detail,dict):
+            raise IncompleteAudit('invalid PR detail shape')
         if detail.get('head',{}).get('sha')!=row.get('head',{}).get('sha'):
             raise IncompleteAudit('PR changed during inventory')
         paths=pages(prefix+f'/pulls/{number}/files',token,cap=30)
         newest=get(prefix+f'/pulls/{number}',token)
+        if not isinstance(newest,dict):
+            raise IncompleteAudit('invalid PR refetch shape')
         if newest.get('head',{}).get('sha')!=row.get('head',{}).get('sha') or newest.get('base',{}).get('ref')!=row.get('base',{}).get('ref'):
             raise IncompleteAudit('PR changed during file fetch')
         items.append({'number':number,'head_ref':row['head']['ref'],
@@ -84,6 +90,8 @@ def collect(repo, token=None):
         if parent is None:
             continue
         ancestry=get(prefix+f"/compare/{parent['head_sha']}...{p['head_sha']}",token)
+        if not isinstance(ancestry,dict):
+            raise IncompleteAudit('invalid pinned compare shape')
         p['parent_compare']={'parent_sha':parent['head_sha'],
             'behind_by':ancestry.get('behind_by'), 'status':ancestry.get('status')}
     return {'schema_version':1,'repo':repo,
@@ -116,6 +124,15 @@ def analyze(snapshot):
             if head in heads:
                 raise IncompleteAudit('ambiguous same-repository parent branch')
             heads[head]=p
+    # Detect cycles even when two refs coincidentally share one commit.
+    for child in clean:
+        visited = {child['number']}
+        node = child
+        while node['base_ref'] in heads:
+            node = heads[node['base_ref']]
+            if node['number'] in visited:
+                raise IncompleteAudit('cyclic stacked PR dependency')
+            visited.add(node['number'])
     problems=[]
     for p in sorted(clean,key=lambda r:r['number']):
         parent=heads.get(p['base_ref'])
@@ -168,7 +185,7 @@ def main(argv=None):
         else:
             print(body,end='')
         return 1 if report['issues'] else 0
-    except (IncompleteAudit,OSError,ValueError,TypeError) as exc:
+    except (IncompleteAudit,OSError,ValueError,TypeError,KeyError,AttributeError) as exc:
         print('AUDIT_INCOMPLETE: '+str(exc),file=sys.stderr)
         return 2
 
