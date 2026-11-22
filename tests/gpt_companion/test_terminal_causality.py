@@ -127,3 +127,20 @@ def test_replay_after_restart_preserves_diagnostic_flags(journal):
     assert result["state"] == "REPORTED_FAILED"
     assert result["next_action"] == "HONOR_RETRY_AFTER_AND_BUDGET"
     assert result["diagnostic_flags"] == []
+
+def test_observer_wall_clock_regression_is_not_fresh_liveness(journal):
+    emit(journal, 1, "worker.started")
+    result = journal.assess("run-causal", now=900.0)
+    assert result["state"] == "CLOCK_ANOMALY"
+    assert result["next_action"] == "CHECK_OBSERVER_CLOCK_AND_SUPERVISOR"
+    assert "CLOCK_REGRESSION" in result["diagnostic_flags"]
+    assert result["live_age_seconds"] == 0.0  # clamped age is not evidence of life
+
+
+def test_clock_regression_does_not_authorize_effect_retry(journal):
+    emit(journal, 1, "tool.effect_reserved", action_id="write-1")
+    result = journal.assess("run-causal", now=900.0)
+    assert result["state"] == "EFFECT_IN_FLIGHT"
+    assert result["unresolved_effects"] == ["write-1"]
+    assert "CLOCK_REGRESSION" in result["diagnostic_flags"]
+    assert result["next_action"] == "MONITOR_NO_BLIND_RETRY"
