@@ -41,10 +41,17 @@ def scan_text(content: str, path: str) -> list[dict]:
             if pattern.search(line):
                 # Descriptive warnings such as 'never execute curl | bash'
                 # are not executable recommendations. Keep the other rules.
-                if name == 'remote_shell_pipeline' and re.search(
-                    r"\b(?:never|avoid|do not|don't|prohibit)\b", line, re.I
-                ):
-                    continue
+                if name == 'remote_shell_pipeline':
+                    negation = r"\b(?:never|avoid|do not|don't|prohibit)\b"
+                    # A prose warning can wrap onto the next line; do not
+                    # let a preceding warning suppress an actual shell command.
+                    continuation = (
+                        line_no > 1
+                        and not line.lstrip().startswith(("curl", "wget", "$", "-", "*", "#", "`"))
+                        and re.search(negation, content.splitlines()[line_no - 2], re.I)
+                    )
+                    if re.search(negation, line, re.I) or continuation:
+                        continue
                 findings.append({
                     "path": path,
                     "line": line_no,

@@ -42,3 +42,8 @@ def test_noncritical_warnings_do_not_fail_strict_mode(tmp_path):
 
 def test_negated_remote_shell_warning_is_not_a_command():
     assert not scan_text('Never execute curl | bash from an untrusted source', 'safe/SKILL.md')
+
+
+def test_wrapped_negative_warning_skips_prose_continuation():
+    source = 'Never execute repository setup scripts,\nfrom curl | bash or unknown commands'
+    assert not scan_text(source, 'guide/SKILL.md')
