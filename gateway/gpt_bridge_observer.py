@@ -14,6 +14,7 @@ from datetime import datetime
 import hashlib
 import json
 import re
+from threading import Lock
 from typing import Any, Mapping
 
 
@@ -162,6 +163,7 @@ class ReadOnlyEventObserver:
         self.max_reorder = max_reorder
         self.max_recent = max_recent
         self.max_event_bytes = max_event_bytes
+        self._lock = Lock()
         self._producers: dict[str, _ProducerCursor] = {}
         self._recent: OrderedDict[str, tuple[str, int, str]] = OrderedDict()
         self._recent_seq: dict[tuple[str, int], str] = {}
@@ -172,6 +174,10 @@ class ReadOnlyEventObserver:
             event = validate_event(raw, max_bytes=self.max_event_bytes)
         except InvalidBridgeEvent as exc:
             return Observation(False, str(exc))
+        with self._lock:
+            return self._ingest_validated(event)
+
+    def _ingest_validated(self, event: Mapping[str, Any]) -> Observation:
         producer, seq, event_id = (event["producer_id"], event["source_event_seq"], event["event_id"])
         digest = hashlib.sha256(json.dumps(event, sort_keys=True, ensure_ascii=False,
                                            separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
@@ -219,9 +225,10 @@ class ReadOnlyEventObserver:
 
     def snapshot(self) -> dict[str, Any]:
         """Safe metadata-only view; not authoritative or durable."""
-        return {
-            "schema_version": 1,
-            "kind": "advisory_event_observer",
+        with self._lock:
+            return {
+                "schema_version": 1,
+                "kind": "advisory_event_observer",
             "producers": len(self._producers),
             "recent_events": len(self._recent),
             "out_of_order_events": sum(len(p.ahead) for p in self._producers.values()),
