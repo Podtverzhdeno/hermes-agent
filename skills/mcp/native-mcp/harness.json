@@ -2,7 +2,7 @@
   "schema_version": 1,
   "skill": "native-mcp",
   "purpose": "Connect narrowly scoped MCP servers with transport and permission checks.",
-  "risk": "local_write",
+  "risk": "critical",
   "routing": {
     "trigger": [
       "Configure a trusted local MCP server in Hermes",
@@ -17,7 +17,7 @@
   },
   "preflight": [
     "Inventory transport, server identity, tool schemas and credential flow.",
-    "Inspect server command/network target and demand explicit trusted-source approval.",
+    "Pin server executable/package version and validate the network, filesystem and secret access before allowing it to run.",
     "Limit environment variables and host paths before enabling a server."
   ],
   "workflow": [
@@ -44,6 +44,16 @@
         "config-diff",
         "handshake"
       ]
+    },
+    {
+      "operation": "mcp.launch",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "server-identity",
+        "launch-approval",
+        "handshake"
+      ]
     }
   ],
   "evidence": [
@@ -61,6 +71,11 @@
       "id": "handshake",
       "source": "local_test",
       "how_to_verify": "Test schema discovery and harmless probe with timeout and explicit limits."
+    },
+    {
+      "id": "launch-approval",
+      "source": "human",
+      "how_to_verify": "Owner confirms exact server binary/package hash, argv, environment, network/host access and tool authority."
     }
   ],
   "failure_modes": [
