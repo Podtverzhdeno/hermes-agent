@@ -17,6 +17,20 @@
 
 Existing source audit (OBSERVED): `acp_adapter/server.py` uses a shared four-thread executor and previously assigned `tools.terminal_tool._approval_callback` globally around each ACP prompt; `acp_adapter/permissions.py` previously treated an unknown option as `once`. See draft PR #3 for a scoped fix. The separate Autopilot draft PR #1 proposes a durable SQLite ledger but explicitly does **not** activate dispatch, live watchdogs, browser integration, or tools. Local_WorkSpace connector returned `Session terminated` in this review (BLOCKED); the local Windows files, Obsidian notes, and a running browser extension have not been inspected. The repository paths `extension/manifest.json` and `api_server.py` did not resolve on this fork snapshot; this is **not** proof that the user's independent extension does not exist.
 
+### Historical local extension discovery — requires fresh verification
+
+A prior owner-supervised local smoke test (2026-11-11) referenced:
+- Windows workspace: `C:/Users/Vadim/Tunnel`
+- unpacked extension: `chat-launch-smoke-desktop-test/web-extension`
+- native/local companion candidate: `chat-launch-smoke-desktop-test/web-companion`
+- extra extension config: `bridge-config.json`
+- reported bridge version: `0.6.6`; browser bridge port: `18763`
+- last seen operational status at that time: stale extension heartbeat and bridge process not running.
+
+These are **HISTORICAL USER CONTEXT, NOT LIVE SOURCE EVIDENCE** as of this SDD. The present GitHub fork does not prove presence/absence of these local files. First local audit after connector recovery must inventory all extension files and manifest permissions, bridge transport auth, exact process binding, heartbeat producer, stale event rules, user approval path and update integrity. The stated port is an *old configuration reference*, not a claim that a listener exists today.
+
+**Risk-specific design consequence:** avoid adding a second local observer on another port without identifying which process is authoritative for task state. A disconnected heartbeat means only a visibility problem unless the ledger independently proves a worker lease failure.
+
 **Non-negotiable:** the ChatGPT website is not a machine-readable agent queue, and UI presence/absence is not proof of task completion. The bridge uses documented integration interfaces and owner-authorized action pathways. No bypass of platform policy, user approval, CAPTCHA, billing, authentication or access controls.
 
 ## 1. Problem statement, success definition, and failure of naive approaches
