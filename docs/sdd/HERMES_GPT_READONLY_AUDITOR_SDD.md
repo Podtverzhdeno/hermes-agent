@@ -1,0 +1,111 @@
+# SDD: Hermes GPT Read-Only Run Auditor (independent, upstream-first)
+
+**Version:** 0.1, 2026-11-22. **Status:** isolated implementation + tests, NOT production verified, NOT a resident monitor. **Owns:** only offline diagnostic projection and documentation; **does not own:** run scheduler, browser automation, gateway routing, API auth or shared durable state.
+
+## 1. Exact source evidence and objective
+
+The April 2026 fork `Podtverzhdeno/hermes-agent` main `7e9100901819ee44c16b4ddcb79a6bcb7909f591` lacks some newer run control structures. Official `NousResearch/hermes-agent` v0.23.3 (2026-11-20) and source pinned to `da8e7d71abe4ac165760cd813c0c18c53e697b90` have run APIs and Kanban. Verified directly in official `gateway/platforms/api_server_runs.py`, `api_server_run_idempotency.py` and `website/docs/user-guide/features/api-server.md`.
+
+Modern upstream surfaces:
+- `POST /v1/runs`, `GET /v1/runs/{run_id}`, `GET /v1/runs/{run_id}/events`, plus authorized stop, approval, steer, unknown outcome resolution.
+- Run event JSON contains `event`, `run_id`, `timestamp`; streaming wrapper adds numeric `seq` and `id:` SSE cursor. Reconnect using `Last-Event-ID` or `last_seq`.
+- Event replay buffer is **bounded** to 1,000 records per observed run stream; per-subscriber queue cap **256**. The server reports `replay.truncated`. An event subscription is NOT a durable complete operation audit.
+- `gateway.api_server.max_concurrent_runs` documented default **10** (HTTP 429 beyond capacity). 30 GPT clients may experience **intentional admission backpressure**, not a Hermes crash. The actual configured value must be read from running instance.
+- `RunIdempotencyStore` may fall back to non-durable in-memory storage. Check `GET /v1/capabilities` and the effective authorization/profile; do not assume all installations are durable.
+
+**The problem**: When a GPT UI observer disconnects or an agent stalls, determine what is known, unknown, and safe to do next. Do not invent private reasoning, tool effects, or full history from a truncated stream. Tens of agents share one human operator: reports must be short, structured, authenticated, and comparable.
+
+## 2. Ownership and architecture
+
+```text
+Authorized local operator / extension (future)
+    | GET status and subscribe to events
+    v
+Native modern Hermes /v1/runs (authoritative state)
+    | export or independent local collector with consent
+    v
+Redacted SSE file + status snapshot
+    | offline
+    v
+gateway/gpt_bridge_event_audit.py (this branch)
+    | event order, tool/approval correlation, reason codes
+    v
+Read-only explanation JSON
+    | never auto-resubmit browser prompt
+    v
+Authorized operator decides reconcile / observe / pause
+```
+
+This branch deliberately makes **zero changes** to `gateway/platforms/api_server.py` and `gateway/idempotency.py`, which are concurrently owned/modified by PRs #4/#5/#6. No run status override, new ledger, scheduler, wildcard Chrome permission, CDP bypass or automatic send is in scope.
+
+## 3. Inputs and invariants
+
+CLI:
+```powershell
+python -m gateway.gpt_bridge_event_audit --run-id run_0123456789abcdef0123456789abcdef --events-file .\redacted-run.sse --status-file .\redacted-run-status.json
+```
+
+Expected inputs: an already obtained, access-authorized SSE export from the **same resolved profile and run**; optional separately authenticated run status. No network clients or tokens are embedded. Tool arguments, full messages, screenshots, cookies, prompt content, response bodies and raw errors are deliberately discarded from the output.
+
+Invariants:
+- Every processed SSE event is bound to one `run_id`; mixed runs are rejected.
+- Do not report a completed run from an SSE terminal event alone: fetch independent status.
+- Missing `seq`, sequence gaps, partial replay, reordering or slow-subscriber overflow imply `EVIDENCE_INCOMPLETE`, not «agent crashed».
+- Duplicate SSE sequences are deduplicated. Late events cannot rewind the current projection or mutate an authoritative run.
+- Pending tool call may represent external side effect. **NEVER retry solely from this diagnosis.**
+- Pending approval cannot be bypassed. If an unscoped approval response may have cleared the only outstanding approval, report a **weak inference**.
+- If `updated_at` of the provided status predates the latest event, flag possibly stale snapshot; re-fetch status before deciding. Clock comparison is conservative, not proof of causality.
+- `tool.completed` with error flag remains visible even if later run status says completed, so the operator can inspect recovery evidence.
+- All outputs are an allowlist of IDs, booleans, counters, diagnostic codes and safe timestamps, bounded by maximum input/event limits. No user content is echoed on parsing errors.
+
+## 4. Reason codes and deterministic next actions
+
+| Reason | Meaning | Safe operator action |
+|---|---|---|
+| `NO_EVIDENCE` | No event observed | Check admission/auth and correct run ID |
+| `NONTERMINAL_OBSERVATION` | Event stream ended before terminal | Re-query authoritative status; no blind retry |
+| `TERMINAL_EVENT_NOT_STATUS_VERIFIED` | SSE claims terminal but no independent status | Query status for this run/profile |
+| `EVIDENCE_INCOMPLETE` | Gap/truncated/out-of-order/uncorrelated events | Fetch status + validated replay; mark missing range |
+| `STALE_STATUS_SNAPSHOT` | Status timestamp older than latest event | Re-fetch status; check clock/version |
+| `POSSIBLE_EXTERNAL_EFFECT_UNKNOWN` | Started tool has no correlated completion | Verify external effect receipt; human approval if needed |
+| `WAITING_APPROVAL` | Unresolved approval evidence | Pause, require authorized decision |
+| `CONTRADICTORY_STATUS` | Terminal SSE and polled status differ | Repeat two independent reads; check profile/cursor |
+| `COMPLETED_WITH_TOOL_ERRORS` | Terminal completed with at least one tool error | Inspect whether agent recovered |
+| `COMPLETED/FAILED/CANCELLED/INTERRUPTED` | Independently provided terminal status | Inspect persisted result; don't auto-retry |
+
+The diagnoser is a projection: its hypotheses never have write privileges. Neither SSE EOF nor `: keepalive` constitutes progress. The output is not a substitute for a real durable action/effect ledger.
+
+## 5. Evidence-driven test gates
+
+Source test fixture: `tests/gateway/test_gpt_bridge_event_audit.py`. Includes native SSE comments/seq parsing, duplicate handling, gaps and truncation, out-of-order events, stale and fresh status snapshots, failed tools, correlating approvals, privacy, invalid data, 30 isolated synthetic runs and bounded input sizes.
+
+**Synthetic 30 run IDs != proof of 30 live concurrent browser tabs or model workers.** Further system tests require real profiles, available official API capability, measured admission limits, run status persistence, queue pressure, stream disconnects and browser MV3 lifetime.
+
+Before merging: tests must finish green on exact HEAD, compare to unmodified main baseline, independent reviewer signs off that no new work authority was added. Before deployment: pin modern upstream, migrate profile state with backup, test Windows extension source/bridge with consent, verify actual network callbacks and crash recovery.
+
+## 6. Failure and collision register
+
+| Date | Evidence | Classification | Disposition |
+|---|---|---|---|
+| 2026-11-22 | Local_WorkSpace MCP initially returned session termination; later re-probe succeeded with only scoped `shelter` workspace | Transport recovered, scope insufficient | Cannot access Windows Tunnel extension |
+| 2026-11-22 | Read-only MCP initial HTTP 429; later works for `temp-folder` only | Transient external transport symptom | Not proof of GPT rate-limit |
+| 2026-11-22 | PRs #4/#5/#6 simultaneously modify the April-fork `gateway/platforms/api_server.py` | High merge/integration collision | This independent PR does not modify it |
+| 2026-11-22 | PR #4 earlier Actions: 7,513 passed, 29 failed; 171 skipped, old compatibility assertion and environment problems | Full-suite release gate failed on earlier SHA | No merge claim; latest CI required |
+| 2026-11-22 | Modern official source exposes max 10 direct runs and bounded SSE replay by default | Expected capacity and evidence-loss conditions | Prefer reason-coded 429 and replay gap reporting |
+| 2026-11-22 | This branch copies only read-only auditor, synthetic tests and extension-specific contract | Implementation proposed | CI/live verification pending |
+
+## 7. Follow-on implementation (NOT included here)
+
+A separate, explicitly authorized local collector can subscribe to per-run SSE and status and produce daily incident summaries, but needs actual local workspace scope and a process supervisor. It must implement bounded persistent queue, GDPR/security retention policy, authenticated profile boundaries, `Last-Event-ID` cursor, backpressure and read-only mode. A browser extension can then display the same `run_id` and last confirmed stage. The new collector must not silently approve, restart, re-submit, or patch GitHub repositories.
+
+Any automatic fixer is **proposal-only** until: reproducible redacted failing test → isolated feature branch → independent reviewer → exact HEAD CI → rollback proof → permitted scope. Never directly write to `main` or a live ChatGPT conversation on a model's own unverified root-cause hypothesis.
+
+## 8. Source and coordination references
+
+- Official release: https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3
+- Pinned upstream run handler: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/gateway/platforms/api_server_runs.py
+- Pinned upstream idempotency: https://github.com/NousResearch/hermes-agent/blob/da8e7d71abe4ac165760cd813c0c18c53e697b90/gateway/platforms/api_server_run_idempotency.py
+- Browser extension contract: [HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md](HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md)
+- W3C trace context: https://www.w3.org/TR/trace-context-1/
+- OpenTelemetry GenAI spans: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-spans/
+- Chrome MV3 service worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle
