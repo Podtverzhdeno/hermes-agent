@@ -60,3 +60,8 @@ Selected operational path: (1) fix proof and classification, (2) converge duplic
 ## 6. Concurrent parent reconciliation
 
 At integration checkpoint 85db47caedb87490cee58aab70257c4bdf835ef1, PR #12 has canonical CLOCK_SKEW_DETECTED and PARTIAL_WORKER_OUTAGE, a read-only watch implementation and durable agent mandate. The stacked PR deliberately preserves those changes through a parent-tree-based merge commit. Combined code validation remains PENDING at exact merge SHA; previous CI cannot certify it.
+
+
+| H-013 | CONFIRMED → PATCHED | `assess` previously inspected only MAX(attempt); old `tool.effect_reserved` disappeared from latest summary | Re-attempt could make unresolved prior write invisible and encourage blind retry | Add prior attempt effect scan, explicit reconciliation status and 6 regression cases; no real provider proof |
+
+**Evidence gate H-013:** Source patch committed in the stacked branch and regression scenarios authored. Exact-head CI not observed, live effect outcomes unverified. The prior-attempt scan is not yet optimized for long histories. This is a metadata-only diagnosis, not a write-blocking policy engine.
