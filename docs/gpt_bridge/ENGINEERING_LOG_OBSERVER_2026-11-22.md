@@ -69,3 +69,7 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 
 | O-25 | TESTED_OFFLINE | Hardened 64 MiB / 100k-record parser budget, URL-bearing evidence refs, and case-insensitive Windows/file-directory PR conflicts. 53+12 = 65 contract tests passed under Python 3.13 `-S`; isolated coverage 94% / 77%. | GitHub CI on exact new HEAD and actual NTFS worktree checks remain required. |
 | O-26 | CONNECTOR_RECOVERED_SCOPED | Local_WorkSpace.list_workspaces became responsive but returned only `shelter`; Hermes extension/native host not within allowed root. | Treat Hermes runtime observability as still BLOCKED; do not inspect unrelated shelter files. |
+
+
+| O-27 | REVIEW_POSTED | PR #4 native SSE observer at head `f2373ed5551fe47168b014b08d63560a6bb0d68a` may hide same-seq changed events and genericize v0.23.3 `unknown` runs; posted reproducible review comment #7078191241. | Require replay-collision and explicit unknown reconciliation tests, no automatic retry; not a production incident. |
+| O-28 | OBSERVED_CI_AT_SHA | At PR #26 head `8cec46d296e38b156b851dda0fda1b1508048e88`: offline audit checks for Python 3.11/3.12/3.13 are `success`; repository `test` was `in_progress`. | Any subsequent commit invalidates check freshness. Read actual exact HEAD status before review or merge. |
