@@ -258,7 +258,6 @@ class HermesACPAgent(acp.Agent):
             state.cancel_event.clear()
 
         tool_call_ids: dict[str, Deque[str]] = defaultdict(deque)
-        previous_approval_cb = None
 
         if conn:
             tool_progress_cb = make_tool_progress_cb(conn, session_id, loop, tool_call_ids)
@@ -279,32 +278,26 @@ class HermesACPAgent(acp.Agent):
         agent.step_callback = step_cb
         agent.message_callback = message_cb
 
-        if approval_cb:
-            try:
-                from tools import terminal_tool as _terminal_tool
-                previous_approval_cb = getattr(_terminal_tool, "_approval_callback", None)
-                _terminal_tool.set_approval_callback(approval_cb)
-            except Exception:
-                logger.debug("Could not set ACP approval callback", exc_info=True)
-
         def _run_agent() -> dict:
+            # Scope the permission callback inside the executor thread.
+            # The previous process-global setter was unsafe when multiple
+            # ACP sessions ran concurrently in the shared thread pool.
             try:
-                result = agent.run_conversation(
-                    user_message=user_text,
-                    conversation_history=state.history,
-                    task_id=session_id,
-                )
-                return result
+                from contextlib import nullcontext
+
+                approval_scope = nullcontext()
+                if approval_cb:
+                    from tools import terminal_tool as _terminal_tool
+                    approval_scope = _terminal_tool.scoped_approval_callback(approval_cb)
+                with approval_scope:
+                    return agent.run_conversation(
+                        user_message=user_text,
+                        conversation_history=state.history,
+                        task_id=session_id,
+                    )
             except Exception as e:
                 logger.exception("Agent error in session %s", session_id)
                 return {"final_response": f"Error: {e}", "messages": state.history}
-            finally:
-                if approval_cb:
-                    try:
-                        from tools import terminal_tool as _terminal_tool
-                        _terminal_tool.set_approval_callback(previous_approval_cb)
-                    except Exception:
-                        logger.debug("Could not restore approval callback", exc_info=True)
 
         try:
             result = await loop.run_in_executor(_executor, _run_agent)
