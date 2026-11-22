@@ -472,3 +472,53 @@ Latest reviewed parent implementation introduced `gpt_companion/watch.py` with a
 **OBS-008 (open, handed to parent owner):** `StatusWatch.sample` calls `EventJournal.assess` without first validating event chain. The one-shot CLI does verify_chain, but watch runs could persist a diagnosis from corrupted/unverified event history. Choose an integrity strategy that verifies once per snapshot or incremental verified checkpoint, fails explicitly `JOURNAL_INTEGRITY_FAILED`, and avoids O(number_of_runs × entire_history) hashing at each poll. Add tampered SQLite record test; count integrity-check latency. This branch does **not** modify parent-owned watch.py to avoid concurrent collisions.
 
 **Priority:** OBS-006 delegated to PR #23 (not implemented here); OBS-007/008 open review on the parent watch implementation. Neither patch by itself can prove external effects, guarantee atomic cross-store writes, or create a live GPT monitor.
+
+
+## 26. Thirty-agent ownership checkpoint — living integration queue
+
+At the 2026-11-22 inspection, **30 distinct draft/open PRs** were visible, not 30 independently validated services. Source review performed on PR #12, #17, #23, #27, #29, #13, #15, as well as file inventories for other GPT-related PRs. PR heads and statuses move rapidly; treat these identifiers as a historical checkpoint, not a pinned live dashboard.
+
+| Concern (single owner per resource) | Candidate primary owner | Competing or dependent work | Decision / remaining gate |
+| --- | --- | --- | --- |
+| Offline journal source-of-truth | PR #12 | #9, #16, #21, #25, #30 offer additional observer kernels | **DO NOT** ship multiple incompatible event schemas; choose/adapter via independent review |
+| Reported terminal outcome precedence and conflict-specific diagnostic | PR #17 (this branch) | #23 also checks multi-report contradiction | keep our narrow feature only, no auto effects |
+| Sticky unresolved effects, causal ACK and watcher fingerprint | PR #23 | duplicate candidate removed from #17; parent #12 watch | appoint #23 as candidate owner (pending exact-head tests + snapshot race closure) |
+| PR inventory and changed-file/CI collision gate | PR #27 | #14, #18, #20, #22, #24, #26, #28 | read-only primary review engine; no merge permission |
+| Stacked-PR ancestry/cycle component | PR #29 | collector overlap with #27 | compose as pure analyzer over #27's pinned snapshot, not second REST collector |
+| Browser ownership / attached external CDP cleanup | PR #15 | PR #13 touches `tools/browser_tool.py` too | reconcile explicitly; never close user-owned browser on a task timeout |
+| API SSE idempotency and pre-dispatch validation | owner not yet designated | #4/#5/#6/#11 | **P0 unresolved ownership**: jointly review exact handler/handoff to avoid duplicate writes |
+| Autopilot ledger vs upstream Kanban | owner not yet designated | #1/#10 and upstream Kanban | **P0 architectural blocker** until one task/lease authority selected |
+| Independent artifact/CI verifier | owner not yet designated | #27 evidence gate is advisory, not verifier | define trusted receipts, exact-HEAD matrix and human review |
+| SDD consolidation, human escalation and release | A0 steward required | many docs and tests (PRs #7–#30) | update one index/ADR register; don't auto-merge all drafts |
+
+Before every integration freeze, capture GitHub PR numbers, `head_sha`, `base_sha`, mergeable status, changed paths and exact `workflow_run.head_sha` in a **single** snapshot; re-read after scan, because 30 agents may write concurrently. A hash of unsigned JSON is a change detector, not authentication. When any ref moves, mark `SNAPSHOT_STALE`, *not* 'test passed'. Review three-way semantic diffs, migrations and same-file owner handoff. The system may recommend a merge ordering but must never call merge/deploy itself without separate approval. See [#27](https://github.com/Podtverzhdeno/hermes-agent/pull/27) and [#29](https://github.com/Podtverzhdeno/hermes-agent/pull/29).
+
+## 27. GPT/ChatGPT vs provider API — effect boundaries
+
+Official [OpenAI Background mode](https://developers.openai.com/api/docs/guides/background) returns a response ID and status which may be retrieved later; [webhooks](https://developers.openai.com/api/docs/guides/webhooks) send signed event notifications (including `response.completed`), with retries and possible duplicate deliveries. This is an API protocol, **not** a channel for inspecting a ChatGPT web conversation or proof that a downstream tool write occurred.
+
+Adapter contract for an explicitly authorized OpenAI API lane:
+
+1. Persist the request idempotency key and response ID before returning the task to the dispatcher, with the provider/model/project identity and owner fence (no prompt content in observer logs).
+2. Verify webhook signature with server-held secret and freshness tolerance; reject replay and duplicate `webhook-id`. Bind payload `event.data.id` to the expected response ID, not just run_id text supplied by an emitter.
+3. Treat `queued` / `in_progress` as provider states, not worker liveliness. A `response.completed` event means **response available**; retrieve canonical state/output and independently validate requested artifacts. Tool output remains a distinct effect.
+4. For webhook timeout or missed callbacks, poll the **same** saved response ID with bounded backoff; do not issue a new `POST /responses` just because the response stream ended.
+5. For terminal failure/expiry, do not assert 'no external write' without receipt. Provision a separate audited action coordinator and ledger before enabling mutating tools.
+
+For browser-only ChatGPT UI integration, do **not** infer API response IDs or guaranteed retry semantics; no invisible UI scraping, cookie extraction, browser control without per-tab opt-in and tool approvals. An extension status `connected` only proves a transport handshake unless paired with a fresh capability probe and trusted run receipts.
+
+## 28. Hard gates trump subjective idea scores
+
+Idea scoring is an aid to resource allocation, **not** validation. The earlier 100-point matrix expresses priority judgment, not reliability percentages or a claim of 10/10. An idea is **inadmissible for production** regardless of aggregate score when any hard invariant fails:
+
+- uncertain external effect might be replayed;
+- observer self-report can become `VERIFIED` without independent evidence;
+- model or browser extension can grant itself approval;
+- source schema/version, active owner/fence or trust tier is unknown;
+- rollout cannot be rolled back without corrupting task ledger;
+- sensitive content is logged, or the audit trail cannot distinguish truncation/tampering;
+- merge candidates lack exact-head test evidence and conflict resolution.
+
+For competing proposals, record severity (impact), expected failure frequency (evidence-supported or unknown), detectability, reversible implementation cost, and compatibility, plus proposed **falsification test**. Scores without a reproducible baseline carry `confidence=low` and must not be promoted to proof. Cross-review requires different author and proof source, not merely a different model invocation on the same prompt.
+
+**Actionable change-freeze rule:** when agents simultaneously modify an owner resource (e.g. `gpt_companion/journal.py`, `gateway/platforms/api_server.py`, `tools/browser_tool.py`), require one integration steward, an explicit selected PR, independent tests, semantic diff reconciliation and a branch freeze; abandon duplicates after transferring unique tests/ADRs. This PR demonstrates deliberate rollback of a duplicate six-test patch in favor of PR #23.
