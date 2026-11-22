@@ -8,6 +8,7 @@ its outcome. After a crash, an unacknowledged effect needs reconciliation.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -17,6 +18,14 @@ from typing import Callable, Iterable, Optional
 
 
 ACTIVE = ("running", "verifying")
+# Only structured failure codes are recorded; never persist raw exception text.
+FAILURE_CODES = frozenset({
+    "TIMEOUT", "RATE_LIMITED", "PROVIDER_UNAVAILABLE", "CONNECTOR_UNAVAILABLE",
+    "LEASE_EXPIRED", "BUDGET_EXCEEDED", "POLICY_DENIED", "SCHEMA_INVALID",
+    "TEST_FAILED", "CONFLICT", "AUTH_EXPIRED", "UNKNOWN_EXTERNAL_EFFECT",
+    "MODEL_CONTEXT_LIMIT", "DEADLINE_EXCEEDED", "WORKSPACE_CONFLICT",
+    "STALE_VERIFICATION", "MCP_UNAVAILABLE", "MODEL_OUTPUT_INVALID",
+})
 TERMINAL = ("succeeded", "failed", "cancelled", "blocked")
 
 
@@ -44,8 +53,12 @@ class AutopilotLedger:
     def __init__(self, path: str | Path, clock: Callable[[], float] = time.time):
         self.path = Path(path)
         self.clock = clock
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise ValueError("ledger path cannot be a symlink")
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._initialize()
+        if os.name == "posix":
+            self.path.chmod(0o600)
 
     @contextmanager
     def _db(self, write: bool = False):
@@ -54,7 +67,7 @@ class AutopilotLedger:
         try:
             db.execute("PRAGMA busy_timeout=10000")
             db.execute("PRAGMA foreign_keys=ON")
-            # Synchronous is a per-connection pragma, unlike journal_mode.
+            # SQLite synchronous is connection-local; readers also assert FULL.
             db.execute("PRAGMA synchronous=FULL")
             if write:
                 db.execute("BEGIN IMMEDIATE")
@@ -90,6 +103,7 @@ class AutopilotLedger:
                     fence INTEGER NOT NULL DEFAULT 0,
                     lease_until REAL,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    retry_allowed INTEGER NOT NULL DEFAULT 1,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -133,6 +147,12 @@ class AutopilotLedger:
                     created_at REAL NOT NULL
                 );
             """)
+            # In-place migration for databases created by the initial kernel.
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
+            if "retry_allowed" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN retry_allowed INTEGER NOT NULL DEFAULT 1")
+            if "resume_without_attempt" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN resume_without_attempt INTEGER NOT NULL DEFAULT 0")
 
     def _event(self, db, task_id: str, kind: str, detail: dict):
         db.execute(
@@ -388,8 +408,8 @@ class AutopilotLedger:
                 UPDATE approvals SET state=?, reviewer=? WHERE task_id=? AND action_key=?
             """, ("approved" if allowed else "denied", reviewer, task_id, action_key))
             db.execute("""
-                UPDATE tasks SET status=?, resume_without_attempt=?,
-                    available_at=?, updated_at=? WHERE id=?
+                UPDATE tasks SET status=?,resume_without_attempt=?,
+                    available_at=?,updated_at=? WHERE id=?
             """, ("queued" if allowed else "blocked", int(allowed), now, now, task_id))
             self._event(db, task_id, "approval_decided",
                         {"action_key": action_key, "approved": allowed, "reviewer": reviewer})
@@ -414,16 +434,25 @@ class AutopilotLedger:
             if not a or a["state"] != "approved" or a["digest"] != digest or a["expires_at"] <= now:
                 raise ApprovalRequired("explicit matching unexpired approval required")
             old = db.execute(
-                "SELECT digest FROM actions WHERE task_id=? AND action_key=?",
+                "SELECT digest,status FROM actions WHERE task_id=? AND action_key=?",
                 (task_id, action_key),
             ).fetchone()
             if old:
-                raise LedgerConflict("action already reserved; reconcile, never blindly retry")
-            db.execute("""
-                INSERT INTO actions(task_id,action_key,digest,status,created_at,updated_at)
-                VALUES(?,?,?,'reserved',?,?)
-            """, (task_id, action_key, digest, now, now))
-            self._event(db, task_id, "effect_reserved", {"action_key": action_key})
+                # A separately proven 'not_executed' outcome can be retried;
+                # ambiguous or acknowledged outcomes can never be replayed.
+                if old["status"] != "not_executed" or old["digest"] != digest:
+                    raise LedgerConflict("effect already reserved/completed; reconcile before retry")
+                db.execute("""
+                    UPDATE actions SET status='reserved',result_ref=NULL,updated_at=?
+                    WHERE task_id=? AND action_key=?
+                """, (now, task_id, action_key))
+                self._event(db, task_id, "effect_rereserved", {"action_key": action_key})
+            else:
+                db.execute("""
+                    INSERT INTO actions(task_id,action_key,digest,status,created_at,updated_at)
+                    VALUES(?,?,?,'reserved',?,?)
+                """, (task_id, action_key, digest, now, now))
+                self._event(db, task_id, "effect_reserved", {"action_key": action_key})
 
     def acknowledge_effect(
         self, task_id: str, worker: str, fence: int,
@@ -467,7 +496,8 @@ class AutopilotLedger:
             ).fetchone()
             if remaining is None:
                 target = "cancelled" if task["cancel_requested"] else (
-                    "retry_wait" if task["attempts"] < task["max_attempts"] else "failed"
+                    "retry_wait" if task["retry_allowed"] and
+                    task["attempts"] < task["max_attempts"] else "failed"
                 )
                 db.execute("""
                     UPDATE tasks SET status=?, available_at=?, updated_at=? WHERE id=?
@@ -485,16 +515,34 @@ class AutopilotLedger:
         ):
             raise ValueError("invalid evidence")
         with self._db(write=True) as db:
-            self._task(db, task_id)
-            db.execute("""
+            task = self._task(db, task_id)
+            if task["status"] in TERMINAL:
+                raise LedgerConflict("cannot change evidence for a terminal task")
+            current = db.execute("""
+                SELECT conclusion,artifact_ref,trusted FROM evidence
+                WHERE task_id=? AND kind=? AND source=? AND revision=?
+            """, (task_id, kind, source, revision)).fetchone()
+            if current is not None and current["trusted"] and trusted:
+                # Trusted evidence is immutable for one exact source/revision.
+                # A different CI run must have a distinct source/run identity;
+                # otherwise a later 'pass' could erase a prior trusted failure.
+                if (current["conclusion"] != conclusion or
+                        current["artifact_ref"] != artifact_ref):
+                    raise LedgerConflict("trusted evidence conflict; use a distinct source/run identity")
+                self._event(db, task_id, "evidence_replayed",
+                            {"kind": kind, "source": source, "revision": revision})
+                return
+            result = db.execute("""
                 INSERT INTO evidence
                 (task_id,kind,source,revision,conclusion,artifact_ref,trusted,observed_at)
                 VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(task_id,kind,source,revision)
                 DO UPDATE SET conclusion=excluded.conclusion, artifact_ref=excluded.artifact_ref,
                     trusted=excluded.trusted, observed_at=excluded.observed_at
+                WHERE evidence.trusted=0 OR excluded.trusted=1
             """, (task_id, kind, source, revision, conclusion, artifact_ref, int(trusted), self.clock()))
-            self._event(db, task_id, "evidence_recorded",
+            self._event(db, task_id,
+                        "evidence_recorded" if result.rowcount else "evidence_ignored_untrusted",
                         {"kind": kind, "source": source, "trusted": trusted, "revision": revision})
 
     def begin_verification(self, task_id: str, worker: str, fence: int):
@@ -525,9 +573,17 @@ class AutopilotLedger:
                         AND conclusion='passed' AND trusted=1
                 """, (task_id, task["revision"]))
             }
-            if not set(required).issubset(passed):
+            failed = {
+                x["kind"] for x in db.execute("""
+                    SELECT kind FROM evidence WHERE task_id=? AND revision=?
+                        AND conclusion='failed' AND trusted=1
+                """, (task_id, task["revision"]))
+            }
+            missing = sorted(set(required) - passed)
+            conflicts = sorted(set(required) & failed)
+            if missing or conflicts:
                 self._event(db, task_id, "verification_incomplete",
-                            {"missing": sorted(set(required) - passed)})
+                            {"missing": missing, "trusted_failures": conflicts})
                 return False
             db.execute("""
                 UPDATE tasks SET status='succeeded', owner=NULL,lease_until=NULL,
@@ -537,6 +593,11 @@ class AutopilotLedger:
             return True
 
     def fail(self, task_id: str, worker: str, fence: int, reason: str, retryable: bool):
+        # Failure messages can contain credentials or prompt contents.
+        # Persist only an allowlisted code; never a raw message or its hash.
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string")
+        code = reason.strip() if reason.strip() in FAILURE_CODES else "UNCLASSIFIED_FAILURE"
         with self._db(write=True) as db:
             task = self._assert_worker(db, task_id, worker, fence)
             unresolved = db.execute(
@@ -544,14 +605,17 @@ class AutopilotLedger:
                 (task_id,),
             ).fetchone()
             status = ("needs_reconciliation" if unresolved else
-                      "retry_wait" if retryable and task["attempts"] < task["max_attempts"]
-                      else "failed")
+                      "cancelled" if task["cancel_requested"] else
+                      "retry_wait" if retryable and task["retry_allowed"]
+                      and task["attempts"] < task["max_attempts"] else "failed")
             available_at = self.clock() + min(3600, 2 ** min(task["attempts"], 10))
             db.execute("""
                 UPDATE tasks SET status=?,owner=NULL,lease_until=NULL,available_at=?,
-                    updated_at=? WHERE id=?
-            """, (status, available_at, self.clock(), task_id))
-            self._event(db, task_id, "failed_attempt", {"reason": reason[:500], "next": status})
+                    updated_at=?,retry_allowed=CASE WHEN ? THEN retry_allowed ELSE 0 END
+                WHERE id=?
+            """, (status, available_at, self.clock(), int(retryable), task_id))
+            self._event(db, task_id, "failed_attempt",
+                        {"reason_code": code, "next": status})
 
     def cancel(self, task_id: str):
         """Cancellation is cooperative for leased workers; no silent rollback."""

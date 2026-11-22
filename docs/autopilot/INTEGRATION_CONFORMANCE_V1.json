@@ -1,0 +1,306 @@
+{
+  "schema_version": 1,
+  "contract_id": "hermes-gpt-integration-conformance.v1",
+  "status": "proposal_not_live_runtime_validation",
+  "source_of_task_truth": "modern_upstream_hermes_kanban_only",
+  "authority": "offline_review_fixtures_only",
+  "generated_date_utc": "2026-11-22",
+  "independent_verification": "Required for acceptance; parser tests, CI and host canary remain separate",
+  "semantics": {
+    "expected_decision": "Abstract normative intent. Each implementation must document its mapping to local states and APIs.",
+    "reason_code": "Normalized cross-component code, not guaranteed to equal current prototype ledger or adapter enum.",
+    "forbidden": "Required negative assertion; never infer an external effect is absent from missing telemetry.",
+    "last_checked": "Re-evaluate all PR heads and versions before any merge.",
+    "event_trust": "Browser/model/worker events are observations, not permissions; trusted verification requires authenticated gateway."
+  },
+  "cases": [
+    {
+      "id": "C01",
+      "component": "transport",
+      "scenario": "CDP response request_id differs from pending attempt",
+      "expected_decision": "REJECT",
+      "reason_code": "REQUEST_ID_MISMATCH",
+      "forbidden": "do_not_dispatch_tools",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C02",
+      "component": "transport",
+      "scenario": "Old attempt response arrives after a worker lease/fence replacement",
+      "expected_decision": "REJECT",
+      "reason_code": "STALE_ATTEMPT_OR_FENCE",
+      "forbidden": "do_not_complete_current_attempt",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C03",
+      "component": "transport",
+      "scenario": "Duplicate tool_call_id within same model response",
+      "expected_decision": "REJECT",
+      "reason_code": "DUPLICATE_TOOL_CALL_ID",
+      "forbidden": "do_not_dispatch_tools",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C04",
+      "component": "transport",
+      "scenario": "JSON reply missing tool_calls or has unknown unversioned top-level fields",
+      "expected_decision": "REJECT",
+      "reason_code": "ENVELOPE_KEYS_INVALID",
+      "forbidden": "do_not_infer_defaults",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C05",
+      "component": "transport",
+      "scenario": "Browser target detached after prompt dispatch without final response",
+      "expected_decision": "QUARANTINE",
+      "reason_code": "CONNECTION_LOST",
+      "forbidden": "do_not_replay_potential_effect",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C06",
+      "component": "worker",
+      "scenario": "Kanban claim exists but worker accepted receipt is absent",
+      "expected_decision": "WAIT",
+      "reason_code": "DISPATCH_NOT_ACKNOWLEDGED",
+      "forbidden": "do_not_assert_model_started",
+      "evidence_requirement": "Kanban task/attempt/fence and ordered phase receipts"
+    },
+    {
+      "id": "C07",
+      "component": "worker",
+      "scenario": "Worker accepted but prompt delivery ack absent",
+      "expected_decision": "BLOCK",
+      "reason_code": "PROMPT_NOT_DELIVERED",
+      "forbidden": "do_not_repeat_prompt_without_disposition",
+      "evidence_requirement": "Kanban task/attempt/fence and ordered phase receipts"
+    },
+    {
+      "id": "C08",
+      "component": "worker",
+      "scenario": "OS heartbeat exists while model/progress event counter has not advanced within phase deadline",
+      "expected_decision": "DIAGNOSE",
+      "reason_code": "NO_MEANINGFUL_PROGRESS",
+      "forbidden": "do_not_mark_task_healthy",
+      "evidence_requirement": "Kanban task/attempt/fence and ordered phase receipts"
+    },
+    {
+      "id": "C09",
+      "component": "worker",
+      "scenario": "Windows git subprocess version-info call deadlocks before model request",
+      "expected_decision": "BLOCK",
+      "reason_code": "WORKER_STARTUP_BLOCKED",
+      "forbidden": "do_not_blame_provider_or_prompt",
+      "evidence_requirement": "Kanban task/attempt/fence and ordered phase receipts"
+    },
+    {
+      "id": "C10",
+      "component": "effect",
+      "scenario": "External write reservation persisted; provider response lost after process crash",
+      "expected_decision": "QUARANTINE",
+      "reason_code": "EXTERNAL_EFFECT_UNCERTAIN",
+      "forbidden": "do_not_retry_external_write",
+      "evidence_requirement": "Provider-specific authenticated readback/receipt and persisted reservation"
+    },
+    {
+      "id": "C11",
+      "component": "effect",
+      "scenario": "Independent provider readback proves reserved mutation did not occur",
+      "expected_decision": "RECONCILE",
+      "reason_code": "NOT_EXECUTED_PROVEN",
+      "forbidden": "allow_only_same_digest_with_new_valid_approval",
+      "evidence_requirement": "Provider-specific authenticated readback/receipt and persisted reservation"
+    },
+    {
+      "id": "C12",
+      "component": "effect",
+      "scenario": "Provider receipt proves mutation acknowledged; worker restarts",
+      "expected_decision": "RECONCILE",
+      "reason_code": "EFFECT_ALREADY_EXECUTED",
+      "forbidden": "do_not_replay_mutation",
+      "evidence_requirement": "Provider-specific authenticated readback/receipt and persisted reservation"
+    },
+    {
+      "id": "C13",
+      "component": "effect",
+      "scenario": "Different producer sends ACK event without trusted provider receipt",
+      "expected_decision": "QUARANTINE",
+      "reason_code": "CROSS_SOURCE_ACK_UNVERIFIED",
+      "forbidden": "do_not_infer_execution",
+      "evidence_requirement": "Provider-specific authenticated readback/receipt and persisted reservation"
+    },
+    {
+      "id": "C14",
+      "component": "effect",
+      "scenario": "New attempt started while earlier attempt has an unresolved effect reservation",
+      "expected_decision": "BLOCK",
+      "reason_code": "PRIOR_ATTEMPT_EFFECT_UNKNOWN",
+      "forbidden": "do_not_replay_or_finalize",
+      "evidence_requirement": "Provider-specific authenticated readback/receipt and persisted reservation"
+    },
+    {
+      "id": "C15",
+      "component": "approval",
+      "scenario": "Action approval expires before worker gateway invocation",
+      "expected_decision": "BLOCK",
+      "reason_code": "APPROVAL_EXPIRED",
+      "forbidden": "do_not_auto_approve",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C16",
+      "component": "approval",
+      "scenario": "Owner revokes task while effect reservation is unresolved",
+      "expected_decision": "QUARANTINE",
+      "reason_code": "CANCELLATION_PENDING_EFFECT",
+      "forbidden": "stop_new_effects_and_reconcile_old",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C17",
+      "component": "verifier",
+      "scenario": "Required trusted test pass and independent trusted test failure at same revision",
+      "expected_decision": "BLOCK",
+      "reason_code": "TRUSTED_VERIFICATION_FAILURE",
+      "forbidden": "do_not_finalize_success",
+      "evidence_requirement": "Exact revision, issuer identity, completed required check and run ID"
+    },
+    {
+      "id": "C18",
+      "component": "verifier",
+      "scenario": "Trusted failed evidence replaced by trusted passed under same source and revision",
+      "expected_decision": "REJECT",
+      "reason_code": "TRUSTED_EVIDENCE_CONFLICT",
+      "forbidden": "do_not_erase_failed_attestation",
+      "evidence_requirement": "Exact revision, issuer identity, completed required check and run ID"
+    },
+    {
+      "id": "C19",
+      "component": "verifier",
+      "scenario": "Identical trusted evidence receipt delivered twice with same source/run/revision",
+      "expected_decision": "IDEMPOTENT",
+      "reason_code": "EVIDENCE_REPLAY",
+      "forbidden": "do_not_double_count",
+      "evidence_requirement": "Exact revision, issuer identity, completed required check and run ID"
+    },
+    {
+      "id": "C20",
+      "component": "verifier",
+      "scenario": "Required CI badge green but required test step skipped due unavailable reviewer/credits",
+      "expected_decision": "BLOCK",
+      "reason_code": "REQUIRED_CHECK_NOT_EXECUTED",
+      "forbidden": "do_not_finalize_success",
+      "evidence_requirement": "Exact revision, issuer identity, completed required check and run ID"
+    },
+    {
+      "id": "C21",
+      "component": "verifier",
+      "scenario": "CI result passed for old SHA then another agent pushes a commit",
+      "expected_decision": "BLOCK",
+      "reason_code": "STALE_VERIFICATION",
+      "forbidden": "do_not_merge_without_retest",
+      "evidence_requirement": "Exact revision, issuer identity, completed required check and run ID"
+    },
+    {
+      "id": "C22",
+      "component": "browser",
+      "scenario": "Hermes detached from externally owned CDP Edge window",
+      "expected_decision": "DETACH_ONLY",
+      "reason_code": "EXTERNAL_BROWSER_NOT_OWNED",
+      "forbidden": "do_not_close_browser_or_kill_external_pid",
+      "evidence_requirement": "Versioned browser/extension ownership metadata and test double"
+    },
+    {
+      "id": "C23",
+      "component": "browser",
+      "scenario": "CDP connection endpoint includes a token or private debugger URL",
+      "expected_decision": "REDACT",
+      "reason_code": "CDP_ENDPOINT_SENSITIVE",
+      "forbidden": "do_not_log_endpoint_string",
+      "evidence_requirement": "Versioned browser/extension ownership metadata and test double"
+    },
+    {
+      "id": "C24",
+      "component": "coordination",
+      "scenario": "Two unstacked PRs modify gateway/platforms/api_server.py",
+      "expected_decision": "BLOCK",
+      "reason_code": "FILE_OWNERSHIP_CONFLICT",
+      "forbidden": "do_not_auto_merge",
+      "evidence_requirement": "Complete timestamped GitHub PR/commit/check snapshot with drift validation"
+    },
+    {
+      "id": "C25",
+      "component": "coordination",
+      "scenario": "Two PRs modify distinct paths but both provide incompatible GPT event sources",
+      "expected_decision": "REVIEW",
+      "reason_code": "SEMANTIC_PROTOCOL_OVERLAP",
+      "forbidden": "do_not_run_two_canonical_observers",
+      "evidence_requirement": "Complete timestamped GitHub PR/commit/check snapshot with drift validation"
+    },
+    {
+      "id": "C26",
+      "component": "coordination",
+      "scenario": "PR head changed midway through paged file inventory fetch",
+      "expected_decision": "RETRY_SCAN",
+      "reason_code": "PR_INVENTORY_DRIFT",
+      "forbidden": "do_not_publish_clean_result",
+      "evidence_requirement": "Complete timestamped GitHub PR/commit/check snapshot with drift validation"
+    },
+    {
+      "id": "C27",
+      "component": "coordination",
+      "scenario": "GitHub check run queued with runner_name null and no executed steps",
+      "expected_decision": "WAIT",
+      "reason_code": "CI_RUNNER_UNASSIGNED",
+      "forbidden": "do_not_label_tests_failed_or_passed",
+      "evidence_requirement": "Complete timestamped GitHub PR/commit/check snapshot with drift validation"
+    },
+    {
+      "id": "C28",
+      "component": "coordination",
+      "scenario": "CI workflow cancelled by newer commit under cancel-in-progress",
+      "expected_decision": "REVERIFY",
+      "reason_code": "CI_CANCELLED_HEAD_SUPERSEDED",
+      "forbidden": "do_not_claim_green",
+      "evidence_requirement": "Complete timestamped GitHub PR/commit/check snapshot with drift validation"
+    },
+    {
+      "id": "C29",
+      "component": "resources",
+      "scenario": "Root agent spawns 30 child agents each requesting a fresh independent token budget",
+      "expected_decision": "BLOCK",
+      "reason_code": "SHARED_DAG_BUDGET_NOT_ENFORCED",
+      "forbidden": "do_not_reset_parent_quota",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C30",
+      "component": "resources",
+      "scenario": "Many workers attempt same workspace file write without CAS or scoped resource lock",
+      "expected_decision": "BLOCK",
+      "reason_code": "WORKSPACE_CONFLICT",
+      "forbidden": "do_not_overwrite_other_agent_work",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C31",
+      "component": "recovery",
+      "scenario": "Observer heartbeat absent while persisted worker task lease active",
+      "expected_decision": "UNKNOWN",
+      "reason_code": "OBSERVER_UNAVAILABLE",
+      "forbidden": "do_not_restart_live_worker_due_to_observer_failure",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    },
+    {
+      "id": "C32",
+      "component": "recovery",
+      "scenario": "Ledger DB missing/corrupt during watcher startup",
+      "expected_decision": "UNKNOWN",
+      "reason_code": "LEDGER_UNAVAILABLE",
+      "forbidden": "do_not_report_empty_healthy_queue",
+      "evidence_requirement": "Authenticated local health/transport metadata and per-task causal trace"
+    }
+  ]
+}
