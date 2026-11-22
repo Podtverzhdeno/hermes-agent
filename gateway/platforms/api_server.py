@@ -41,6 +41,19 @@ from gateway.platforms.base import (
 
 logger = logging.getLogger(__name__)
 
+
+def _api_event(event: str, request_id: str, **details: Any) -> None:
+    """Structured, payload-free operational telemetry (no prompts or credentials)."""
+    logger.info(
+        "hermes_api_event %s",
+        json.dumps(
+            {"schema": "hermes.api.event.v1", "event": event,
+             "request_id": request_id, **details},
+            sort_keys=True, separators=(",", ":"),
+        ),
+    )
+
+
 # Default settings
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8642
@@ -172,6 +185,33 @@ _CORS_HEADERS = {
 
 if AIOHTTP_AVAILABLE:
     @web.middleware
+    async def request_trace_middleware(request, handler):
+        """Correlate request outcomes without logging secrets or prompt text."""
+        request_id = "hrq_" + uuid.uuid4().hex
+        request["hermes_request_id"] = request_id
+        started = time.monotonic()
+        # Route template avoids uncontrolled URL path segments in logs.
+        _api_event(
+            "request_accepted", request_id, method=request.method,
+            idempotency_present=bool(request.headers.get("Idempotency-Key")),
+        )
+        try:
+            response = await handler(request)
+        except asyncio.CancelledError:
+            _api_event("request_cancelled", request_id)
+            raise
+        except Exception:
+            _api_event("request_exception", request_id)
+            logger.exception("Unhandled API request exception request_id=%s", request_id)
+            raise
+        response.headers.setdefault("X-Hermes-Request-Id", request_id)
+        _api_event(
+            "request_finished", request_id, status=response.status,
+            duration_ms=round((time.monotonic() - started) * 1000, 1),
+        )
+        return response
+
+    @web.middleware
     async def cors_middleware(request, handler):
         """Add CORS headers for explicitly allowed origins; handle OPTIONS preflight."""
         adapter = request.app.get("api_server_adapter")
@@ -192,6 +232,7 @@ if AIOHTTP_AVAILABLE:
             response.headers.update(cors_headers)
         return response
 else:
+    request_trace_middleware = None  # type: ignore[assignment]
     cors_middleware = None  # type: ignore[assignment]
 
 
@@ -688,6 +729,8 @@ class APIServerAdapter(BasePlatformAdapter):
             sse_headers.update(cors)
         if session_id:
             sse_headers["X-Hermes-Session-Id"] = session_id
+        if request.get("hermes_request_id"):
+            sse_headers["X-Hermes-Request-Id"] = request["hermes_request_id"]
         response = web.StreamResponse(status=200, headers=sse_headers)
         await response.prepare(request)
 
@@ -740,7 +783,23 @@ class APIServerAdapter(BasePlatformAdapter):
                 result, agent_usage = await agent_task
                 usage = agent_usage or usage
             except Exception:
-                pass
+                logger.exception(
+                    "SSE agent failed request_id=%s completion_id=%s",
+                    request.get("hermes_request_id", "-"), completion_id,
+                )
+                _api_event(
+                    "agent_failed", request.get("hermes_request_id", "-"),
+                    phase="stream", reason_code="agent_execution_failed",
+                )
+                # Do not send finish_reason=stop after an agent exception.
+                await response.write((
+                    "data: " + json.dumps(_openai_error(
+                        "Agent execution failed; inspect server logs.",
+                        err_type="server_error", code="agent_execution_failed",
+                    )) + "\\n\\n"
+                ).encode())
+                await response.write(b"data: [DONE]\\n\\n")
+                return response
 
             # Finish chunk
             finish_chunk = {
@@ -772,6 +831,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 except (asyncio.CancelledError, Exception):
                     pass
             logger.info("SSE client disconnected; interrupted agent task %s", completion_id)
+            _api_event(
+                "client_disconnected", request.get("hermes_request_id", "-"),
+                phase="stream", reason_code="client_disconnect",
+            )
 
         return response
 
@@ -1315,8 +1378,12 @@ class APIServerAdapter(BasePlatformAdapter):
             logger.warning("[%s] aiohttp not installed", self.name)
             return False
 
+        if self._host not in ("127.0.0.1", "localhost", "::1") and not self._api_key:
+            logger.error("[%s] Refusing unauthenticated non-loopback API bind", self.name)
+            return False
+
         try:
-            mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
+            mws = [mw for mw in (request_trace_middleware, cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
             self._app = web.Application(middlewares=mws)
             self._app["api_server_adapter"] = self
             self._app.router.add_get("/health", self._handle_health)
