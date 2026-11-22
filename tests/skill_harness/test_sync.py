@@ -1,10 +1,17 @@
 """Bundled skill sync must preserve customizations and disclose harness drift."""
+import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from tools.skills_sync import sync_skills
+# Load the standalone sync script without importing tools/__init__.py:
+# that package eagerly imports HTTP clients outside this no-dependency CI.
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "tools" / "skills_sync.py"
+_spec = importlib.util.spec_from_file_location("isolated_skill_sync", _SCRIPT_PATH)
+sync_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(sync_module)
+sync_skills = sync_module.sync_skills
 
 
 class TestSkillHarnessSync(unittest.TestCase):
@@ -25,9 +32,9 @@ class TestSkillHarnessSync(unittest.TestCase):
             '{"skill":"example-skill","version":1}', encoding="utf-8"
         )
         self.parts = [
-            patch("tools.skills_sync._get_bundled_dir", return_value=self.bundled),
-            patch("tools.skills_sync.SKILLS_DIR", self.user),
-            patch("tools.skills_sync.MANIFEST_FILE", self.manifest),
+            patch.object(sync_module, "_get_bundled_dir", return_value=self.bundled),
+            patch.object(sync_module, "SKILLS_DIR", self.user),
+            patch.object(sync_module, "MANIFEST_FILE", self.manifest),
         ]
         for item in self.parts:
             item.start()
