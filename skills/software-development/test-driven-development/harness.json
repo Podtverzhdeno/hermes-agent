@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "skill": "test-driven-development",
+  "purpose": "Deliver tested code changes with explicit red-green-refactor proof.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Implement this new function using tests first",
+      "Fix this regression with a failing test before the patch",
+      "Refactor module behavior without changing its contract"
+    ],
+    "do_not_trigger": [
+      "Explain what TDD means without writing code",
+      "Publish a GitHub release",
+      "Search papers about testing methodologies"
+    ]
+  },
+  "preflight": [
+    "Pin task scope, working tree and baseline commit.",
+    "Choose an executable test command and isolate writes.",
+    "Identify a behavior assertion that fails for the intended reason."
+  ],
+  "workflow": [
+    "Capture a genuine failing baseline before implementation.",
+    "Implement the smallest production change to satisfy the test.",
+    "Rerun the targeted test and relevant regression suite.",
+    "Review the resulting diff and describe uncovered risk."
+  ],
+  "actions": [
+    {
+      "operation": "tdd.implement",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "red-test",
+        "green-test",
+        "regression-suite",
+        "diff-snapshot"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "red-test",
+      "source": "local_test",
+      "how_to_verify": "Capture expected failure at baseline before implementation."
+    },
+    {
+      "id": "green-test",
+      "source": "local_test",
+      "how_to_verify": "Capture passing targeted test after code change."
+    },
+    {
+      "id": "regression-suite",
+      "source": "ci",
+      "how_to_verify": "Record regression CI at the exact final commit or explain unavailable coverage."
+    },
+    {
+      "id": "diff-snapshot",
+      "source": "git",
+      "how_to_verify": "Inspect final implementation diff relative to pinned baseline."
+    }
+  ],
+  "failure_modes": [
+    "If a test is flaky, isolate or quarantine it without treating a lucky pass as proof.",
+    "If the test was not observed red, disclose it rather than inventing a transcript."
+  ]
+}
