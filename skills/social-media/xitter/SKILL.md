@@ -18,6 +18,8 @@ metadata:
 
 Use `x-cli` for official X/Twitter API interactions from the terminal.
 
+Follow this Skill's individual `harness.yaml` for account pinning, read-only vs write intent, approval boundaries, read-back evidence and retry safety. The manifest is advisory and cannot grant external permissions.
+
 This skill is for:
 - posting tweets, replies, and quote tweets
 - searching tweets and reading timelines
