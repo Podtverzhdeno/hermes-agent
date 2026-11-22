@@ -12,14 +12,14 @@ SPEC.loader.exec_module(guard)
 
 
 def pr(n, paths, head=None, base='main', base_sha='0'*40):
-    return dict(number=n, paths=paths, changed_files=len(paths),
+    return dict(number=n, paths=paths, renamed_from_paths=[], changed_files=len(paths),
                 head_ref=head or f'feature-{n}', head_repo='test/repo',
                 head_sha=(str(n % 10) * 40), base_ref=base,
                 base_repo='test/repo', base_sha=base_sha, draft=True)
 
 
 def snapshot(*pulls):
-    return {'schema': 'hermes.pr.snapshot.v2', 'repository': 'test/repo',
+    return {'schema': 'hermes.pr.snapshot.v3', 'repository': 'test/repo',
             'default_branch': 'main', 'default_head_sha': 'f'*40, 'collected_at': '2026-11-22T00:00:00+00:00',
             'pulls': list(pulls)}
 
@@ -205,6 +205,60 @@ class PRWatchTests(unittest.TestCase):
                for n in range(1, 102)]
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze(snapshot(*prs))
+
+    def test_rename_source_collides_with_independent_old_path_edit(self):
+        renamed = pr(1, ['gateway/modern.py'])
+        renamed['renamed_from_paths'] = ['gateway/legacy.py']
+        modified = pr(2, ['gateway/legacy.py'])
+        report = guard.analyze(snapshot(renamed, modified))
+        collisions = [f for f in report['findings']
+                      if f['code'] == 'INDEPENDENT_WRITE_COLLISION']
+        self.assertEqual(len(collisions), 1)
+        self.assertEqual(collisions[0]['paths'], ['gateway/legacy.py'])
+        self.assertEqual(collisions[0]['severity'], 'blocker')
+
+    def test_cross_renames_are_not_silently_disjoint(self):
+        a = pr(1, ['tools/new.py'])
+        a['renamed_from_paths'] = ['tools/old.py']
+        b = pr(2, ['tools/old.py'])
+        b['renamed_from_paths'] = ['tools/new.py']
+        report = guard.analyze(snapshot(a, b))
+        collision = next(f for f in report['findings']
+                         if f['code'] == 'INDEPENDENT_WRITE_COLLISION')
+        self.assertEqual(set(collision['paths']), {'tools/old.py', 'tools/new.py'})
+
+    def test_old_v2_snapshot_and_missing_rename_evidence_fail_closed(self):
+        legacy = snapshot(pr(1, ['src/a.py']))
+        legacy['schema'] = 'hermes.pr.snapshot.v2'
+        with self.assertRaises(guard.IncompleteSnapshot):
+            guard.analyze(legacy)
+        unknown = snapshot(pr(1, ['src/a.py']))
+        del unknown['pulls'][0]['renamed_from_paths']
+        with self.assertRaises(guard.IncompleteSnapshot):
+            guard.analyze(unknown)
+
+    def test_collector_rename_without_previous_filename_is_incomplete(self):
+        from unittest.mock import patch
+        repo = 'test/repo'
+        sha = 'a' * 40
+        head = {'ref': 'topic', 'sha': 'b' * 40,
+                'repo': {'full_name': repo}}
+        base = {'ref': 'main', 'sha': sha, 'repo': {'full_name': repo}}
+        p = {'number': 4, 'head': head, 'base': base}
+        def fake_get(path, token):
+            if path.endswith('/pulls/4'):
+                return {**p, 'changed_files': 1, 'draft': True}
+            if path.endswith('git/ref/heads/main'):
+                return {'object': {'sha': sha}}
+            return {'default_branch': 'main'}
+        def fake_pages(path, token, limit, label):
+            if path.endswith('/files'):
+                return [{'filename': 'gateway/new.py', 'status': 'renamed'}]
+            return [p]
+        with patch.object(guard, '_api_json', side_effect=fake_get):
+            with patch.object(guard, '_pages', side_effect=fake_pages):
+                with self.assertRaises(guard.IncompleteSnapshot):
+                    guard.collect(repo)
 
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
