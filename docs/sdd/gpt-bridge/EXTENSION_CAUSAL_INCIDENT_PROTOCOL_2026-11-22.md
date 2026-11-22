@@ -193,7 +193,7 @@ A successful local `BEGIN IMMEDIATE` ledger transaction plus fsync-safe storage 
 - Wrong producer signature, stale fence or stop generation: reject and log redacted reason.
 - Failure tool event followed by “assistant completed”: must not mark output or tool effect verified.
 - Two tabs / 32 agents with shared provider quota: bounded global 429 backoff, no retry stampede; one scoped writer per critical file group.
-- 30 PRs all editing one executable file: 435 pairwise collisions in read-only report; 100 disjoint PRs still **review-only**, not merge-certified.
+- 30 PRs all editing one executable file: 435 pairwise collisions in read-only report; 100 disjoint PRs still **review-only**, not merge-certified. Add cross-PR `Foo.py` vs `foo.py` and Unicode NFC/NFD aliases: flag likely Windows checkout conflict even though Git paths differ. Exact NTFS checkout is needed to prove impact.
 - Process shutdown on externally attached CDP: detach only; user's browser remains alive.
 
 Measure before choosing thresholds: false-positive/negative stop diagnosis on seeded cases, duplicate-effect count (target **zero in supported idempotency/reconciliation scenarios**), last-evidence staleness distribution, stage-level latency, 429 rate and recovery, event gap rate, queued starvation, exact-SHA coverage, operator minutes to confirmed cause, storage cost per 1k events, and redaction-leak tests. Do not claim a score `10/10` or unsupported throughput from 19 tests.
