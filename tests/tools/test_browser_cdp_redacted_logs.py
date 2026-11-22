@@ -127,3 +127,41 @@ def test_cdp_subprocess_exception_redacts_secret_bearing_exception(tmp_path, cap
     assert not result["success"]
     assert SECRET not in caplog.text
     assert SECRET not in str(result)
+    capture_dir = tmp_path / "agent-browser-cdp_test"
+    assert not (capture_dir / "_stdout_click").exists()
+    assert not (capture_dir / "_stderr_click").exists()
+
+
+def test_cdp_timeout_removes_raw_child_capture_files(tmp_path, caplog):
+    import os
+    import subprocess
+    from tools.browser_tool import _run_browser_command
+
+    class TimedProcess:
+        returncode = -9
+        def wait(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired("agent-browser", timeout)
+            return -9
+        def kill(self):
+            pass
+
+    def fake_popen(cmd_parts, *, stdout, stderr, stdin, env):
+        os.write(stdout, f"stdout contains: {SECRET}".encode())
+        os.write(stderr, f"stderr contains: {SECRET}".encode())
+        return TimedProcess()
+
+    session = {"session_name": "cdp_test", "cdp_url": f"wss://{SECRET}@example.test"}
+    with caplog.at_level(logging.WARNING, logger="tools.browser_tool"):
+        with patch("tools.browser_tool._find_agent_browser", return_value="agent-browser"), \
+             patch("tools.browser_tool._get_session_info", return_value=session), \
+             patch("tools.browser_tool._socket_safe_tmpdir", return_value=str(tmp_path)), \
+             patch("tools.interrupt.is_interrupted", return_value=False), \
+             patch("tools.browser_tool.subprocess.Popen", side_effect=fake_popen):
+            result = _run_browser_command("opaque-task", "click", ["@e1"], timeout=3)
+    assert not result["success"]
+    assert SECRET not in caplog.text
+    assert SECRET not in str(result)
+    capture_dir = tmp_path / "agent-browser-cdp_test"
+    assert not (capture_dir / "_stdout_click").exists()
+    assert not (capture_dir / "_stderr_click").exists()
