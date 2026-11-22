@@ -102,3 +102,32 @@ def test_malformed_profile_cannot_trigger_setup_capture(scratch_skills, monkeypa
     result = json.loads(skills_tool.skill_view("arxiv"))
     assert result["success"] is False
     assert "Invalid skill harness" in result["error"]
+
+
+def test_symlink_out_of_allowed_root_rejected_before_read(tmp_path, monkeypatch):
+    root = tmp_path / "skills"
+    root.mkdir()
+    outside = tmp_path / "private"
+    outside.mkdir()
+    (outside / "SKILL.md").write_text(
+        "---\nname: linked-skill\ndescription: Private\n---\nPrivate secret",
+        encoding="utf-8",
+    )
+    link = root / "linked-skill"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable on this platform")
+    monkeypatch.setattr(skills_tool, "SKILLS_DIR", root)
+    monkeypatch.setattr(skill_utils, "get_external_skills_dirs", lambda: [])
+    result = json.loads(skills_tool.skill_view("linked-skill"))
+    assert result["success"] is False
+    assert "escapes configured skill roots" in result["error"]
+    assert "Private secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("identifier", ["C:relative", "D:secret", "a:b"])
+def test_drive_relative_or_colon_identifier_rejected(scratch_skills, identifier):
+    result = json.loads(skills_tool.skill_view(identifier))
+    assert result["success"] is False
+    assert "Invalid skill identifier" in result["error"]
