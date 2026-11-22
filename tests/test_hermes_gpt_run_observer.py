@@ -168,3 +168,15 @@ def test_stale_warning_is_not_an_operation_failure():
     observer.observe({"status": "running"}, now=2)
     assert events[-1]["kind"] == "progress_stale_suspected"
     assert all(x["kind"] != "terminal_observed" for x in events)
+
+
+def test_observer_heartbeat_is_not_worker_progress():
+    events = []
+    observer = RunObserver("r1", events.append, stale_seconds=120)
+    observer.observe({"status": "running", "last_event": "model.wait"}, now=0)
+    observer.observe({"status": "running", "last_event": "model.wait"}, now=31)
+    heartbeat = [e for e in events if e["kind"] == "observer_heartbeat"]
+    assert len(heartbeat) == 1
+    assert heartbeat[0]["status"] == "running"
+    assert heartbeat[0]["progress_age_seconds"] == 31.0
+    assert not any(e["kind"] == "progress_stale_suspected" for e in events)
