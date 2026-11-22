@@ -855,6 +855,8 @@ def _run_browser_command(
         "--json",
         command
     ] + args
+    stdout_path = None
+    stderr_path = None
     
     try:
         # Give each task its own socket directory to prevent concurrency conflicts.
@@ -916,6 +918,12 @@ def _run_browser_command(
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
+            # Do not retain credential-bearing child output after timeout.
+            for capture_path in (stdout_path, stderr_path):
+                try:
+                    os.unlink(capture_path)
+                except OSError:
+                    pass
             logger.warning("browser '%s' timed out after %ds (task=%s, socket_dir=%s)",
                            command, timeout, task_id, task_socket_dir)
             return {"success": False, "error": f"Command timed out after {timeout} seconds"}
@@ -1004,6 +1012,14 @@ def _run_browser_command(
         return {"success": True, "data": {}}
         
     except Exception as e:
+        # Remove any captured child output on all exceptional paths, including
+        # failures before normal stdout/stderr handling and cleanup.
+        for capture_path in (stdout_path, stderr_path):
+            if capture_path:
+                try:
+                    os.unlink(capture_path)
+                except OSError:
+                    pass
         if cdp_attached:
             logger.warning("browser '%s' CDP exception (type=%s, details redacted)",
                            command, type(e).__name__)
