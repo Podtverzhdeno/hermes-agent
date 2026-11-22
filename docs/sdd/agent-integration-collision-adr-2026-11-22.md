@@ -2,13 +2,23 @@
 
 **Date:** 2026-11-22. **Status:** PROPOSED. **Owner:** A0/integration review, not an exclusive software owner. **Baseline:** `main@7e9100901819ee44c16b4ddcb79a6bcb7909f591`. **Safety mode:** no automatic merge/deploy. Evidence is live GitHub PR metadata and reviewed source; no workstation/browser runtime observed.
 
+## Superseding architecture note — upstream-first, 2026-11-22
+
+**Higher-priority decision for production than any custom coordinator proposed below:** this repository's `main@7e910090...` is from 2026-04-01; modern upstream Hermes v0.23.3 (release 2026-11-19) already has **Kanban** (multi-agent durable work lifecycle and worker lanes), **canonical Runs API** with run status, sequenced/replayable SSE, session turn ownership, durable keyed admission and unknown-run resolution. These capabilities are **not present** in the inspected April fork's `gateway/platforms/api_server.py`; that source exposes no `/v1/runs` route. The user has not authorized or verified any deployment migration. <https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3>, <https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md>.
+
+**Authority rule:** On a modern, canary-verified Hermes install, **upstream Kanban** is authoritative for task/worker lifecycle; **native Runs** is authoritative for run status, stop/cancel, sessions and progress sequencing. PR #1's `autopilot/ledger.py` is an **unmerged, isolated effect/approval/evidence prototype**, not an additional production scheduler. Its own audit [UPSTREAM_PARITY_AUDIT_2026-11-22.md](https://github.com/Podtverzhdeno/hermes-agent/blob/sdd/autopilot-reliability-2026-11-22/docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md) explicitly says not to run two schedulers. The browser plugin's event journal is observation-only. Only a narrowly scoped external effect-reconciliation layer may supplement the upstream Kanban/Run authority after trusted integration tests.
+
+**Preferred order:** (1) backup/inventory and isolated v0.23.3 canary with distinct `HERMES_HOME`, ports, profiles, database and credentials; (2) verify native Kanban worker prompt delivery on actual Windows host, run creation, SSE cursor replay, stop/unknown resolution and browser-plugin capability handshake; (3) port only demonstrably missing safety invariants from this PR, resolving #4/#5/#6 conflicts; (4) integrate effect ledger with canonical upstream run/task IDs; (5) expand to 50-agent fault injection and explicit owner-approved rollout. **Never `git pull` an unreviewed upstream main into the user's active workspace.**
+
+The current PR #6 is an **interim April-fork API safety patch**, not a recommended replacement for modern upstream's already-implemented native lifecycle. CI on the old fork does not establish modern upstream compatibility.
+
 ## 1. Concurrent development is already happening
 
 At review time the same GitHub repository carried these **draft** PRs:
 
 | PR | Scope observed in changed-file list | Owned paths / intended authority |
 |---|---|---|
-| [#1](https://github.com/Podtverzhdeno/hermes-agent/pull/1) | Autopilot durable execution ledger, leases, effect reconciliation | `autopilot/`, authoritative task/effect state |
+| [#1](https://github.com/Podtverzhdeno/hermes-agent/pull/1) | Experimental effect/approval/evidence ledger, upstream Kanban parity audit | `autopilot/` is a prototype; upstream Kanban is modern authoritative task owner |
 | [#2](https://github.com/Podtverzhdeno/hermes-agent/pull/2) | Skill harness metadata, manager guard, contracts | `agent/skill_harness.py`, `tools/skill_manager_tool.py` |
 | [#3](https://github.com/Podtverzhdeno/hermes-agent/pull/3) | ACP approval isolation | `acp_adapter/`, `tools/approval.py` |
 | [#4](https://github.com/Podtverzhdeno/hermes-agent/pull/4) | GPT bridge diagnostics module, extension SDD, gateway changes | `gateway/gpt_bridge_diagnostics.py`, browser/transport SDD |
@@ -24,7 +34,7 @@ At review time the same GitHub repository carried these **draft** PRs:
 - Prefer #5's isolated `gateway/idempotency.py` interface as the **single candidate implementation** of per-process retry dedup. This is an engineering preference based on module isolation, **not** a measured quality claim. Review its tests and policies before acceptance; review #4 and #6 variants as alternatives.
 - Transplant unique #6 security/observability behavior only after rebase and targeted test execution: metadata-only request ID, failed SSE error envelope, error redaction, CORS exposed session/request headers, 400 non-object JSON, timing-safe bearer key compare, fail-closed non-loopback binding.
 - Consider #4's `gateway/gpt_bridge_diagnostics.py` as a **diagnostic helper**, not a second idempotency authority or durable effect ledger. Reconcile event names/IDs with #1's task owner and the GPT Companion journal contract before integration.
-- Keep `autopilot/ledger.py` #1 as sole source-of-truth for effects/leases; `gpt_companion/journal.py` (from separate GPT Companion proposal) may independently collect observational evidence, but **must never issue writes, grants or `succeeded`**. Diagnostic event producer cannot certify its own output.
+- Treat `autopilot/ledger.py` #1 only as candidate external-effect state after integration with upstream Kanban's single scheduler, not as a second live task owner; `gpt_companion/journal.py` (from separate GPT Companion proposal) may independently collect observational evidence, but **must never issue writes, grants or `succeeded`**. Diagnostic event producer cannot certify its own output.
 - Preserve #2's skill contracts and #3's human-approval checks as dependencies of tool execution, not parallel permission systems.
 - Consolidate SDD using a canonical `docs/sdd/README.md` that maps contracts and "supersedes" lineage. Never delete divergent docs without reviewing every invariant and linking source.
 - Any agent changing overlapping files must add an ownership claim with base/head SHAs, a test list, failure semantics, and rollback path; GitHub CAS on blob sha protects file revision but does NOT substitute task lease.
