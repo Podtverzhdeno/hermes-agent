@@ -296,3 +296,43 @@ def test_abrupt_process_exit_after_commit_supports_same_id_replay(tmp_path):
     assert seq == 1
     assert len(store.timeline(task_id="task1")) == 1
     assert store.verify_chain()
+
+
+def test_uncertain_effect_survives_worker_replacement(pair):
+    s, _ = pair
+    add(s, kind="effect.uncertain", details={"action_id": "effectA"}, fence=1)
+    add(s, event_id="new-worker", kind="task.started", fence=2)
+    result = s.diagnose_task(task_id="task1")
+    assert result["status"] == "needs_reconciliation"
+    assert result["fence"] == 2
+    assert result["open_effects"] == 1
+    assert result["open_effects_from_prior_fences"] == 1
+
+
+def test_new_epoch_can_reconcile_old_external_effect(pair):
+    s, _ = pair
+    add(s, kind="effect.uncertain", details={"action_id": "effectA"}, fence=1)
+    add(s, event_id="new-worker", kind="task.started", fence=2)
+    add(s, event_id="reconcile-new-worker", kind="effect.reconciled",
+        source_seq=2, fence=2, details={"action_id": "effectA"})
+    result = s.diagnose_task(task_id="task1")
+    assert result["status"] == "observed_active"
+    assert result["open_effects"] == 0
+
+
+def test_late_stale_reconciliation_does_not_clear_external_effect(pair):
+    s, _ = pair
+    add(s, kind="effect.uncertain", details={"action_id": "effectA"}, fence=1)
+    add(s, event_id="new-worker", kind="task.started", fence=2)
+    add(s, event_id="stale-reconcile", kind="effect.reconciled", fence=1,
+        source_seq=2, details={"action_id": "effectA"})
+    result = s.diagnose_task(task_id="task1")
+    assert result["status"] == "needs_reconciliation"
+    assert result["open_effects_from_prior_fences"] == 1
+
+
+def test_old_epoch_approval_not_inherited_as_new_approval(pair):
+    s, _ = pair
+    add(s, kind="approval.requested", details={"action_id": "reviewA"}, fence=1)
+    add(s, event_id="new-worker", kind="task.started", fence=2)
+    assert s.diagnose_task(task_id="task1")["status"] == "observed_active"
