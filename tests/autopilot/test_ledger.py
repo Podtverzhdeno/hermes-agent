@@ -95,7 +95,9 @@ def test_attempts_are_bounded_and_eventually_fail(ctx):
     clock.advance(16)
     ledger.claim("recover")  # triggers expiration but next retry is delayed
     clock.advance(2)
-    assert ledger.claim("recover")["id"] == task
+    # The retry must use a 15-second lease too. claim() otherwise defaults
+    # to 120 seconds and would correctly remain running after +16.
+    assert ledger.claim("recover", lease_seconds=15)["id"] == task
     clock.advance(16)
     assert ledger.claim("recover") is None
     assert ledger.get(task)["status"] == "failed"
@@ -135,8 +137,11 @@ def test_unknown_effect_must_be_reconciled_before_retry(ctx):
     clock.advance(16)
     assert ledger.claim("A3") is None
     assert ledger.get(task)["status"] == "needs_reconciliation"
-    with pytest.raises(LedgerConflict):
+    # Invalid enum is an input-validation error (ValueError), not an
+    # inconsistent ledger transition (LedgerConflict). State stays unchanged.
+    with pytest.raises(ValueError):
         ledger.reconcile_effect(task, "deploy", "unknown", "none")
+    assert ledger.get(task)["status"] == "needs_reconciliation"
     ledger.reconcile_effect(task, "deploy", "acknowledged", "audit:external-789")
     assert ledger.get(task)["status"] == "retry_wait"
     with pytest.raises(LedgerConflict):
