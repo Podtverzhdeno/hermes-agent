@@ -245,3 +245,24 @@ def test_bounded_memory_after_sixty_thousand_interleaved_worker_events():
     assert status["recent_events"] == 8192
     assert status["out_of_order_events"] == 0
     assert status["unresolved_causal_links"] == 0
+
+
+def test_thirty_threads_can_ingest_each_producers_ordered_events():
+    """Concurrent producers share one observer without losing counters or cursors."""
+    from concurrent.futures import ThreadPoolExecutor
+    observer = ReadOnlyEventObserver(max_producers=40, max_recent=8192)
+
+    def worker(worker_id):
+        statuses = []
+        for seq in range(1, 101):
+            statuses.append(observer.ingest(evt(producer=f"thread-{worker_id}", seq=seq)))
+        return statuses
+
+    with ThreadPoolExecutor(max_workers=30) as pool:
+        outcomes = list(pool.map(worker, range(30)))
+    assert all(status.accepted for group in outcomes for status in group)
+    assert all(group[-1].contiguous_through == 100 for group in outcomes)
+    snapshot = observer.snapshot()
+    assert snapshot["producers"] == 30
+    assert snapshot["recent_events"] == 3000
+    assert snapshot["out_of_order_events"] == 0
