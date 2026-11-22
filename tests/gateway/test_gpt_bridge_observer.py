@@ -266,3 +266,18 @@ def test_thirty_threads_can_ingest_each_producers_ordered_events():
     assert snapshot["producers"] == 30
     assert snapshot["recent_events"] == 3000
     assert snapshot["out_of_order_events"] == 0
+
+
+def test_many_missing_parents_never_starve_bounded_observer():
+    """Old unknown-parent references are pruned when old child events expire."""
+    observer = ReadOnlyEventObserver(max_recent=2, max_reorder=5)
+    import uuid
+    for seq in range(1, 51):
+        missing = str(uuid.uuid4())
+        event = evt(seq=seq, causation_event_id=missing)
+        result = observer.ingest(event)
+        assert result.accepted and result.missing_causal_parent
+        assert observer.snapshot()["recent_events"] <= 2
+        assert observer.snapshot()["unresolved_causal_links"] <= 2
+    assert observer.snapshot()["recent_events"] == 2
+    assert observer.snapshot()["unresolved_causal_links"] == 2
