@@ -9,6 +9,7 @@ on:
       - "skills/**/harness.json"
       - "skills/**/SKILL.md"
       - "tests/skill_harness/**"
+      - "scripts/audit_skill_harnesses.py"
       - "tests/agent/test_skill_harness_integration.py"
       - ".github/workflows/skill-harness-contract.yml"
   push:
@@ -50,6 +51,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Verify Python syntax
         run: python -m compileall -q agent/skill_harness.py tests/skill_harness
+      - name: Audit all bundled and optional skill coverage
+        run: python -m scripts.audit_skill_harnesses --format markdown
       - name: Validate individual contracts (offline, stdlib only)
         env:
           OPENAI_API_KEY: ""
