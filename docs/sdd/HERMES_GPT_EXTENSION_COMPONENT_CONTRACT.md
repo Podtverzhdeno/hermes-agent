@@ -211,3 +211,34 @@ For all tests record: version SHA, input fixture, raw *redacted* event bundle, e
 - **2026-11-22:** Historical extension paths and v0.6.6 status recovered from prior owner conversation and must be revalidated before local writes.
 
 **Release rule:** this document plus API patches are a starting point, NOT evidence that Chrome extension behavior has been fixed. Reopen the local control plane first, then implement with SHA-pinned optimistic writes and actual browser replay tests.
+
+
+## 12. Modern upstream /v1/runs stream details — verified source, not deployed locally
+
+**Pinned evidence:** official NousResearch/hermes-agent main at `da8e7d71abe4ac165760cd813c0c18c53e697b90`, `gateway/platforms/api_server_runs.py` (examined 2026-11-22). The user's installed version is unknown.
+
+1. **Admission:** `POST /v1/runs` accepts an `Idempotency-Key` with visible ASCII validation, returns a `run_<32 hex>` ID, and status can be queried separately from submission.
+2. **Run stream:** `GET /v1/runs/{run_id}/events` checks run visibility/authorization, emits `id: <seq>`, adds `seq` to each payload, accepts `Last-Event-ID` or `?last_seq=`. Event payload fields include `event`, `run_id`, `timestamp`.
+3. **Bounded retention:** `_RunStream.BACKLOG_LIMIT = 1000`, `SUBSCRIBER_QUEUE_LIMIT = 256`. After a missed range, it emits `replay.truncated` with `oldest_retained_seq`. On subscriber overflow it detaches the subscriber. Never claim complete history when events are missing.
+4. **Transport is not terminal:** a `: stream closed` comment or EOF is not a completed agent run. Fetch run status. `: keepalive` is a transport heartbeat, NOT proof of model/tool progress.
+5. **Unknown outcomes:** `POST /v1/runs/{id}/resolve-unknown` is authorized operator reconciliation, never a blind timer retry.
+6. **Durability can degrade:** `GET /v1/capabilities` reports feature flags. The `RunIdempotencyStore.durable` property can be false if persistence falls back to in-memory. Fail closed for high-risk unattended writes.
+7. **Profiles:** modern gateway supports `/p/<profile>/...` paths; scope correlators, cursors and agent identity to the actually resolved profile/permission.
+
+### Offline diagnostics added in this PR
+
+`gateway/gpt_bridge_event_audit.py` is a **read-only, non-authoritative** projection of already exported native Hermes run SSE. It does not reimplement run admission, Kanban, idempotency, tool dispatch, browser clicks or approval.
+
+- It retains only run ID, event type, SSE seq, time, tool/approval correlation and code-like reason fields, ignoring transcripts and payloads.
+- It spots missing, duplicate, truncated and out-of-order sequences; pending tools/approvals; and contradictions between terminal event and a separately supplied status snapshot.
+- It does not mark completion proven by a terminal SSE event alone, and cannot prove tool effects. It only recommends checking authoritative status and reconciling evidence.
+- It rejects oversized/malformed input without echoing private payloads. Its tests include 30 separate run IDs, not a claim of 30 real concurrent browser sessions.
+
+Example for **already saved, appropriately handled SSE logs**:
+```powershell
+python -m gateway.gpt_bridge_event_audit --run-id run_0123456789abcdef0123456789abcdef --events-file .\run-events.sse --status-file .\run-status.json
+```
+
+This command does NOT authenticate to Hermes, export any data, start a monitor, or update the Windows extension. A continuously running observer requires separately approved local service activation and access to the actual extension source.
+
+Coverage is specified in `tests/gateway/test_gpt_bridge_event_audit.py`; record real pytest/CI outcomes rather than claiming test success in advance.
