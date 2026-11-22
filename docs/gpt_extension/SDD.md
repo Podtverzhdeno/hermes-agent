@@ -222,3 +222,48 @@ Standards/engineering references:
 - https://cheatsheetseries.owasp.org/cheatsheets/AI_Agent_Security_Cheat_Sheet.html
 
 **Accuracy boundary:** this is a source-based SDD, not an assertion that millions of sources were searched, an hour of wall-clock experimentation elapsed, or a live 24/7 monitor was deployed.
+
+
+## 15. Owner-authorized CDP / browser extension — separate transport design
+
+**Context established from the existing Hermes workflow:** an owner-authorized backend named `web-chatgpt-high-cdp` has previously been exercised through direct connectivity canaries, including a reported single-lane check. Historical context also refers to a local browser bridge on port 18763 and an extension version 0.6.6 marked stale on 2026-11-11. **These are historical observations, not current status checks.** This audit cannot verify the extension binary, current tab, local bridge health or browser session because Local Workspace MCP presently returns `Session terminated`. Do not silently assume a GitHub Hermes-agent fork contains the extension's source.
+
+**Architecture choice:** keep owner-authorized CDP as a possible *UI transport* with an explicit supported-surface capability contract. The design rejects **uncontrolled DOM polling as an authority for task completion**, not all legitimate owner-authorized browser interactions. Respect supported service policies and do not bypass provider restrictions, subscription controls, MFA/CAPTCHA or interactive approval.
+
+### Browser lane identity and handoff
+
+Each browser-controlled worker has an exclusive `lane_id` bound to authenticated control-plane owner, browser profile scope, CDP target/tab and task attempt/fence. One lane serializes **navigation and input** per tab. Multiple tasks may share a browser process only with isolated tab ownership and no concurrent input to the same tab. A stale or different fence means stop browser dispatch immediately.
+
+Separate signals:
+1. `command.persisted` — immutable command ID, intent digest, lane/fence and revision saved before transport.
+2. `command.dispatched` — attempted send to extension, **not an acknowledgment**.
+3. `command.transport_ack` — extension/bridge received the sequence; it may not have applied the UI action.
+4. `ui.action_observed` — browser observed a UI transition; still not external-effect proof.
+5. `ui.message_observed` — ChatGPT text visible; can be partial/stale/wrong turn, not a task completion receipt.
+6. `artifact.verified` — independent tool/CI/hash receipt at exact revision, only this may satisfy success evidence.
+
+The runner must record command and ACK sequences, pending command digest, target identity, observed fence, session generation, timestamps, and redacted reason codes. Missing ACKs after timeouts do **not** license blind re-send of a mutating input; reconcile UI state, and block if uncertain. A canary such as a unique token confirms a limited connectivity path only, not that a requested GitHub/Obsidian change happened.
+
+### Failure taxonomy and operational rules
+
+| Condition | Diagnosis | Safe reaction |
+|---|---|---|
+| Bridge TCP/CDP unreachable | CDP_BRIDGE_DOWN | Report transport outage; don't claim model failure |
+| Extension disconnected | CDP_EXTENSION_DOWN | Reconnect authenticated extension, inspect pending commands |
+| Authorized tab missing | CDP_TAB_DETACHED | Verify target ownership; don't send to an arbitrary tab |
+| Wrong lane fencing epoch | CDP_FENCE_MISMATCH | Fail closed; prevent cross-agent tab takeover |
+| ACK sequence ahead of sent commands | CDP_ACK_INCONSISTENT | Quarantine, inspect sender/receiver continuity and authentication |
+| ACK missing for last command | CDP_ACK_PENDING | Reconcile side effects and UI state before considering replay |
+| Browser event silence | CDP_TRANSPORT_SILENT | Distinguish bridge, extension, browser, network and model separately |
+| UI response / canary appears | CDP_UI_MESSAGE_ONLY | Correlate task ID, then require independent completion evidence |
+| No observed transport blocker | CDP_TRANSPORT_HEALTHY | Continue monitoring; never infer full task success |
+
+**Security:** CDP debug interface must remain local/profile-scoped and inaccessible from untrusted networks; no session cookie or private message body in telemetry. Keep browser and filesystem privileges distinct. Verify explicit owner authorization and actual browser extension sources/version before enabling live commands. Use least-privilege target selectors, user-visible consent for protected actions, and authenticated acknowledgments that a compromised tab cannot forge into privileged task state.
+
+**Capacity:** one browser lane is not fifty workers. Enforce per-tab ownership, bounded admission and fair per-project queues. When dozens of agents attempt the same browser session, they wait visibly; they do not simultaneously type, click or reuse a visible response. Local agent replacement must preserve source event sequence and fence, never copy an old tab session into a new trusted identity without re-authorization.
+
+### Implemented offline CDP diagnosis
+
+`gpt_extension/cdp_diagnostics.py` consumes a frozen, preauthenticated BrowserLaneSnapshot and only classifies transport symptoms. It has no CDP client or credentials and never sets permits_task_completion. `tests/gpt_extension/test_cdp_diagnostics.py` has **16 synthetic tests**, including stale/future fence, inconsistent/missing ACK, disconnected bridge/extension/tab, silent transport and UI canary false-success.
+
+**Remaining release gates:** locate and review the actual extension/bridge source and version, run real CDP handshake plus negative-auth tests, instrument transport ACK with crash injection, prove exclusive tab ownership under tens of queued agents, confirm typed end-to-end receipts, and validate policy compliance. None of those gates are satisfied by offline tests.
