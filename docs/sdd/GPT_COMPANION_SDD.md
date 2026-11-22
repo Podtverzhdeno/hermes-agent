@@ -422,3 +422,56 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 **Counterexamples to test:** new worker starts after an unacknowledged effect, ACK belongs to a later attempt with identical action_id, effect ACK arrives before reserve from same source, report failure in new attempt while old effect remains unknown, 52 earlier attempts with bounded output, matching same-attempt source-local ACK. Cases added under `test_terminal_causality.py`.
 
 **Known gaps:** a claimed cross-source ACK cannot establish true causality; authenticated ingress and external verified receipt remain release blockers. A missing `tool.effect_reserved` event could conceal a real write, so absence of entries is not proof of absence. Full history is scanned on each call: on large runs, replace with indexed durable per-attempt effect-state projection with transactional updates, reconciliation and migration tests; measure p95/p99 inspect latency and WAL contention at 10/30/100-worker load. The diagnostic schema is additive but any downstream parser must be version-gated. No automatic remediation and no production patch without versioned control-plane integration.
+
+
+## 23. Upstream Hermes hook contract — documented compatibility requirements
+
+**Verified external contract (not proof of installed version):** Hermes [Observer Hooks](https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks) describes `telemetry_schema_version = "hermes.observer.v1"`, fail-open callbacks, explicit `session_id` / `task_id` / `turn_id` / `api_request_id` / `tool_call_id`, request-scoped `pre_api_request` / `post_api_request` / `api_request_error`, and tool `pre_tool_call` / `post_tool_call`. It distinguishes `on_session_end` (turn/run scope) from `on_session_finalize` or `on_session_reset` (identity lifetime). `pre_llm_call` is turn-scoped, not a per-provider-request boundary. Observer hooks may contain raw-compatible fields (e.g. conversation history), so a subscriber must **only copy explicit safe metadata**, never serialize a whole callback payload. Tool results and error_message may contain sensitive data and must not be stored.
+
+**ADR-024 (P0):** instrumentation is *observation*, not an enforcement or durable commit boundary. Observer callbacks are intentionally **fail-open**: an exception is logged and the worker continues. Thus hook-only event collection cannot guarantee lossless causality or prevent a tool effect. Required producer observability contract: health/counters (`callback_attempts`, `dropped_events`, `queue_lag`), source-local sequence allocation, bounded in-memory queue, optional durable outbox with acknowledged delivery, and a fail-closed gate only at the **trusted control plane**, never invented inside a best-effort observer. On untrusted hook gaps, output `OBSERVABILITY_DEGRADED` / `UNKNOWN`; do not infer that a missing callback means a tool never ran.
+
+**ADR-025 (P1):** version-pinned mapping table, verified *per installed runtime*, not per README:
+
+| Hermes hook or canonical source | Companion event | Correlator | Trust boundary |
+| --- | --- | --- | --- |
+| `kanban_task_claimed` + task_runs | `run.accepted` / worker claim | board/task_id/run_id | canonical lifecycle requires independently queried task_runs |
+| `pre_api_request` | `llm.request_started` | session/turn/api_request_id | no request bodies or URLs |
+| `post_api_request` | `llm.response_received` | api_request_id | response arrival ≠ task verified |
+| `api_request_error` | normalized reason_code | api_request_id, status class | redact error message, capture retryable/429 class only |
+| `pre_tool_call` | tool proposal/timing (v2) | tool_call_id | this callback may modify/block; observer returns no mutation |
+| `post_tool_call` | tool outcome (v2) | tool_call_id | `ok` ≠ independently verified external effect |
+| `on_human_input_request/resolved` | approval wait/resolution (v2) | request_id | no approval text/answer; signed control plane decides |
+| `subagent_start/stop` | nested agent lineage (v2) | parent/child IDs | no child summaries, goals or raw histories |
+| `on_session_end` | turn ended | session/turn | NOT necessarily session identity finalized |
+| `on_session_finalize/reset` | session identity handoff | old/new session | not proof of task cancelled |
+| `kanban_task_completed/blocked` | worker-reported outcome | canonical task/run | review+independent evidence before `verified` |
+
+Existing companion schema **v1** has no `task_id`, `provider_request_id`, `parent_event_id` or `fence`; do not force unversioned fields into current strict allowlist. Propose v2 envelope with separate validated optional opaque identifiers, authenticated actor binding and a migration/dual-read test. The installed version might lack these observer hooks; successful software import is not a capability handshake.
+
+**Specific fault injection:** make a hook throw while a tool successfully executes; observer must show degraded telemetry without claiming the tool did not execute. Reset a session identity while task run continues; do not classify `on_session_end` as task success. Reuse API request IDs across producer boundaries and ensure isolated provenance. Verify legacy callback payload with huge/sensitive `conversation_history` is never stored.
+
+## 24. Browser companion and transparent operational UI
+
+The independent [Hermes Browser Extension companion plugin](https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md) supports opted-in browser context and scoped tab control on compatible versions; its permissions, routes and profile requirements must not be copied into this project as assumed installed capabilities. It advertises per-profile version constraints, browser attach and background-task-tab controls, and a metadata-only diagnostic route. In particular, closing/revoking a tab does not prove a Hermes task was cancelled; previous background tabs can remain open but no longer be controllable.
+
+**ADR-026 (P1):** source matrix must distinguish (a) Hermes API, (b) Hermes Kanban, (c) browser extension/plugin, (d) ChatGPT web UI, (e) OpenAI Responses API. Only use a feature when the exact owner/version and explicit user consent authorize it; never collapse these into one global `GPT_CONNECTED` light. Recommended capability handshake response is `source_id, source_version, gateway_release, extension_version, profile, browser_session_id, supported_events, supports_receipts, approval_surface, read_only, last_verified_at, expires_at` with opaque IDs. Mismatch -> `UNSUPPORTED` or `DEGRADED`, not background UI instrumentation.
+
+**ADR-027 (P1):** observability dashboard for every card/run must show a causal, three-plane timeline:
+
+- **Canonical lane** — task lifecycle from verified Kanban records, attempt, lease/fence, review status, last run and source revision;
+- **Observed lane** — best-effort hook journal with source identity and sequence, queue delay, missing spans, recorded stage and heartbeat/progress distinction;
+- **Evidence lane** — trusted provider receipt, GitHub commit SHA, exact CI checks, manually approved action and independently verified artifact.
+
+Each expanded stage displays **what was expected, what was observed, what was independently proven, why it might have stopped, confidence tier (confirmed/probable/hypothesis/unknown), safe next operation, responsible owner and correlation IDs**. Distinguish `NOT_OBSERVED`, `TRANSPORT_DISCONNECTED`, `REPORTED_FAILED`, `WAITING_APPROVAL`, `EFFECT_UNKNOWN`, `AWAITING_VERIFICATION`, `VERIFIED`, `OBSERVER_UNHEALTHY`, `UNSUPPORTED`. Disabled or unknown must not appear green. All UI drilling must be read-only until a separately approved control action is issued with time-bound permission.
+
+Demo acceptance (synthetic only): inject a 30-worker run with a failed provider call, hook delivery gap, expired approval, prior attempt effect unknown, browser tab revocation, stale CI SHA and one confirmed success. Dashboard must show seven **different** causal reasons and no inferred success/retry on missing evidence. Emit a machine-readable incident export containing only opaque metadata (no prompts, URLs with secrets or browser contents).
+
+## 25. Watcher source-review findings — PR #12 ownership
+
+Latest reviewed parent implementation introduced `gpt_companion/watch.py` with a durable transitions database. It is **not the same SQLite transaction as the event inbox**, so event commit and transition alert are not atomic together; correctness must be eventual, monotonic and reconstructible. A crash after transition commit but before stdout emission can suppress notification after restart, which the code correctly documents. An external alert channel needs a durable delivery outbox with independent ACK and dedup; avoid claiming exactly-once notification.
+
+**OBS-007 (open, handed to parent owner):** `_fingerprint(assessment)` currently hashes attempt/state/next_action/unresolved_effects/pending_approvals/missing_sequences/reason/stale_worker_sources, but omits newer `diagnostic_flags` and `prior_attempt_unresolved_effect_count`. Thus a new prior-attempt unknown effect or causal flag can be silently absent from transition history while headline state remains unchanged. Extend the fingerprint to include stable proof-relevant fields (not continuously changing age) and regression-test that a new unresolved prior action causes a transition.
+
+**OBS-008 (open, handed to parent owner):** `StatusWatch.sample` calls `EventJournal.assess` without first validating event chain. The one-shot CLI does verify_chain, but watch runs could persist a diagnosis from corrupted/unverified event history. Choose an integrity strategy that verifies once per snapshot or incremental verified checkpoint, fails explicitly `JOURNAL_INTEGRITY_FAILED`, and avoids O(number_of_runs × entire_history) hashing at each poll. Add tampered SQLite record test; count integrity-check latency. This branch does **not** modify parent-owned watch.py to avoid concurrent collisions.
+
+**Priority:** OBS-006 cross-attempt safety diagnostic implemented in stacked patch; OBS-007/008 open review. Neither patch by itself can prove external effects, guarantee atomic cross-store writes, or create a live GPT monitor.
