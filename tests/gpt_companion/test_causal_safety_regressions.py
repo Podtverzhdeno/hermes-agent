@@ -139,3 +139,42 @@ def test_prior_missing_event_has_lower_priority_than_unresolved_write(journal):
     assert result["unresolved_effects_prior_attempts"] == [
         {"attempt": 1, "action_id": "write-unknown"}
     ]
+
+
+def test_duplicate_ack_order_must_not_mask_uncertain_effect(journal):
+    # Multiple separately emitted acks cannot be collapsed into a provider
+    # receipt just because the final one came from the reserving worker.
+    data = [
+        event(1, 1, "tool.effect_reserved", source="worker", action="deploy"),
+        event(1, 1, "tool.effect_acknowledged", source="gateway", action="deploy"),
+        event(1, 2, "tool.effect_acknowledged", source="worker", action="deploy"),
+    ]
+    from itertools import permutations
+    for order in permutations(data):
+        # Every isolated DB sees the same events, only delivery order changes.
+        from tempfile import TemporaryDirectory
+        from pathlib import Path
+        with TemporaryDirectory() as directory:
+            sub = EventJournal(Path(directory) / "events.sqlite3", clock=lambda: 1000.0)
+            for item in order:
+                sub.ingest(item)
+            state = sub.assess("run-causal")
+            assert state["state"] == "NEEDS_RECONCILIATION"
+            assert state["unresolved_effects"] == ["deploy"]
+
+
+def test_duplicate_reservations_remain_unresolved_even_after_ack(journal):
+    journal.ingest(event(1, 1, "tool.effect_reserved", source="worker", action="write"))
+    journal.ingest(event(1, 1, "tool.effect_reserved", source="gateway", action="write"))
+    journal.ingest(event(1, 2, "tool.effect_acknowledged", source="gateway", action="write"))
+    state = journal.assess("run-causal")
+    assert state["state"] == "NEEDS_RECONCILIATION"
+    assert state["unresolved_effects"] == ["write"]
+
+
+def test_single_same_source_resolution_is_not_false_duplicate(journal):
+    journal.ingest(event(1, 1, "tool.effect_reserved", action="write"))
+    journal.ingest(event(1, 2, "tool.effect_acknowledged", action="write"))
+    state = journal.assess("run-causal")
+    assert state["unresolved_effects"] == []
+    assert state["state"] == "RECENT_TELEMETRY"
