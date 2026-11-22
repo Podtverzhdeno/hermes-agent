@@ -272,7 +272,7 @@ async def test_sse_agent_exception_reports_failure_instead_of_success():
         assert "agent_execution_failed" in text
         assert "finish_reason" not in text or '"finish_reason": "stop"' not in text
         assert "DO_NOT_DISCLOSE_EXCEPTION_TEXT" not in text
-        assert text.endswith("data: [DONE]\\n\\n")
+        assert text.endswith("data: [DONE]\n\n")
     adapter._response_store.close()
 
 
@@ -291,7 +291,13 @@ async def test_invalid_non_object_json_rejected_before_agent_run():
     async with TestClient(TestServer(_app(adapter))) as client:
         for endpoint in ("/v1/chat/completions", "/v1/responses"):
             for invalid in ([], "a-string", 17, None):
-                result = await client.post(endpoint, json=invalid, headers=headers)
+                if invalid is None:
+                    result = await client.post(
+                        endpoint, data="null",
+                        headers={**headers, "Content-Type": "application/json"},
+                    )
+                else:
+                    result = await client.post(endpoint, json=invalid, headers=headers)
                 assert result.status == 400
                 assert (await result.json())["error"]["code"] == "invalid_body"
         assert count == 0
