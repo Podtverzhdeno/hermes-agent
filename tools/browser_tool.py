@@ -959,11 +959,17 @@ def _run_browser_command(
             try:
                 parsed = json.loads(stdout_text)
                 if cdp_attached and isinstance(parsed, dict) and not parsed.get("success", False):
-                    # A failed CDP transport may include the full secret-bearing URL.
-                    parsed = dict(parsed)
-                    parsed["error"] = "Browser CDP command failed (diagnostic redacted)"
-                    if isinstance(parsed.get("data"), dict):
-                        parsed["data"] = {"diagnostic": "redacted"}
+                    # A failed CDP response can echo credentials in *any* field
+                    # (message, metadata, data, url or diagnostic), not just error.
+                    # Preserve only recognized non-sensitive recovery codes.
+                    safe_code = parsed.get("code")
+                    if safe_code not in ("tab_gone", "tab_locked"):
+                        safe_code = "cdp_command_failed"
+                    parsed = {
+                        "success": False,
+                        "error": "Browser CDP command failed (diagnostic redacted)",
+                        "code": safe_code,
+                    }
                 # Warn if snapshot came back empty (common sign of daemon/CDP issues)
                 if command == "snapshot" and parsed.get("success"):
                     snap_data = parsed.get("data", {})
