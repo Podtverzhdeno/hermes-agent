@@ -75,3 +75,6 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 | O-28 | OBSERVED_CI_AT_SHA | At PR #26 head `8cec46d296e38b156b851dda0fda1b1508048e88`: offline audit checks for Python 3.11/3.12/3.13 are `success`; repository `test` was `in_progress`. | Any subsequent commit invalidates check freshness. Read actual exact HEAD status before review or merge. |
 
 | O-29 | TESTED_OFFLINE/COMMITTED | Partial CI export could incorrectly set checks_ok=true if only a successful security scan was present. Fixed via optional explicit `required_checks` (otherwise false), all-present and all-matching-head enforcement, duplicate checks; four new negative tests. | 53 + 16 = 69 local Python 3.13 checks passed. Do not trust caller's required-check policy as authenticated or use for automerge. |
+
+
+| O-30 | SOURCE_REVIEW + COMMENT | Latest heads of competing gateway PR #4/#5/#6/#11 inspected. #6 and #11 categorically reject keyed SSE in the April legacy API, unlike v0.23.3 canonical mode where keyed streaming is supported. PR #5's in-process shielded cache is not durable admission. | PR #6 comment #7078247851; mode-specific E2E, rebase and single integration owner. This is a compatibility finding, not proven production regression. |
