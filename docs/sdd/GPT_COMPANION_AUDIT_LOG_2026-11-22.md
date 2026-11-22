@@ -13,7 +13,7 @@
 | H-003 | CONFIRMED → PATCHED | PR #12 journal.py выбирал по max sequence terminal event, включая worker.stopped | lifecycle shutdown ошибочно перекрывал reported failure/completion | outcome report precedence; tests для failure+stop и completion+stop |
 | H-004 | CONFIRMED → PATCHED | completed+failed в одной попытке и одном source не считались конфликтом | не определён exclusive terminal outcome invariant | TRACE_INCOMPLETE и CONFLICTING_OUTCOME_REPORTS; test в обоих порядках |
 | H-005 | CONFIRMED → PATCHED | conflict без sequence gap выдавал FETCH_MISSING_EVENTS | смешаны два класса восстановительных действий | RECONCILE_CONFLICTING_EVENTS, distinct diagnostic flags, regression tests |
-| H-006 | CONFIRMED → PATCHED | отрицательный delta(now,received_at) clamp-ился к 0, создавая ложную свежесть | observer wall clock rollback | CLOCK_ANOMALY, CLOCK_REGRESSION; запрет сделать вывод о liveness |
+| H-006 | CONFIRMED → PATCHED | отрицательный delta(now,received_at) clamp-ился к 0, создавая ложную свежесть | observer wall clock rollback | CLOCK_SKEW_DETECTED, CLOCK_REGRESSION; запрет сделать вывод о liveness |
 | H-007 | DESIGN GAP | Caller supplied event envelopes в PR #12 не проходят authentication/proof | untrusted producer может соврать об event outcome | signed ingress, authn/authz, replay protection, allowlist, trusted ledger verifier до production |
 | H-008 | DESIGN GAP | Offline observer и API bridge не привязаны к текущему installed Hermes/Chrome | старый fork main 2026-04-01 и новый upstream могут иметь разные hooks | version-pinned handshake, shadow mode, Windows/WSL integration verification |
 | H-009 | DESIGN GAP | Диагностические "acknowledged"/"not_executed" — untrusted hints | ошибочное чтение empty unresolved_effects как safe retry | UI и SDK явно запрещают recovery without independent receipt and ledger authorization |
@@ -56,3 +56,7 @@ Selected operational path: (1) fix proof and classification, (2) converge duplic
 - Verify no dual scheduler or duplicate write path between Autopilot prototype and upstream Kanban.
 - Confirm fork binary, actual browser extension and permissions through a restored local observer; shadow-only rollout.
 - If a test or PR cannot be checked, log the gap as UNVERIFIED instead of inventing success.
+
+## 6. Concurrent parent reconciliation
+
+At integration checkpoint 85db47caedb87490cee58aab70257c4bdf835ef1, PR #12 has canonical CLOCK_SKEW_DETECTED and PARTIAL_WORKER_OUTAGE, a read-only watch implementation and durable agent mandate. The stacked PR deliberately preserves those changes through a parent-tree-based merge commit. Combined code validation remains PENDING at exact merge SHA; previous CI cannot certify it.

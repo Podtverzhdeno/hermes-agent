@@ -131,8 +131,8 @@ def test_replay_after_restart_preserves_diagnostic_flags(journal):
 def test_observer_wall_clock_regression_is_not_fresh_liveness(journal):
     emit(journal, 1, "worker.started")
     result = journal.assess("run-causal", now=900.0)
-    assert result["state"] == "CLOCK_ANOMALY"
-    assert result["next_action"] == "CHECK_OBSERVER_CLOCK_AND_SUPERVISOR"
+    assert result["state"] == "CLOCK_SKEW_DETECTED"
+    assert result["next_action"] == "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
     assert "CLOCK_REGRESSION" in result["diagnostic_flags"]
     assert result["live_age_seconds"] == 0.0  # clamped age is not evidence of life
 

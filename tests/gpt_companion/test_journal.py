@@ -212,3 +212,90 @@ def test_invalid_observation_clock_fails_closed(context):
     for invalid in (float("nan"), float("inf"), float("-inf"), -1):
         with pytest.raises(ValueError, match="observation clock"):
             db.assess("run-1", now=invalid)
+
+
+def test_gateway_traffic_cannot_mask_known_dead_worker(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    db.ingest(event(1, "run.accepted", source="gateway"))
+    clock.jump(140)
+    db.ingest(event(2, "llm.response_received", source="gateway"))
+    result = db.assess("run-1")
+    assert result["state"] == "WORKER_UNRESPONSIVE"
+    assert result["stale_worker_sources"] == ["worker-A"]
+    assert result["worker_sources_count"] == 1
+
+
+def test_partial_outage_among_independent_workers_is_visible(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    db.ingest(event(1, "worker.started", source="worker-B"))
+    clock.jump(140)
+    db.ingest(event(2, "worker.heartbeat", source="worker-B"))
+    result = db.assess("run-1")
+    assert result["state"] == "PARTIAL_WORKER_OUTAGE"
+    assert result["stale_worker_sources"] == ["worker-A"]
+    assert result["worker_sources_count"] == 2
+
+
+@pytest.mark.parametrize("reason,expected", [
+    ("INCOMPATIBLE_HERMES_VERSION", "STOP_INTEGRATION_AND_NEGOTIATE_VERSION"),
+    ("MCP_SESSION_TERMINATED", "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX"),
+    ("OUTBOX_BACKPRESSURE", "PAUSE_PRODUCER_AND_CHECK_STORAGE_LIMIT"),
+    ("CORS_REJECTED", "CHECK_ALLOWED_EXTENSION_ORIGIN"),
+])
+def test_gateway_failure_codes_yield_specific_diagnostic(context, reason, expected):
+    db, _ = context
+    db.ingest(event(1, "run.reported_failed", reason_code=reason))
+    assert db.assess("run-1")["next_action"] == expected
+
+
+def test_unrelated_gateway_events_cannot_mask_worker_stagnation(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started", source="worker-A"))
+    clock.jump(360)
+    db.ingest(event(2, "worker.heartbeat", source="worker-A"))
+    db.ingest(event(1, "llm.response_received", source="gateway"))
+    result = db.assess("run-1")
+    assert result["state"] == "ALIVE_NO_PROGRESS"
+    assert result["progress_age_seconds"] == 360
+    assert result["live_age_seconds"] == 0
+
+
+def test_100_sources_concurrently_ingested_and_partial_outage_is_counted(context):
+    db, clock = context
+    batch = [event(1, "worker.started", source=f"worker-{i:03}") for i in range(100)]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        assert all(pool.map(db.ingest, batch))
+    assert db.verify_chain()
+    assert db.assess("run-1")["worker_sources_count"] == 100
+    clock.jump(140)
+    # Only 10 of the 100 workers can prove *any* recently observed signal.
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        assert all(pool.map(db.ingest, [event(2, "worker.heartbeat", source=f"worker-{i:03}")
+                                       for i in range(10)]))
+    result = db.assess("run-1")
+    assert result["state"] == "PARTIAL_WORKER_OUTAGE"
+    assert len(result["stale_worker_sources"]) == 90
+    assert result["missing_sequences"] == 0
+    assert db.verify_chain()
+
+
+def test_receipt_clock_backward_step_is_not_worker_failure(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started"))
+    clock.jump(5)
+    db.ingest(event(2, "worker.heartbeat"))
+    clock.jump(-50)
+    db.ingest(event(3, "worker.heartbeat"))
+    result = db.assess("run-1")
+    assert result["state"] == "CLOCK_SKEW_DETECTED"
+    assert result["next_action"] == "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
+    assert db.verify_chain()
+
+
+def test_backward_clock_step_without_new_event_is_visible(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started"))
+    clock.jump(-10)
+    assert db.assess("run-1")["state"] == "CLOCK_SKEW_DETECTED"

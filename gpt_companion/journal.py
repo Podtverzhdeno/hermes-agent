@@ -43,6 +43,15 @@ CAUSE_ACTIONS = {
     "BROWSER_TAB_CLOSED": "CHECK_ADAPTER_SESSION_NOT_TASK_RESULT",
     "CI_FAILED": "INSPECT_CHECKS_AT_EXACT_SHA",
     "LEASE_EXPIRED": "CHECK_FENCING_AND_WORKER_OWNER",
+    "INCOMPATIBLE_HERMES_VERSION": "STOP_INTEGRATION_AND_NEGOTIATE_VERSION",
+    "HOOK_UNAVAILABLE": "CHECK_RUNTIME_CAPABILITIES_AND_VERSION",
+    "PLUGIN_DISABLED": "CHECK_SCOPED_PLUGIN_CONFIG_AND_CONSENT",
+    "MCP_SESSION_TERMINATED": "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX",
+    "TRANSPORT_DISCONNECTED": "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX",
+    "CORS_REJECTED": "CHECK_ALLOWED_EXTENSION_ORIGIN",
+    "BROWSER_DETACHED": "CHECK_OPT_IN_TAB_ATTACHMENT",
+    "OUTBOX_BACKPRESSURE": "PAUSE_PRODUCER_AND_CHECK_STORAGE_LIMIT",
+    "SOURCE_UNAUTHENTICATED": "REJECT_EVENT_AND_CHECK_INGRESS_AUTH",
     "UNKNOWN": "CLASSIFY_FAILURE_MANUALLY",
 }
 
@@ -189,6 +198,15 @@ class EventJournal:
                 prior = chain
         return True
 
+    def list_runs(self, limit: int = 500) -> list[str]:
+        """List recent opaque run ids for a read-only observer; bounded by design."""
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("invalid run listing limit")
+        with self._db() as db:
+            rows = db.execute("""SELECT run_id FROM events
+                GROUP BY run_id ORDER BY MAX(position) DESC LIMIT ?""", (limit,)).fetchall()
+        return [row["run_id"] for row in rows]
+
     def assess(self, run_id: str, *, now: float | None = None,
                liveness_timeout: float = 120, progress_timeout: float = 300) -> dict[str, Any]:
         """Conservative diagnosis only. No autonomous retry or success claims."""
@@ -207,29 +225,48 @@ class EventJournal:
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
+        # Server receipt timestamps can jump backward after NTP/time changes.
+        # In that case time-based liveness diagnosis is unreliable.
+        clock_reversed = any(
+            rows[i]["received_at"] + 1.0 < rows[i - 1]["received_at"]
+            for i in range(1, len(rows))
+        ) or moment + 1.0 < max(t for _, t in events)
         # Delivery can be reordered. A backfilled event with an older sequence
         # must NOT refresh liveness/progress and conceal an abandoned worker.
         # Track the source-local highest sequence at receipt time, without
         # assuming any causal order across different sources.
         source_frontier: dict[str, int] = {}
-        frontier_receipts: list[float] = []
+        frontier_receipts: list[tuple[str, float, str]] = []
         progress_receipts: list[float] = []
+        worker_sources = {e["source"] for e, _ in events if e["kind"].startswith("worker.")}
         for row, (event, received_at) in zip(rows, events):
             src, sequence = row["source"], row["sequence"]
             if sequence <= source_frontier.get(src, 0):
                 continue
             source_frontier[src] = sequence
-            frontier_receipts.append(received_at)
-            if event["kind"] not in ("worker.heartbeat", "run.accepted"):
+            frontier_receipts.append((src, received_at, event["kind"]))
+            if (event["kind"] not in ("worker.heartbeat", "run.accepted")
+                    and (not worker_sources or src in worker_sources)):
                 progress_receipts.append(received_at)
+        # Gateway/observer traffic does not keep a known worker alive. If this
+        # attempt has worker.* signals, measure worker-only source frontiers.
+        # For runs without any worker signal, retain the conservative generic
+        # event freshness as a hint, never a lease/health verification.
+        worker_last_seen: dict[str, float] = {}
+        for src, stamp, _ in frontier_receipts:
+            if src in worker_sources:
+                worker_last_seen[src] = stamp
+        live_receipts = (list(worker_last_seen.values()) if worker_last_seen else
+                         [stamp for _, stamp, _ in frontier_receipts])
+        last_seen = max(live_receipts)
+        stale_worker_sources = sorted(
+            src for src, stamp in worker_last_seen.items()
+            if moment - stamp >= liveness_timeout
+        )
         # With no progress events, the FIRST observed arrival is the baseline,
-        # rather than the last heartbeat; an endless heartbeat-only worker
-        # must eventually be classified as alive without progress.
-        last_seen = max(frontier_receipts)
-        last_progress = max(progress_receipts) if progress_receipts else min(frontier_receipts)
-        # Wall-clock rollback must never make stale telemetry look fresh.
-        # Production still needs supervisor/lease probes and a monotonic clock.
-        clock_regression = moment + 1e-6 < last_seen
+        # not the last heartbeat: endless heartbeat-only workers still stall.
+        last_progress = (max(progress_receipts) if progress_receipts else
+                         min(stamp for _, stamp, _ in frontier_receipts))
         live_age = max(0.0, moment - last_seen)
         progress_age = max(0.0, moment - last_progress)
         keys = {(r["source"], r["sequence"]) for r in rows}
@@ -272,8 +309,7 @@ class EventJournal:
         # reports from multiple emitters require operator reconciliation.
         terminal_sources = {e["source"] for e in terminal_events}
         cross_source_terminal = len(terminal_sources) > 1
-        # A final worker.stopped is lifecycle cleanup, not an outcome report.
-        # Reported failure/completion must remain visible for verification.
+        # A worker stop is lifecycle cleanup, not a reported task outcome.
         outcome_reports = [e for e in terminal_events if e["kind"] != "worker.stopped"]
         conflicting_outcomes = len({e["kind"] for e in outcome_reports}) > 1
         if cross_source_terminal or conflicting_outcomes:
@@ -281,8 +317,6 @@ class EventJournal:
         last_terminal = (max(outcome_reports, key=lambda e: e["sequence"])["kind"]
                          if outcome_reports else
                          ("worker.stopped" if terminal_events else None))
-        # Receipt order can differ from source-local sequence order. Only use
-        # reason codes from failure reports, never from a later stop event.
         failure_reports = sorted(
             (e for e in outcome_reports if e["kind"] == "run.reported_failed"),
             key=lambda e: e["sequence"], reverse=True)
@@ -292,10 +326,9 @@ class EventJournal:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
-        elif clock_regression:
-            state, next_action = "CLOCK_ANOMALY", "CHECK_OBSERVER_CLOCK_AND_SUPERVISOR"
+        elif clock_reversed:
+            state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
         elif contradictory or missing:
-            # Replaying an intact trace does not fix contradictory reports.
             state = "TRACE_INCOMPLETE"
             next_action = ("RECONCILE_CONFLICTING_EVENTS" if contradictory
                            else "FETCH_MISSING_EVENTS")
@@ -307,6 +340,10 @@ class EventJournal:
             state, next_action = "AWAITING_VERIFICATION", "VERIFY_ARTIFACTS_AT_EXACT_REVISION"
         elif last_terminal == "worker.stopped":
             state, next_action = "STOPPED_UNCONFIRMED", "RECONCILE_WORKER_STOP"
+        elif stale_worker_sources and len(stale_worker_sources) < len(worker_sources):
+            state, next_action = "PARTIAL_WORKER_OUTAGE", "CHECK_EACH_WORKER_AND_LEASE"
+        elif stale_worker_sources:
+            state, next_action = "WORKER_UNRESPONSIVE", "CHECK_WORKER_AND_LEASE"
         elif live_age >= liveness_timeout:
             state, next_action = "WORKER_UNRESPONSIVE", "CHECK_WORKER_AND_LEASE"
         elif progress_age >= progress_timeout:
@@ -319,10 +356,12 @@ class EventJournal:
                 "reported_reason_code": reason if state == "REPORTED_FAILED" else None,
                 "diagnostic_flags": sorted(
                     (["MISSING_SEQUENCES"] if missing else []) +
-                    (["CLOCK_REGRESSION"] if clock_regression else []) +
+                    (["CLOCK_REGRESSION"] if clock_reversed else []) +
                     (["EVENT_CAUSALITY_CONFLICT"] if contradictory else []) +
                     (["CROSS_SOURCE_TERMINALS"] if cross_source_terminal else []) +
                     (["CONFLICTING_OUTCOME_REPORTS"] if conflicting_outcomes else [])),
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
+                "worker_sources_count": len(worker_sources),
+                "stale_worker_sources": stale_worker_sources,
                 "note": "Untrusted telemetry; only an independent verifier may certify success."}

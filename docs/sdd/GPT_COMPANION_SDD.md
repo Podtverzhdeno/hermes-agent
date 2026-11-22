@@ -1,6 +1,6 @@
 # SDD: Hermes ↔ GPT Companion — наблюдаемость, восстановление, десятки независимых агентов
 
-**Версия:** proposal 0.2.0 · **Аудит:** 2026-11-22 · **Владелец компонента:** GPT-connector / наблюдаемость · **Режим:** fail closed, read-only prototype
+**Версия:** proposal 0.1.0 · **Аудит:** 2026-11-22 · **Владелец компонента:** GPT-connector / наблюдаемость · **Режим:** fail closed, read-only prototype
 
 > Документ является инженерной спецификацией, не заявлением о готовности production. Каждое утверждение о реализации, проверке и текущей версии должно иметь отдельное доказательство.
 
@@ -163,7 +163,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 ## 8. План изменений по этапам
 
-**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py`, безопасный разовый CLI `python -m gpt_companion`, тесты и package discovery `pyproject.toml` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, scheduled observer и обещаний непрерывного мониторинга. Состояния журнала не равны статусам task ledger.
+**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py`, безопасный разовый CLI `python -m gpt_companion`, тесты и package discovery `pyproject.toml` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, установленного scheduled observer и обещаний непрерывного мониторинга. Состояния журнала не равны статусам task ledger.
 
 **P1 — после интеграции Autopilot:** version-pinned Hermes observer hook adapter, `local outbox → authenticated inbox`; schema negotiation, source authorization, heartbeat/progress probes, reconciliation poller для OpenAI Responses webhooks и GitHub; shadow mode только чтение и реальные fault-injection тесты. Перед кодом выяснить, какая Hermes версия запускается реально, какие hook имена поддерживает, где хранится gateway и какая auth схема.
 
@@ -202,7 +202,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **35 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **52 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -237,12 +237,46 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Ошибки `sqlite3.DatabaseError` в CLI теперь преобразуются в `JOURNAL_INTEGRITY_FAILED` (exit code 3) без вывода payload или сырых traceback; такой инцидент нельзя смешивать с отвалившимся GPT. БД нельзя «исправлять» автоматическим пересозданием поверх повреждённого файла: сначала сохранить форензик-копию, восстановить последнюю backup + outbox replay, подтвердить `verify_chain`.
 
+### ADR-016: Несовместимость версий Hermes/browser plugin — hard stop (P0 design)
+
+Проверен опубликованный README **community** Hermes Browser Extension v0.4.1 (`abundantbeing/hermes-browser-extension`, не официальная часть данного форка): совместимый Hermes **0.22+**, extension plugin для текущего поколения работает с canary после 2026-10-24/релизами после 0.22.5, умеет 7 browser-context tools, 20 opt-in browser-control tools, три hooks, browser-context receipts. При этом README плагина прямо указывает **«no background processes, no telemetry»**. Текущий анализируемый GitHub fork на `main` имеет **v0.6.0**, коммит датирован 2026-04-01. Поэтому **нельзя обещать**, что новая extension side-panel/plugin установится в рассматриваемый fork: требуется отдельная проверка версии *реального* локального Hermes и pinned compatibility test; установка плагина вслепую считается hard stop. Версия установленного на ПК Hermes НЕ проверена из-за `Session terminated` Local_WorkSpace MCP.
+
+Основной канал мониторинга — собственный авторизованный Hermes host/provider hook и долговечный outbox; браузерный UI-bridge можно применять только как вспомогательный добровольный источник, без прочтения ChatGPT DOM как скрытого API. Существующий browser-event-log не равнозначен непрерывной контролируемой телеметрии. Минимальный handshake: `fork_sha`, `hermes_version`, `hooks_supported`, `extension_version`, `plugin_version`, `gateway_profile`, `auth_ready`, `outbox_ready`; отсутствие критического поля → `INCOMPATIBLE_HERMES_VERSION`/`HOOK_UNAVAILABLE`, запуск не разрешён. Ссылки: https://github.com/abundantbeing/hermes-browser-extension/blob/main/README.md и https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md .
+
+### ADR-017: События другого агента не маскируют остановку одного worker (P0 implemented)
+
+У нескольких агентов в одном run может быть общий gateway. Свежие события `gateway:llm.response_received` не доказывают, что worker A продолжает работу. Добавлены `worker_sources_count`, `stale_worker_sources`, статус `PARTIAL_WORKER_OUTAGE` для частичного сбоя. Отдельные source-local frontiers сравниваются по времени; при наличии worker-сигналов generic gateway events не продлевают их lease-гипотезу. Важно: реальные lease/fence сверяет только доверенный координатор Autopilot; источник `source` в этом модуле сам по себе не аутентифицирован. Тесты: `test_gateway_traffic_cannot_mask_known_dead_worker`, `test_partial_outage_among_independent_workers`.
+
+### ADR-018: Heartbeat vs substantive progress у нескольких источников (P0 implemented)
+
+Таймер прогресса по worker-source больше не продлевается событиями gateway/observer, даже если они приходят «свежими» (`llm.response_received` от другого source). Иначе активная интеграция маскирует застывший полезный процесс. Тест `test_unrelated_gateway_events_cannot_mask_worker_stagnation`. Это консервативная эвристика: подтверждение успеха инструмента остаётся на независимом verifier, не на эвристике активности.
+
+### ADR-019: Проба 100 независимых источников (P0 synthetic smoke)
+
+Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_counted` использует 16 concurrent writer threads для приёма 100 независимых source-id, затем heartbeat 10 из 100: ожидаемый `PARTIAL_WORKER_OUTAGE` и точное число 90 stale источников без потери событий или нарушений SHA-chain. Это **не** 100 работающих LLM-агентов, не сквозная проверка API и не заявка на throughput/SLO; требуются отдельные multi-process + restart/fault-injection bench и реальные latency/lock метрики перед продакшн запуском.
+
+### ADR-020: Время wall-clock не является монотонным (P0 implemented)
+
+Секунды жизни и стадии вычисляются по `received_at` локального journal server, а не по клиентскому wall time. Изменение системного времени назад на >1 c внутри последовательности событий либо между последним событием и проверкой маркируется `CLOCK_SKEW_DETECTED`, следующая операция — `CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC`. Это предотвращает ошибочное объяснение сбоев как «worker умер» при сбое NTP/часов. Ограничение: нет настоящего monotonic-clock timestamp, переживающего перезапуск хоста, поэтому lease и budget гарантии должны оставаться у trusted Autopilot coordinator; измерение времени после рестарта требует независимого времени/boot ID.
+
+## 14. Долговременная передача задач между десятками агентов
+
+Контракт независимых инженерных агентов, owner/fence, инцидентная форма, правила передачи смены и фактически подтверждённые/неподтверждённые гарантии вынесены в [`GPT_COMPANION_AGENT_MANDATE.md`](./GPT_COMPANION_AGENT_MANDATE.md). Этот документ следует читать при каждом новом агентском запуске — **не** заменять его доверие устным отчётом предшественника.
+
+### ADR-021: Локальный read-only watcher, согласованное persist-before-notify (P0 implemented; not deployed)
+
+Создан `gpt_companion/watch.py`: только явный пользовательский запуск, by default один polling cycle, режим `--max-cycles 0` = непрерывный local polling до отмены. Обрабатывает один или до 500 последних `run_id`, пишет изменения diagnosis в *отдельную* SQLite WAL БД, предотвращает дубли одинаковых состояний после рестарта и при нескольких watcher-процессах. Не повторяет provider/API/tool actions, ничего не отправляет через сеть, не выполняет auto-repair. Время heartbeat не является реальным доказательством жизни worker без аутентификации и leases.
+
+**Семантика доставки:** переход записывается в SQLite **до** вывода JSON в stdout. Если процесс упадёт между commit и выводом, уведомление на stdout может потеряться, но запись останется в таблице `transitions`: это **at-most-once best-effort notification**, не exactly-once. Возможность подтверждённых внешних уведомлений требует отдельного outbox dispatcher с receipt и dedup у получателя. Source event journal и status watcher DB физически разделены; наблюдатель остаётся неавторитетным.
+
+Команда snapshot: `python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-history.sqlite3 --all`. Непрерывный режим **не активирован** и требует владельца процесса, автозапуска и безопасной остановки. Unit tests: restart dedup, concurrent watch CAS-like transaction, absence-of-run, unconfirmed effect, CLI snapshot, inventory 2 runs.
+
 
 ---
 
-## 14. Аудит продолжения: события, факты, неизвестное (2026-11-22)
+## 15. Аудит продолжения: события, факты, неизвестное (2026-11-22)
 
-**Версия дополнения:** 0.2.0-proposal. **Контекст:** независимое stacked-изменение от PR #12 на исходном head 586a3e5436289f9c56ad69eefb53893ed11eff67; ветка fix/gpt-companion-terminal-causality-20261122-r01. Не подменяет отчёт о готовности работающего расширения. Права записи есть только в GitHub-ветке; подключение Local_WorkSpace вернуло Session terminated, альтернативный read-only MCP вернул HTTP 429. Состояние живых GPT/ChatGPT-сессий, Windows-установки, Obsidian и локальных файлов не подтверждено.
+**Версия дополнения:** 0.2.1-proposal (reconciled parent head 85db47caedb8). **Контекст:** независимое stacked-изменение от PR #12 на исходном head 586a3e5436289f9c56ad69eefb53893ed11eff67; ветка fix/gpt-companion-terminal-causality-20261122-r01. Не подменяет отчёт о готовности работающего расширения. Права записи есть только в GitHub-ветке; подключение Local_WorkSpace вернуло Session terminated, альтернативный read-only MCP вернул HTTP 429. Состояние живых GPT/ChatGPT-сессий, Windows-установки, Obsidian и локальных файлов не подтверждено.
 
 ### 14.1 Подтверждённые ошибки анализатора и исправления данной ветки
 
@@ -252,9 +286,9 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 | OBS-002 | completion и failure одного эмиттера в одной попытке не считались противоречием | один источник мог задекларировать одновременно оба исхода | помечать как TRACE_INCOMPLETE; запретить доказательство успеха | test_conflicting_outcomes_from_one_source_never_pass_as_final |
 | OBS-003 | contradictory без seq hole предлагал только FETCH_MISSING_EVENTS | оператор получал бесполезное действие, потому что пропущенных событий нет | различать RECONCILE_CONFLICTING_EVENTS и FETCH_MISSING_EVENTS; diagnostic_flags | test_causally_impossible_effect_resolution_is_not_a_simple_gap, test_gap_has_distinct_recovery_step_from_conflict |
 | OBS-004 | reason_code извлекался из порядка прихода, а не только из failure reports по source sequence | backfill мог подменять актуальную причину отказа | выбирать код из подходящего failure report; не выставлять reason как подтверждённый при конфликте | test_failure_is_not_hidden_by_later_worker_stop, test_replay_after_restart_preserves_diagnostic_flags |
-| OBS-005 | live_age = max(0, now-last_seen) при откате wall-clock | давно умерший worker мог выглядеть свежим | состояние CLOCK_ANOMALY + диагностический флаг CLOCK_REGRESSION; supervisor check | test_observer_wall_clock_regression_is_not_fresh_liveness |
+| OBS-005 | live_age = max(0, now-last_seen) при откате wall-clock | давно умерший worker мог выглядеть свежим | состояние CLOCK_SKEW_DETECTED + диагностический флаг CLOCK_REGRESSION; supervisor check | test_observer_wall_clock_regression_is_not_fresh_liveness |
 
-Только source-review и добавленные тесты; до зелёного exact-HEAD CI это **кандидат исправлений**. Сохранён приоритет: неизвестный внешний эффект выше остальных диагностик и никогда не разрешает слепой повтор. CLOCK_ANOMALY не означает, что worker погиб; это недоверие ко времени наблюдателя.
+Только source-review и добавленные тесты; до зелёного exact-HEAD CI это **кандидат исправлений**. Сохранён приоритет: неизвестный внешний эффект выше остальных диагностик и никогда не разрешает слепой повтор. CLOCK_SKEW_DETECTED не означает, что worker погиб; это недоверие ко времени наблюдателя.
 
 ### 14.2 Строгая типизация доказательств
 
@@ -274,7 +308,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Новые diagnostic_flags — диагностические признаки, не разрешения или надёжные причины. Контракт вывода должен быть версионирован до подключения чужих клиентов.
 
-## 15. Реальная архитектура Hermes и правило одного владельца
+## 16. Реальная архитектура Hermes и правило одного владельца
 
 Публичная документация актуального Hermes описывает Kanban board, durable task_runs, worker lanes, heartbeat, hooks и plugins. См. первоисточники:
 
@@ -283,13 +317,13 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 - Hooks/plugins: https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks и https://hermes-agent.nousresearch.com/docs/user-guide/features/plugins
 - Observer hooks: https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks
 
-**ADR-016 (P0, architecture):** если установленная версия Hermes поддерживает durable Kanban, именно её verified version-pinned task_runs / worker lease / dispatcher являются единственным источником task lifecycle. Соседняя ветка Autopilot PR #1 — исследовательский ledger; без явной миграции не вводить вторую очередь, второй dispatcher, второй success status. GPT Companion хранит только диагностические наблюдения. Старый main fork от апреля 2026 не доказывает, что текущий установленный Hermes действительно имеет перечисленные hooks: перед адаптером проверить actual binary/version/profile, module availability, hook timing/payload/auth и совместимость.
+**ADR-021 (P0, architecture):** если установленная версия Hermes поддерживает durable Kanban, именно её verified version-pinned task_runs / worker lease / dispatcher являются единственным источником task lifecycle. Соседняя ветка Autopilot PR #1 — исследовательский ledger; без явной миграции не вводить вторую очередь, второй dispatcher, второй success status. GPT Companion хранит только диагностические наблюдения. Старый main fork от апреля 2026 не доказывает, что текущий установленный Hermes действительно имеет перечисленные hooks: перед адаптером проверить actual binary/version/profile, module availability, hook timing/payload/auth и совместимость.
 
-**ADR-017 (P0, safety):** один source of truth на каждой оси: Kanban task/run; external effect ledger gateway; trusted provider receipts; immutable GitHub SHA/CI evidence; append-only telemetry inbox для расследований. Обязательный конфликтный тест: старый worker и новый worker одновременно считают себя владельцами после lease expiry — только действующий fencing token может коммитить; observer лишь сообщает конфликт.
+**ADR-022 (P0, safety):** один source of truth на каждой оси: Kanban task/run; external effect ledger gateway; trusted provider receipts; immutable GitHub SHA/CI evidence; append-only telemetry inbox для расследований. Обязательный конфликтный тест: старый worker и новый worker одновременно считают себя владельцами после lease expiry — только действующий fencing token может коммитить; observer лишь сообщает конфликт.
 
-**ADR-018 (P1, compatibility):** один manifest для конкретной установки: Hermes commit/release, Python, gateway API version, enabled hook list, browser/extension ID+version+permissions, auth mechanism, OS, repo SHA и supported features. Любое неизвестное или несовместимое поле -> UNSUPPORTED/DEGRADED, не silent fallback на DOM. ChatGPT web UI не эквивалентен Responses API, а подписка ChatGPT не равна API-доступу.
+**ADR-023 (P1, compatibility):** один manifest для конкретной установки: Hermes commit/release, Python, gateway API version, enabled hook list, browser/extension ID+version+permissions, auth mechanism, OS, repo SHA и supported features. Любое неизвестное или несовместимое поле -> UNSUPPORTED/DEGRADED, не silent fallback на DOM. ChatGPT web UI не эквивалентен Responses API, а подписка ChatGPT не равна API-доступу.
 
-## 16. Двенадцать параллельных PR: коллизии и порядок интеграции
+## 17. Двенадцать параллельных PR: коллизии и порядок интеграции
 
 На аудите обнаружены открытые draft PR #1–#12 в Podtverzhdeno/hermes-agent. Их описания и changed files проверены точечно; полный сквозной review всех diff и матрица совместимости ещё не завершены.
 
@@ -307,7 +341,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 **Ресурсный замок для десятков агентов:** claim включает repository, path-prefix, owner_agent_id, base SHA, lease expiry, fencing token и head commit. Изменять чужой path только через явный transfer/review. При CAS conflict — refresh, semantic reconcile, rerun tests; не force-push и не overwrite. У независимых проверяющих нет права одновременно утверждать собственную работу.
 
-## 17. Deep observability: событие, причина остановки и следующее действие
+## 18. Deep observability: событие, причина остановки и следующее действие
 
 Схема для будущего live-адаптера (не реализована):
 
@@ -328,7 +362,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 | worker.stopped after run.reported_failed | task просто stopped | source-local report + reason code | сохранить REPORTED_FAILED |
 | worker.stopped after run.reported_completed | verified success | exact revision artifact + verifier | AWAITING_VERIFICATION |
 | completion and failure same attempt | последняя строка победила | causal order + independent task evidence | TRACE_INCOMPLETE |
-| watchdog clock moved backward | свежая активность | clock epoch, supervisor, lease | CLOCK_ANOMALY |
+| watchdog clock moved backward | свежая активность | clock epoch, supervisor, lease | CLOCK_SKEW_DETECTED |
 | GPT claimed fix | merged/fixed | exact diff, tests, independent review | открыть draft PR |
 | effect_reserved and missing receipt | safe to retry | read-back external effect + ledger | reconciliation only |
 | approvals expired/ambiguous | silently continue | bound subject/action digest/reviewer/TTL | request new approval |
@@ -338,7 +372,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 **Задача мониторинга**: показать оператору полный ответ "последний доказанный stage → блокирующий предикат → evidence provenance → recommended safe next step → owner → deadline", не одну зелёную/красную лампу. Unknown — допустимый и часто правильный итог.
 
-## 18. Конкурирующие идеи — строгий отбор
+## 19. Конкурирующие идеи — строгий отбор
 
 Экспертная матрица, НЕ измеренная эффективность: снижение риска 35%, проверяемость 25%, совместимость с единственным owner 20%, трудозатраты 10%, обратимость 10%; баллы 1–5, сумма приведена к 100. Пересчитывать после реального тестирования, не выдавать за научное доказательство.
 
@@ -355,7 +389,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Для P0 не достаточно высокой оценки: нужен unit/property/fault-injection тест, falsifiable acceptance, explicit owner и rollback. **Десятки одинаковых голосов агентов не превращают гипотезу в доказательство.**
 
-## 19. Fault injection и измеримые release gates
+## 20. Fault injection и измеримые release gates
 
 Перед включением live-monitoring необходима reproducible test matrix (10 / 30 / 100 workers × 1 / 2 / 10 producers per run × 0 / 1 / N side effects), включая out-of-order events, event ID collision, late backfill, high sequence gaps, SQLite busy/locked, corrupted WAL, power loss before/after ACK, clock jump ±, full disk, expired lease/fence, 401/403, 429 + Retry-After, 5xx, dropped SSE, provider request with unknown outcome, user approval timeout, GitHub check for wrong SHA, stale Chrome tab, agent restart and supervisor restart.
 
@@ -370,7 +404,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 Считать **и публиковать как измерения**, а не угадывать: percent event gaps, queue lag p50/p95/p99, observer end-to-end lag, unknown-effect reconciliation latency, false-positive stalled-run rate, SQLite write contention, API 429, retry counts, per-source auth rejects и storage per 1000 events. Пока нет истинной live-системы, baseline и SLO численно неизвестны; критерии нацелены на нулевые опасные ложные успехи в тестовых сценариях, а не на фиктивные 100% uptime.
 
-## 20. Агентный режим работы и сложность проекта
+## 21. Агентный режим работы и сложность проекта
 
 **Operational constraint / owner mandate:** считать Hermes GPT bridge + observability проектом высокой сложности с недоказанной live-интеграцией. Запрещено объявлять задачу завершённой после быстрого единичного code review, нескольких зелёных unit-тестов или собственных модельных выводов. Агентам разрешены параллельные гипотезы, но каждая должна иметь issue/ADR с ID, owner, evidence, failure reproduction, exact revision, CI run, roll-back и независимым reviewer. Письменное самооценивание не заменяет внешнюю проверку.
 

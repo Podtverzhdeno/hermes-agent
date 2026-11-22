@@ -2,7 +2,7 @@
 
 **Status (2026-11-22):** offline journal + diagnosis only. It does not monitor a running GPT session until an authorized Hermes/provider adapter emits events. No browser DOM scraping, tool dispatch, automatic retry, external write, or autonomous approval.
 
-See [SDD](../docs/sdd/GPT_COMPANION_SDD.md) for the full architecture, threat model, failure matrix and release gates.
+See [SDD](../docs/sdd/GPT_COMPANION_SDD.md) and [agent mandate](../docs/sdd/GPT_COMPANION_AGENT_MANDATE.md) for the full architecture, threat model, failure matrix and release gates.
 
 ## What the code actually does
 
@@ -46,15 +46,16 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | State | Action |
 | --- | --- |
 | `NOT_OBSERVED` | Inspect authenticated intake and observer connection |
-| `TRACE_INCOMPLETE` | Check diagnostic_flags: sequence gaps need outbox replay; contradictory reports need event/receipt reconciliation |
+| `CLOCK_SKEW_DETECTED` | Check server clock/time sync; do not diagnose a dead worker from invalid timestamps |
+| `TRACE_INCOMPLETE` | Use diagnostic_flags to distinguish sequence gap replay from conflicting outcome investigation |
 | `RECENT_TELEMETRY` | Observe; do not infer task success |
 | `ALIVE_NO_PROGRESS` | Check tool stage, budget, provider response and true process state |
+| `PARTIAL_WORKER_OUTAGE` | Find the stale worker source; fresh gateway/other-worker events do not prove that worker is alive |
 | `WORKER_UNRESPONSIVE` | Inspect supervisor and lease before replacing worker |
 | `EFFECT_IN_FLIGHT` | Wait for authenticated receipt; never blind-retry writes |
 | `NEEDS_RECONCILIATION` | Read back provider action by stable ID, reconcile in task ledger |
 | `WAITING_APPROVAL` | Request exact human approval bound to action digest and expiry |
-| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision; a later worker stop does not replace this report |
-| `CLOCK_ANOMALY` | Observer wall clock regressed; check time source and supervisor before trusting liveness |
+| `AWAITING_VERIFICATION` | Check independent artifacts and CI on the exact revision; worker stop does not hide reported outcome |
 | `REPORTED_FAILED` | Use normalized reason and inspect provider/CI evidence |
 
 ### No persistent process by default
@@ -63,11 +64,28 @@ The CLI inspects a snapshot. A continuous monitor requires a separately deployed
 
 The checkout-only compatibility wrapper `python -m scripts.gpt_event_inspect` imports the same packaged entrypoint. Source-only import is not sufficient for installed-wheel usability; use `python -m gpt_companion`.
 
+A run shared by multiple emitters returns `worker_sources_count` and `stale_worker_sources`. This is *diagnostic metadata* only. Source identities must be authenticated at the ingestion gateway; this offline journal cannot prove who sent an event.
+
+## Opt-in read-only status watcher (NOT a live GPT connector)
+
+The watcher polls this local journal; it does **not** subscribe to a browser or provider, and no process is installed or started automatically. It records changed diagnoses in a **separate** SQLite status DB for restart-safe audit and prints each new transition once per DB fingerprint. The status DB is not trusted task/effect evidence.
+
+```bash
+# One read-only snapshot of up to 500 run IDs (default one cycle)
+python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-history.sqlite3 --all
+
+# Explicit opt-in local watcher; must be supervised/stopped by the operator
+python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-history.sqlite3 --all --interval 10 --max-cycles 0
+```
+
+The process prints only state transitions. A crash between persisting an alert and printing it means stdout can miss a line; the durable `transitions` table still contains the event. Neither polling interval nor event freshness proves that the user's GPT account/browser is alive. There is no external action, retry, repair, webhook, push notification, or auto-approval path.
+
 ### Causal diagnosis hardening (stacked change, awaiting CI)
+
 
 - A worker stop after a failure or completion report cannot hide the reported outcome. A reported completion still requires independent verification.
 - Conflicting completion/failure claims in one attempt are flagged rather than accepting the newest text.
-- A backwards wall-clock jump yields CLOCK_ANOMALY (except when an unresolved effect already demands a more conservative state). This does not prove process death.
+- A backwards wall-clock jump yields CLOCK_SKEW_DETECTED (except when an unresolved effect already demands a more conservative state). This does not prove process death.
 - diagnostic_flags is an additive, untrusted diagnostic hint; it may contain MISSING_SEQUENCES, CLOCK_REGRESSION, EVENT_CAUSALITY_CONFLICT, CROSS_SOURCE_TERMINALS and CONFLICTING_OUTCOME_REPORTS.
 - Do not interpret tool.effect_acknowledged or tool.effect_not_executed from an unauthenticated emitter as proof that an external write is safely resolved. Only the trusted ledger/verifier may authorize retry or certify success.
 - Direct Python consumers should call verify_chain before assess and handle SQLite failures without treating corruption as a worker failure. The packaged CLI already performs integrity checking. No authenticated ingress, live session monitor, scheduler or production repair is added here.
