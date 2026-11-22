@@ -441,8 +441,7 @@ class APIServerAdapter(BasePlatformAdapter):
         except (json.JSONDecodeError, Exception):
             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
 
-        # Reject non-object JSON before accessing .get(), rather than exposing
-        # an internal error for malformed external input.
+        # Fail closed before any agent dispatch when JSON root is malformed.
         if not isinstance(body, dict):
             return web.json_response(
                 _openai_error("Request JSON body must be an object.", code="invalid_body"),
@@ -469,8 +468,8 @@ class APIServerAdapter(BasePlatformAdapter):
                 status=400,
             )
 
-        # This process-local cache cannot replay an SSE byte stream or recover
-        # external effects after disconnect. Never silently ignore the key.
+        # SSE has no resumable idempotency or durable effect receipt contract.
+        # A caller-provided key must never be silently ignored.
         idem_header = request.headers.get("Idempotency-Key")
         if idem_header is not None and (not idem_header.strip() or len(idem_header) > 200):
             return web.json_response(
