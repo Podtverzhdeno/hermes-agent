@@ -49,13 +49,15 @@ CLI:
 python -m gateway.gpt_bridge_event_audit --run-id run_0123456789abcdef0123456789abcdef --events-file .\redacted-run.sse --status-file .\redacted-run-status.json
 ```
 
-Expected inputs: an already obtained, access-authorized SSE export from the **same resolved profile and run**; optional separately authenticated run status. No network clients or tokens are embedded. Tool arguments, full messages, screenshots, cookies, prompt content, response bodies and raw errors are deliberately discarded from the output.
+Expected inputs: **at least one** access-authorized evidence source: exported SSE, separately authenticated run-status JSON, or both, from the **same resolved profile and run**. Status-only mode deliberately sets `STATUS_ONLY_NO_EVENT_HISTORY` and `EVIDENCE_INCOMPLETE` rather than claiming a reconstructed execution. No network clients or tokens are embedded. Tool arguments, full messages, screenshots, cookies, prompt content, response bodies and raw errors are deliberately discarded from the output.
 
 Invariants:
 - Every processed SSE event is bound to one `run_id`; mixed runs are rejected.
 - Do not report a completed run from an SSE terminal event alone: fetch independent status.
 - Missing `seq`, sequence gaps, partial replay, reordering or slow-subscriber overflow imply `EVIDENCE_INCOMPLETE`, not «agent crashed».
 - Duplicate SSE sequences are deduplicated. Late events cannot rewind the current projection or mutate an authoritative run.
+- The native SSE `id:` cursor and JSON `seq` field must agree; conflicting IDs are malformed evidence and are rejected. Unknown status/event/reason values are redacted, flagged as schema drift, and cannot silently become terminal success.
+- Official `turn_exit_reason` values are normalized using pinned `agent/turn_explainers.py` exact and parameterized categories; any unrecognized/free-text suffix is discarded to prevent a token-shaped secret in logs.
 - Pending tool call may represent external side effect. **NEVER retry solely from this diagnosis.**
 - Pending approval cannot be bypassed. If an unscoped approval response may have cleared the only outstanding approval, report a **weak inference**.
 - If `updated_at` of the provided status predates the latest event, flag possibly stale snapshot; re-fetch status before deciding. Clock comparison is conservative, not proof of causality.
@@ -101,6 +103,7 @@ Before merging: tests must finish green on exact HEAD, compare to unmodified mai
 | 2026-11-22 | PR #4 earlier Actions: 7,513 passed, 29 failed; 171 skipped, old compatibility assertion and environment problems | Full-suite release gate failed on earlier SHA | No merge claim; latest CI required |
 | 2026-11-22 | Modern official source exposes max 10 direct runs and bounded SSE replay by default | Expected capacity and evidence-loss conditions | Prefer reason-coded 429 and replay gap reporting |
 | 2026-11-22 | This branch copies only read-only auditor, synthetic tests and extension-specific contract | Implementation proposed | CI/live verification pending |
+| 2026-11-22 | Focused CI on earlier SHA 90fdedbf: syntax compiled, tests failed before collection because shared pytest addopts required xdist | Verified Actions job 137186420057 | Workflow overrides addopts in later commit; rerun on exact HEAD required |
 | 2026-11-22 | Upstream _execute_run_via_live_owner explicitly documents local /stop limitation on a claimed Bot Chat turn | Verified source contract | On cancelled/interrupted, independently reconcile remote effects before retry |
 | 2026-11-22 | Single-token secrets passed through safe-code regex in initial auditor design | Self-review identified and code fixed using closed allowlists | Regression tests added; CI on exact HEAD is the gate |
 
