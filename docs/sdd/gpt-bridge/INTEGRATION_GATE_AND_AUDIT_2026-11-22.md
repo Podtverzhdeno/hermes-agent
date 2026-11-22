@@ -125,3 +125,72 @@ G8 explicit owner approval before privileged integration, credential changes, pr
 - OpenTelemetry GenAI: https://opentelemetry.io/docs/specs/semconv/gen-ai/
 - GitHub webhook replay: https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks
 - SQLite WAL: https://sqlite.org/wal.html
+
+
+## 9. NEW SOURCE RECONCILIATION: three different Hermes GPT extension directions
+
+**Correction to earlier source discovery (2026-11-22).** Public repositories with overlapping descriptions implement distinct protocols; **the owner's installed extension remains UNKNOWN** because the local workspace MCP session terminated. Do not infer deployment or version from GitHub search.
+
+| Project / exact source | Direction | Evidence | Suitability |
+|---|---|---|---|
+| [intellectronica/hermes-chatgpt-extension](https://github.com/intellectronica/hermes-chatgpt-extension) | Codex local MCP app → Hermes desktop JSON-RPC over /api/ws and REST | v0.3.1 published 2026-10-01; main a32ef70c, Extension checks CI success; Node 22+ | **Preferred native UI reference** for showing Hermes jobs inside Codex; not hosted ChatGPT Cloud connector |
+| [Dworr21/chatgpt-bridge](https://github.com/Dworr21/chatgpt-bridge) | Hermes → Python HTTP/WS → Chrome MV3 extension → ChatGPT web DOM | main 8288cf49 dated 2026-06-20; browser session used by local bridge | **Experimental adapter only**, pending critical correctness and security gating below |
+| [abundantbeing/hermes-browser-extension](https://github.com/abundantbeing/hermes-browser-extension) | Browser sidepanel/context ↔ Hermes companion plugin | distinct browser automation design | Optional; does not replace either above |
+
+### 9.1 Source-observed defects and suspected consequences in browser-mediated bridge
+
+These are findings from the **public source**, not claims of an exploit or installed-runtime incident.
+
+| ID | P | Grounded source location | Finding and release requirement |
+|---|---|---|---|
+| BW01 | P0 | Dworr21 bridge-host.py:841-843, 965-977 | Connected WS clients have no visible identity check; prompt delivery loops over *all* peers. Authenticate local extension identity and bind one leased destination to a request; no broadcast. Loopback bind reduces external exposure but is not a per-process authorization boundary |
+| BW02 | P0 | content.js:454-489, 535-631; background.js:447-544 | Send-button count-based retry and response-container retry can submit another message after the first may have succeeded. Do not equate delayed DOM rendering with failed delivery. Once a send is possible, require backend readback or declare outcome_unknown; no blind resend |
+| BW03 | P0 | bridge-host.py:899-910, 1200-1265 | WS error affects nonstream pending; SSE timeout can end without a terminal DONE while counters/logs still claim status=ok and success. Use a typed failure/partial/unknown terminal, final receipt and independent status endpoint; timeout cannot equal success |
+| BW04 | P1 | bridge-host.py:951-961 | One WS disconnect discards *all* pending futures and stream queues, including work belonging to other surviving extensions. Partition by extension instance+epoch and invalidate only affected owner |
+| BW05 | P1 | content.js:704-826 | Partial text on timeout is returned as response data with warning, but not a separate outcome type. Explicit partial_unverified state; do not mark terminal verified |
+| BW06 | P1 | bridge-host.py:1055-1084 | Unknown requested model can silently fall back to selected model. Require explicit fallback decision or fail closed; log actual model evidence |
+| BW07 | P1 | bridge-host.py:1194-1266, 1411-1431 | Conversation lock is not consistently applied across /chat vs /v1/chat/completions for one shared tab. One per-session/tab admission authority across all routes |
+| BW08 | P1 | content.js:760-789 | Streaming frames contain full current snapshots, not append-only deltas. Define snapshot_replace vs delta_append and test client reconstruction |
+| BW09 | P1 | bridge-host.py:1588-1611 and debug/health | Local error and health output may expose operational details. Redact raw exceptions/URLs/file paths; require authenticated local control and do not capture private prompts, DOM or screenshots in normal logs |
+| BW10 | P2 | architecture.md vs actual background.js | Old architecture doc says WS lives in content script, current code uses MV3 background worker. Enforce docs/code protocol contract through tests |
+
+**No third-party repo files were changed:** connected account has read-only access to these projects. Review code ownership and rights before external PRs. Do not automate bypasses of login, approval, rate, account or browser safety controls.
+
+### 9.2 Source-observed strengths and gaps in intellectronica Codex MCP extension
+
+Positive mechanisms to preserve:
+- src/hermes/rpc.ts treats a disconnected pending operation as **ambiguous**, not retry-safe. No automatic re-submission after unknown delivery.
+- src/hermes/service.ts:325-347 uses lazy session resume, replay epoch and sequence cursor rather than automatic task continuation. Incoming messages, tools and approvals are scoped to a profile/session.
+- src/bridge/http.ts binds loopback, checks Host and Origin, imposes request body size, and uses a per-process local credential. Provider secrets stay out of the UI.
+- Cron view distinguishes schedule, execution and delivery; unknown remains unknown.
+
+Missing for **dozens of supervised agents**:
+- The UI displays chats and cron records but not the full authoritative Kanban dependency graph, per-worker heartbeat, leases, external effect receipts, verified CI revision or causal failure history.
+- The default hides automated chats from sources cron/kanban/tool/oneshot unless sidebar.showAutomatedChats is explicitly enabled. An invisible worker chat is not proof of an unstarted worker.
+- src/hermes/service.ts:487-508 returns streaming optimistically while prompt.submit remains outstanding. Separate local_submitted, backend_accepted, executing, outcome_unknown and verified_terminal.
+- MAX_MESSAGES=250, MAX_TOOLS=100 and MAX_CHATS=100 are *UI limits*, not forensic completeness. Preserve a durable cursor and event store beyond restart.
+- v0.3.1 CI from October does not establish compatibility against the latest November 2026 Hermes backend. Run a version-specific live contract suite in isolated test deployment.
+
+### 9.3 Causal contract and one-owner architecture
+
+Use **modern Hermes Kanban** as the unique task/run authority. Both extension flavors are **edges**, not alternate schedulers. Proposed metadata-only envelope: schema_version, source, source_epoch, source_seq, event_id, ts_ms, task_id, run_id, session_id, attempt_id, worker_id, fence, kind, effect_id, receipt_id, reason_code and verified_sha. Raw prompts, credentials, browser DOM/screen content, full action arguments, file paths and personal data are forbidden in routine diagnostics.
+
+Execution order is created → dispatched → backend_accepted → generating → response_complete → exact_revision_verified. Distinct exceptional states are delivery_outcome_unknown, effect_outcome_unknown, partial_unverified, approval_wait and owner_cancelled. A transport error after dispatch is never automatically replayed; a source epoch change requires lazy authoritative readback. A model's statement of completion does not establish CI success or external effects. Operator exports use HMAC-pseudonymized IDs, bounded output, independent monitor health and **explicit expected sources**; a clean but incomplete trace is UNKNOWN.
+
+Offline local research bundle includes gpt_extension/trace_guard.py and tests/gpt_extension/test_trace_guard.py, which check causal envelope schema and source sequence, missing-source coverage, duplicate attempt, ambiguous delivery, unsafe retry, effect receipts and stale runs. **This is a candidate read-only validator, not wired into any live browser, Codex, GPT extension or user machine.** It cannot perform repairs or certify all agents are running.
+
+### 9.4 Revised prioritized changes and acceptance criteria
+
+1. **P0** Inventory the exact installed project/commit/config under authenticated local access; never assume the similar-name repo.
+2. **P0** Correct browser bridge duplicate-send and false-success SSE paths and require typed signed/validated terminal evidence before allowing unattended execution.
+3. **P0** Authenticate local transport, bind worker/extension/tab ownership; preserve user approvals and never broadcast prompt content to arbitrary clients.
+4. **P0** Extend Codex Hermes app with read-only canonical Kanban task/run/effect/evidence timeline; report missing data and unknown delivery, not inferred success.
+5. **P1** Emit ordered, privacy-safe causal events, source epoch/cursor and operator incident viewer; monitor monitor-health.
+6. **P1** Establish per-conversation admission, no concurrent different-agent mutation, bounded queues, budgets and file ownership/fencing.
+7. **P1** Prefer supported inference APIs for automated production; browser UI adaptation is a separately controlled canary, not an invariant interface.
+8. **P2** Rich UI timeline, dynamic fault explanations and opt-in private debugging recordings.
+9. **REJECT** Separate second task scheduler, unbounded raw DOM telemetry, automatic approval, blind external-effect retry, silent model fallback or green completion on SSE timeout.
+
+Fault gate: browser/tab/service-worker restart, WS loss with >1 peer, DOM selector drift, late ack, SSE partial/no terminal, simultaneous requests from 1/8/32/64/100 agents, model mismatch, user cancel/approval, upstream backend epoch rotation, exact-HEAD CI and operator rollback drill. Do not report production pass based on static inspection or offline synthetic tests.
+
+Source links: [MCP extension code](https://github.com/intellectronica/hermes-chatgpt-extension/tree/main/src/hermes), [release v0.3.1](https://github.com/intellectronica/hermes-chatgpt-extension/releases/tag/v0.3.1), [browser bridge host](https://github.com/Dworr21/chatgpt-bridge/blob/main/bridge-host.py), [browser background](https://github.com/Dworr21/chatgpt-bridge/blob/main/background.js), [browser content](https://github.com/Dworr21/chatgpt-bridge/blob/main/content.js).
