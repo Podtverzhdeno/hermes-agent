@@ -555,11 +555,25 @@ def _find_all_skills(*, skip_disabled: bool = False) -> List[Dict[str, Any]]:
                 category = _get_category_from_path(skill_md)
 
                 seen_names.add(name)
-                skills.append({
+                entry = {
                     "name": name,
                     "description": description,
                     "category": category,
-                })
+                }
+                # Tier-1 optional steering: make per-skill negative activation
+                # visible BEFORE choosing to load SKILL.md. Only a short hint
+                # to preserve progressive disclosure and context budgets.
+                try:
+                    from agent.skill_harness import SkillHarnessError, load_skill_harness
+                    contract = load_skill_harness(skill_dir, name)
+                    if contract is not None:
+                        entry["harness_status"] = "declared"
+                        entry["activation_hint"] = contract["activation"]["when"][0]
+                        entry["avoid_when"] = contract["activation"]["not_when"][0]
+                except SkillHarnessError:
+                    entry["harness_status"] = "invalid"
+                    entry["activation_hint"] = "Do not activate until invalid harness is repaired"
+                skills.append(entry)
 
             except (UnicodeDecodeError, PermissionError) as e:
                 logger.debug("Failed to read skill file %s: %s", skill_md, e)
