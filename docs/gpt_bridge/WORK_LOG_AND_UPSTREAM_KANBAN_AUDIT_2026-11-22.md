@@ -14,7 +14,7 @@
 | Coordination false negative | PR #14 script `CAPABILITY_PATHS` omitted PR #8 `hermes_gpt_bridge/` | Comment posted to PR #14; validate capability semantics in addition to path overlap |
 | Canonical control plane | Official upstream v0.23.3 release (GitHub API) and Hermes Kanban worker-lanes docs: task lifecycle/worker identity belongs to Kanban | Do not create competing task authority via Autopilot PR #1; audit/port upstream first |
 | Changes made | PR #16 adds parser, read-only observer, offline JSONL inspector and SDD integration gate | Branch only; no runtime activation |
-| Offline verification | 40 pytest cases passed in isolated Python environment, `compileall` passed; includes 30 producers × 50 events; duplicate JSON keys and changed-payload event-ID replays are rejected | Offline validation only; no GitHub CI or extension E2E success implied |
+| Offline verification | 43 pytest cases passed in isolated Python environment, `compileall` passed; includes 30 producers × 50 events; duplicate JSON keys and changed-payload event-ID replays are rejected | Offline validation only; no GitHub CI or extension E2E success implied |
 | CI | GitHub workflow statuses must be checked against latest PR #16 head after all writes | If pending, mark pending rather than green |
 
 ## Upstream lifecycle: explicit stop semantics to reuse, not reinvent
@@ -65,4 +65,12 @@ The current official Hermes Kanban worker-lanes documentation (https://hermes-ag
 
 ## Self-audit correction
 
-In a later strict pass, the observer's first version treated any event with the same (event_id, producer_id, sequence) as a replay without checking that the rest of the event payload was identical. A malicious or buggy emitter could thus alter a previously observed event and have it misclassified as a harmless duplicate. **Fixed** by storing a canonical validated event SHA-256 digest in the bounded replay cache and comparing the entire tuple. An independent regression test now rejects same-ID/same-sequence altered content. This increases isolated test count to **40 passing**. This does not establish source authenticity; authenticated producers and durable ledgers remain required.
+In a later strict pass, the observer's first version treated any event with the same (event_id, producer_id, sequence) as a replay without checking that the rest of the event payload was identical. A malicious or buggy emitter could thus alter a previously observed event and have it misclassified as a harmless duplicate. **Fixed** by storing a canonical validated event SHA-256 digest in the bounded replay cache and comparing the entire tuple. An independent regression test now rejects same-ID/same-sequence altered content. This increases isolated test count to **43 passing**. This does not establish source authenticity; authenticated producers and durable ledgers remain required.
+
+## Latest adversarial causal-gap review
+
+**Failure found in my own candidate:** when all bounded recent events referenced missing causal parents, the original `causal_capacity` rejection could permanently stop the observer from ingesting new valid events, even though older children were evictable. This would create a second, observer-generated incident and falsely obscure the actual Hermes task state.
+
+**Repair:** map each retained unresolved child to its missing parent, remove both forward and reverse references whenever a child is evicted or its parent arrives, and never turn ordinary causal incompleteness into an artificial permanent ingestion halt. The observer still marks an absent parent as incomplete evidence, **not worker failure**. This is a local, non-durable telemetry policy.
+
+**Repro and validation:** new `test_many_missing_parents_never_starve_bounded_observer` streams 50 events with unknown parents through a two-event bounded cache and demands accepted events throughout, with at most two unresolved links. Full isolated observer set now **43/43 pytest tests passed** and `compileall` passed. Exact local Git blob SHA matched GitHub after patch: observer `1eca46bb647026c4c9fc43e6ec317c9e3d8cbce2`, tests `f660e0d3846dbf0afd113cb54b81ee5ecddd1f47`. **GitHub full-suite CI and actual browser/Windows run are separate acceptance gates**, not proven by these checks.
