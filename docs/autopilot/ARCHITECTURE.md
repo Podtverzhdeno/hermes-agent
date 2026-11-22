@@ -198,6 +198,10 @@ SQLite WAL supports a single writer at a time; don't put the DB on a network sha
 ## 8. What is implemented in this pull request
 
 The new stdlib-only autopilot/ledger.py provides:
+- explicit project STOP/revocation generations (research kernel only);
+- additive SQLite schema v2 migration and rejection of newer unknown versions;
+- pure typed, immutable and fail-closed external action policy evaluation;
+- privacy-preserving read-only inspector (task states, blockers, missing evidence);
 - atomic task submission with content-sensitive request-key deduplication;
 - SQLite WAL task/event/evidence/approval/effect tables;
 - bounded attempts, priority and retry backoff;
@@ -207,9 +211,9 @@ The new stdlib-only autopilot/ledger.py provides:
 - revision-matched trusted evidence gating;
 - cooperative cancellation and auditable state transitions.
 
-Tests under tests/autopilot exercise concurrent claims, stale workers, crash ambiguity, unknown outcome, approval expiry, evidence gating, idempotency, cancellation, retry exhaustion.
+Tests under tests/autopilot exercise concurrent claims, stale workers, crash ambiguity, unknown outcome, approval expiry, evidence gating, idempotency, cancellation, retry exhaustion, project STOP, additive schema migration, action policy integrity, and operator diagnostics. The separate GitHub Actions workflow runs pytest and stdlib-only contracts on Linux Python 3.11/3.12/3.13 and Windows Python 3.12.
 
-**Not implemented yet:** model dispatch, live watchdog process, authentication server, GitHub/Obsidian adapters, read-only policy registry, DAG dependencies, bounded cost accounting, backup/restore service, operator dashboard, deployment scripts, signed/verifiable audit stream, end-to-end failure injection, agent CI verification. These omissions are intentional: exposing the ledger directly to LLM tools before trusted adapters exist would undermine its security guarantees.
+**Not implemented yet:** model dispatch, live watchdog process, authentication server, trusted scoped tool gateway, GitHub/Obsidian adapters, DAG dependencies, bounded cost accounting, backup/restore service, operator dashboard UI, deployment scripts, signed/verifiable audit stream, end-to-end failure injection, and live Hermes Kanban/agent/CI integration. `stop_project` only revokes this prototype's database leases; until the real Kanban/cron/tool gateway integrates STOP it **does not** stop real system processes or model calls. These omissions are intentional: exposing the ledger directly to LLM tools before trusted adapters exist would undermine its security guarantees.
 
 ## 9. Implementation roadmap and release gates
 
