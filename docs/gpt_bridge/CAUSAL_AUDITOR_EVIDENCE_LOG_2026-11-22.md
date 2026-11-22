@@ -124,3 +124,12 @@ As of authoring this log: 49 tests passed locally in the isolated container (`Ra
 - **LOCAL_FUZZ** fixed-seed 9000 malformed/mixed traces, no unhandled exceptions and no output with `mutation_allowed`, `coverage_complete`, `final_delivery_verified` or `external_effect_retry_allowed` set true.
 - **DISTINGUISH SOURCES** Tunnel bridge event-file shape was verified from connected GitHub `bridge.py` blob `eaf301ac15ad301464159438d6431cbc91d3e323`. Input file authenticity and installed browser/host versions were NOT authenticated. No native Hermes SSE adapter or Telegram write confirmation is in this patch.
 - **PENDING** New GitHub head's 3.11/3.12/3.13 CI must complete before matrix success is asserted. Older matrix for only 49 tests remains legitimate evidence for its previous exact SHA, not for the new code.
+
+
+## Tenth review: reproduced stop explanation gaps and deterministic report recovery
+
+- **RED (source confirmed)** A single `approval.denied` event with no `reason_code` was classified `no_anomalies_in_supplied_slice` rather than incomplete. Failing test `test_denied_approval_without_reason_cannot_be_silent_stop` captured exact output. The parser still accepted `UNKNOWN` as a nominal enum, so a second negative test required a dedicated explanation-incomplete finding.
+- **RED (source confirmed)** identical `approval.denied/task.blocked/worker.lease_expired` event sets delivered in different orders produced different `stop_observations` lists; script printed a sequence diff. This breaks incident-dedup and reproducibility for 30+ producers.
+- **GREEN (source locally tested)** every STOP kind now checks missing/UNKNOWN reasons. Stop evidence sorted by validated task/kind/event ID before bounded output; 300-stop reversed test checks identical capped lists and suppression count 50. Original test suite expanded from 73 to **77**; 77/77 local PASS on Python 3.13.5. No authority upgraded; missing-code diagnostics are advisory.
+- **PRIOR EXACT-HEAD GITHUB CI EVIDENCE:** `f206d22c770b38bdbf75b4b35b9893cd9e5d2878` passed scoped audit workflow `45016532004` on all three Python 3.11, 3.12 and 3.13 jobs. Source changes after that SHA need a fresh exact-head conclusion.
+- **PENDING BEFORE RELEASE:** no actual Windows user extension installed version, authenticated runtime event outbox or trusted receipt/reconciliation; no live end-to-end or persistent monitoring claim. General Hermes suite had been non-green.
