@@ -235,6 +235,67 @@ class CollisionAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(module.AuditError, "truncated"):
                 module.collect("example/hermes")
 
+
+    def test_base_ref_moving_mid_scan_never_returns_green(self):
+        calls = [0]
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                calls[0] += 1
+                return {"commit": {"sha": S if calls[0] == 1 else T}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?state=open" in url:
+                return []
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "Base branch moved"):
+                module.collect("example/hermes", prs_only=True)
+
+    def test_pr_base_sha_moving_mid_scan_never_returns_green(self):
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            if "/pulls/2" in url:
+                return {"head": {"sha": T},
+                        "base": {"ref": "main", "sha": T}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?state=open" in url:
+                return [{"number": 2,
+                         "base": {"ref": "main", "sha": S},
+                         "head": {"sha": T, "ref": "feature",
+                                  "repo": {"full_name": "example/hermes"}}}]
+            if "/pulls/2/files" in url:
+                return [{"filename": "src/changed.py"}]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "PR moved"):
+                module.collect("example/hermes", prs_only=True)
+
+    def test_offline_snapshot_cannot_claim_authenticated_github_source(self):
+        import contextlib
+        import io
+        import json
+        import tempfile
+        import os
+        data = inventory([("one", ["src/no-conflict.py"])])
+        data["source"] = "GITHUB_REST"
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                         suffix=".json", delete=False) as f:
+            json.dump(data, f)
+            filename = f.name
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = module.main(["--snapshot", filename])
+            self.assertEqual(code, 0)
+            parsed = json.loads(output.getvalue())
+            self.assertEqual(parsed["source"], "OFFLINE_INPUT_UNVERIFIED")
+        finally:
+            os.unlink(filename)
+
     def test_live_collection_failure_never_prints_green(self):
         def bad_get(url, token):
             raise module.AuditError("GitHub down")
