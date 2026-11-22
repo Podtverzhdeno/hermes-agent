@@ -1,5 +1,8 @@
 # Decision analysis, agent governance and staged rollout
 
+> **ADR-007 SUPERSEDES fork-first implementation (2026-11-22):** Official upstream `v0.23.3` and current `main` already include durable run admission, /v1/runs status/event/stop/approval/unknown-resolution, Kanban, worker fencing, delivery ledger and stall notifications. All option scores below were calculated against the *April fork*, and therefore **must not be used to justify building a duplicate scheduler or operation authority**. Revised decision: modern upstream native run/kanban lifecycle + thin GPT bridge and derived observability index, with added features only for documented, measured gaps. See [upstream parity audit](upstream-parity-and-pr-coordination-2026-11-22.md).
+
+
 **Baseline**: repository snapshot of 2026-11-22. Scores are analytical judgments
 with explicit assumptions, not measured production performance.
 **Decision principle**: optimize recoverability and provable correctness before
