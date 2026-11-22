@@ -208,8 +208,11 @@ class EventJournal:
         return [row["run_id"] for row in rows]
 
     def assess(self, run_id: str, *, now: float | None = None,
-               liveness_timeout: float = 120, progress_timeout: float = 300) -> dict[str, Any]:
-        """Conservative diagnosis only. No autonomous retry or success claims."""
+               liveness_timeout: float = 120, progress_timeout: float = 300,
+               max_events: int = 10000) -> dict[str, Any]:
+        """Conservative bounded diagnosis only. No autonomous retry or success."""
+        if type(max_events) is not int or not 1 <= max_events <= 100000:
+            raise ValueError("invalid maximum event window")
         if type(run_id) is not str or not _ID.fullmatch(run_id):
             raise JournalConflict("invalid run_id")
         if not (5 <= liveness_timeout <= progress_timeout <= 86400):
@@ -217,13 +220,58 @@ class EventJournal:
         moment = float(self.clock() if now is None else now)
         if not (0 <= moment < 1e14):
             raise ValueError("invalid observation clock")
+        # Bounded snapshots: a long-running worker must not OOM the watcher.
+        # Do not silently analyze only a suffix: that would hide old effects.
         with self._db() as db:
-            a = db.execute("SELECT MAX(attempt) AS n FROM events WHERE run_id=?", (run_id,)).fetchone()["n"]
+            # All queries use one SQLite snapshot, including older attempts.
+            db.execute("BEGIN")
+            top = db.execute("""SELECT MAX(attempt) AS n,MAX(position) AS pos
+                FROM events WHERE run_id=?""", (run_id,)).fetchone()
+            a = top["n"]
             if a is None:
-                return {"run_id": run_id, "state": "NOT_OBSERVED", "next_action": "CHECK_INTAKE"}
-            rows = db.execute("""SELECT event_json,received_at,sequence,source
-                FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
-                (run_id, a)).fetchall()
+                db.execute("COMMIT")
+                return {"run_id": run_id, "state": "NOT_OBSERVED", "next_action": "CHECK_INTAKE",
+                        "event_position": 0}
+            event_position = top["pos"]
+            rows = db.execute("""SELECT position,event_json,received_at,sequence,source
+                FROM events WHERE run_id=? AND attempt=? ORDER BY position LIMIT ?""",
+                (run_id, a, max_events + 1)).fetchall()
+            # Older, unconfirmed effects must not disappear when a new agent
+            # gets a higher attempt number. Only effect events are required.
+            prior_effect_rows = db.execute("""SELECT attempt,source,sequence,kind,event_json
+                FROM events WHERE run_id=? AND attempt<? AND
+                    kind IN ('tool.effect_reserved','tool.effect_acknowledged',
+                             'tool.effect_not_executed')
+                ORDER BY position LIMIT ?""",
+                (run_id, a, max_events + 1)).fetchall()
+            db.execute("COMMIT")
+        if len(rows) > max_events or len(prior_effect_rows) > max_events:
+            return {"run_id": run_id, "attempt": a, "event_position": event_position,
+                    "state": "TRACE_WINDOW_LIMIT_EXCEEDED",
+                    "next_action": "HALT_AND_RECONCILE_WITH_BOUNDED_CHECKPOINT",
+                    "note": "Untrusted telemetry; event window exceeds safe diagnostic capacity."}
+        historical_reserved: dict[tuple[int, str], tuple[str, int]] = {}
+        historical_resolved: dict[tuple[int, str], tuple[str, int]] = {}
+        historical_duplicate: set[tuple[int, str]] = set()
+        for r in prior_effect_rows:
+            action = json.loads(r["event_json"])["action_id"]
+            key = (r["attempt"], action)
+            loc = (r["source"], r["sequence"])
+            if r["kind"] == "tool.effect_reserved":
+                if key in historical_reserved:
+                    historical_duplicate.add(key)
+                historical_reserved.setdefault(key, loc)
+            else:
+                if key in historical_resolved:
+                    historical_duplicate.add(key)
+                historical_resolved.setdefault(key, loc)
+        historical_unresolved = sorted(
+            f"{attempt}:{action}" for (attempt, action), loc in historical_reserved.items()
+            if ((attempt, action) in historical_duplicate or
+                (attempt, action) not in historical_resolved or
+                historical_resolved[(attempt, action)][0] != loc[0] or
+                historical_resolved[(attempt, action)][1] <= loc[1])
+        )
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Server receipt timestamps can jump backward after NTP/time changes.
         # In that case time-based liveness diagnosis is unreliable.
@@ -277,34 +325,61 @@ class EventJournal:
         reserved_events, effect_resolutions = {}, {}
         approval_requests, approval_resolutions = {}, {}
         contradictory = False
+        suspicious_effects: set[str] = set()
         for e, _ in events:
             kind, action = e["kind"], e.get("action_id")
             origin = (e["source"], e["sequence"])
             if kind == "tool.effect_reserved":
                 if action in reserved_events:
                     contradictory = True
+                    suspicious_effects.add(action)
                 reserved_events[action] = origin
             elif kind in ("tool.effect_acknowledged", "tool.effect_not_executed"):
                 if action in effect_resolutions:
                     contradictory = True
+                    suspicious_effects.add(action)
                 effect_resolutions[action] = origin
             elif kind == "approval.required":
+                if action in approval_requests:
+                    contradictory = True
                 approval_requests[action] = origin
             elif kind == "approval.resolved":
+                if action in approval_resolutions:
+                    contradictory = True
                 approval_resolutions[action] = origin
-        reserved = set(reserved_events) - set(effect_resolutions)
-        pending_approval = set(approval_requests) - set(approval_resolutions)
+        # A resolution from another emitter is not causally ordered with the
+        # reservation. Do not treat it as proof that retry is safe.
+        reserved = {
+            action for action, loc in reserved_events.items()
+            if (action in suspicious_effects or
+                action not in effect_resolutions or
+                effect_resolutions[action][0] != loc[0] or
+                effect_resolutions[action][1] <= loc[1])
+        }
+        pending_approval = {
+            action for action, loc in approval_requests.items()
+            if (action not in approval_resolutions or
+                approval_resolutions[action][0] != loc[0] or
+                approval_resolutions[action][1] <= loc[1])
+        }
         for resolution, request in ((effect_resolutions, reserved_events),
                                     (approval_resolutions, approval_requests)):
             for action, resolved_by in resolution.items():
                 was_started = request.get(action)
                 # Source-local sequence establishes causality. Cross-source
                 # order is unknown, and these events remain untrusted hints.
-                if was_started is None or (was_started[0] == resolved_by[0]
-                                           and was_started[1] >= resolved_by[1]):
+                if was_started is None or was_started[0] != resolved_by[0] or (
+                        was_started[1] >= resolved_by[1]):
                     contradictory = True
         terminal_events = [e for e, _ in events if e["kind"] in
                            ("run.reported_completed", "run.reported_failed", "worker.stopped")]
+        report_counts: dict[tuple[str, str], int] = {}
+        for e in terminal_events:
+            if e["kind"] in ("run.reported_completed", "run.reported_failed"):
+                key = (e["source"], e["kind"])
+                report_counts[key] = report_counts.get(key, 0) + 1
+                if report_counts[key] > 1:
+                    contradictory = True
         # Only a source-local sequence is ordered. Contradictory terminal
         # reports from multiple emitters require operator reconciliation.
         terminal_sources = {e["source"] for e in terminal_events}
@@ -332,7 +407,9 @@ class EventJournal:
                          if terminal_events else None)
         reason = next((e["reason_code"] for e in reversed(terminal_events)
                        if "reason_code" in e), "UNKNOWN")
-        if reserved and live_age >= liveness_timeout:
+        if historical_unresolved:
+            state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_PRIOR_ATTEMPT_EFFECT"
+        elif reserved and live_age >= liveness_timeout:
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
@@ -346,8 +423,10 @@ class EventJournal:
             state, next_action = "REPORTED_FAILED", CAUSE_ACTIONS.get(reason, CAUSE_ACTIONS["UNKNOWN"])
         elif last_terminal == "run.reported_completed":
             state, next_action = "AWAITING_VERIFICATION", "VERIFY_ARTIFACTS_AT_EXACT_REVISION"
-        elif last_terminal == "worker.stopped":
+        elif last_terminal == "worker.stopped" and len(worker_sources) <= 1:
             state, next_action = "STOPPED_UNCONFIRMED", "RECONCILE_WORKER_STOP"
+        elif (last_terminal == "worker.stopped" and len(worker_sources) > 1):
+            state, next_action = "PARTIAL_WORKER_OUTAGE", "CHECK_EACH_WORKER_AND_LEASE"
         elif stale_worker_sources and len(stale_worker_sources) < len(worker_sources):
             state, next_action = "PARTIAL_WORKER_OUTAGE", "CHECK_EACH_WORKER_AND_LEASE"
         elif stale_worker_sources:
@@ -358,8 +437,10 @@ class EventJournal:
             state, next_action = "ALIVE_NO_PROGRESS", "INSPECT_STAGE_AND_BUDGET"
         else:
             state, next_action = "RECENT_TELEMETRY", "CONTINUE_OBSERVING"
-        return {"run_id": run_id, "attempt": a, "state": state,
-                "next_action": next_action, "unresolved_effects": sorted(reserved),
+        return {"run_id": run_id, "attempt": a, "event_position": event_position,
+                "state": state, "next_action": next_action,
+                "unresolved_effects": sorted(reserved),
+                "historical_unresolved_effects": historical_unresolved,
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
