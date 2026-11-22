@@ -50,3 +50,12 @@ An initial classifier allowed status=succeeded with zero required evidence kinds
 7. Local runner owner: scoped worktrees, optimistic file hashes, Obsidian sync only when MCP is healthy.
 
 A task is not complete because a model says so. Mark unobserved causes as unknown; do not repeat externally uncertain side effects.
+
+
+### Addendum: owner-authorized CDP and wheel package audit
+- Historical Hermes backend: `web-chatgpt-high-cdp` with a direct CDP canary and single-lane behavior. Historical extension/bridge status is **not** a current 2026-11-22 health check.
+- SDD section 15 now specifies browser lane fencing, command/ACK sequences, no blind replay, tab exclusivity, and independent task receipts.
+- Added `gpt_extension/cdp_diagnostics.py` and 16 synthetic tests; isolated test suite **38/38 PASS**, Python compileall PASS. Not a real CDP execution test.
+- Packaging audit detected `pyproject.toml` explicit setuptools package include list omitted the new `gpt_extension`. Added `gpt_extension` and `gpt_extension.*` on this feature branch, verified exact file contents and blob SHA. Autopilot PR #1 modifies the same include list for `autopilot`; eventual merge must retain both.
+- Read original Hermes browser source `tools/browser_tool.py` and `tests/tools/test_browser_cdp_override.py`; this is a generic CDP override interface, **not** proof that the separate user-specific extension binary/source is present in the fork.
+- Hot-path ACP behavior is **not** modified: suspected global callback isolation and queue backpressure require separate reproducer and integration tests before changing production code.
