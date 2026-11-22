@@ -286,6 +286,7 @@ class CausalRunAuditor:
         value = _safe_status(status.get("status"))
         self._status = value
         if value == "unknown_status":
+            self._missing_events = True
             self._anomalies.add("UNRECOGNIZED_STATUS")
         raw_updated = status.get("updated_at")
         if raw_updated is not None:
