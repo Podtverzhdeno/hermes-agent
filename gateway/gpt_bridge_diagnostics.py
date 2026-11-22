@@ -22,6 +22,13 @@ class IdempotencyPayloadMismatch(Exception):
     """An idempotency key was reused with a different payload; reply 422."""
 
 
+class IdempotencyOutcomeUnknown(Exception):
+    """Prior execution failed with uncertain external effects; do not auto-retry."""
+
+
+_UNKNOWN_OUTCOME = object()
+
+
 def canonical_fingerprint(body: dict) -> str:
     """Fingerprint the whole JSON payload, not an incomplete field subset."""
     encoded = json.dumps(
@@ -44,7 +51,9 @@ class IdempotencyCache:
     Different keys execute concurrently. A duplicate in flight is rejected
     immediately (409), not awaited, because waiting clients may disconnect.
     Waiter cancellation does not cancel the underlying computation; the task
-    finishes and is cached in its done callback. Do not use this as a
+    finishes and is cached in its done callback. Failed executions retain a
+    short-lived UNKNOWN tombstone so blind retries cannot double-submit while
+    the process is alive and the entry is retained. This is NOT a durable
     cluster-wide or external-side-effect exactly-once guarantee.
     """
 
@@ -72,6 +81,8 @@ class IdempotencyCache:
             if cached[0] != fingerprint:
                 raise IdempotencyPayloadMismatch()
             self._store.move_to_end(key)
+            if cached[1] is _UNKNOWN_OUTCOME:
+                raise IdempotencyOutcomeUnknown()
             return cached[1]
 
         active = self._inflight.get(key)
@@ -91,9 +102,10 @@ class IdempotencyCache:
             try:
                 result = done.result()
             except BaseException:
-                # An unsuccessful/unknown operation must never be cached
-                # as success. Reconciliation of tool side effects is separate.
-                return
+                # An exception can occur after an irreversible tool effect.
+                # Never allow a blind duplicate while this tombstone exists.
+                # Cross-restart and post-TTL safety requires the durable ledger.
+                result = _UNKNOWN_OUTCOME
             self._store[key] = (fingerprint, result, time.monotonic())
             self._store.move_to_end(key)
             self._purge()

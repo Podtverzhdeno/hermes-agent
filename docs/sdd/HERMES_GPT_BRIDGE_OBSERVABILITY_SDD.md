@@ -178,6 +178,10 @@ Classify 429 as **symptom**, not universally transient. Observed Local Workspace
 
 **H-06: hidden sensitive data (critical, design).** Provider SDK traces, exception text, tool output and UI screenshots may include personal data. Use no-payload logging by default and explicitly test redaction.
 
+**H-07: failed result replay can duplicate effects (high, verified logically).** Once an agent has started executing tools, any subsequent exception can leave an externally committed effect with no acknowledgment. The process-local cache now stores an `OUTCOME_UNKNOWN` tombstone for failed keyed runs, returning 409 on a repeat while retained; this is a safety improvement, **not** durable safety after TTL expiry, cache eviction, crash or across multiple workers. Production requires a durable intent/effect ledger and reconciliation. Do not blindly retry with a *new* key; that also risks duplication.
+
+**H-08: browser GPT extension deployed separately (high, historical evidence only).** The previously discussed unpacked Windows extension and its Chrome/CDP bridge are not in this GitHub fork's edited API paths. See [HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md](HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md) for file-by-file ownership hypotheses, message protocol, send evidence, recovery and 30-agent fault-injection plan. Local source/versions/logs were not accessible in this session; no extension changes are claimed.
+
 ## 9. Prioritized work scoring (not measurement of actual production incidents)
 
 Use weighted utility per candidate: 30% severity/risk reduction, 25% evidence confidence, 20% time to verifiable implementation, 15% compatibility, 10% operating cost. Score 1–5 each; subtract a 1–5 blast-radius penalty as a separate review dimension. Design-priority ranking:
@@ -251,6 +255,6 @@ Next operator record must include SHA, test command, result counts, and limitati
 
 **ADR-006 (accepted):** A GPT integration may not infer a successful tool action merely from transport success or absence of exceptions.
 
-**Implementation snapshot (2026-11-22):** Branch now adds `gateway/gpt_bridge_diagnostics.py`, extends `gateway/platforms/api_server.py` with 409/422 rejection, `X-Hermes-Run-Id` and explicit `hermes.error` SSE event on execution failure, plus `tests/gateway/test_gpt_bridge_diagnostics.py`. Test results are **not yet verified** here; this note is not an assertion that the branch is deployable.
+**Implementation snapshot (2026-11-22):** Branch now adds `gateway/gpt_bridge_diagnostics.py`, extends `gateway/platforms/api_server.py` with 409/422 rejection, `X-Hermes-Run-Id` and explicit `hermes.error` SSE event on execution failure, plus `tests/gateway/test_gpt_bridge_diagnostics.py`. Test results are **not yet verified** here; this note is not an assertion that the branch is deployable. The next commits also add 409 `idempotency_outcome_unknown` tombstones, browser-readable diagnostic headers, and non-stream result-error classification. These are per-process contract measures, not proof of durable effect safety.
 
 **Unresolved:** Exact extension deployment/package (Chrome MV3, VS Code, local native bridge, or API client), current process topology, production logs, user consent prompts for browser UI control, and security/compliance constraints. These must be established from actual workspace evidence rather than assumed.
