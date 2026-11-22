@@ -48,6 +48,7 @@ class SafeEvent:
     tool_call_id: Optional[str]
     request_id: Optional[str]
     reason: Optional[str]
+    tool_error: Optional[bool] = None
     # Never retain the raw event, preview, prompt, transcript or credentials.
     truncated: bool = False
 
@@ -62,6 +63,7 @@ class RunExplanation:
     reported_terminal: Optional[str]
     supplied_status: Optional[str]
     pending_tool_calls: int
+    tool_errors: int
     pending_approvals: int
     missing_events: bool
     status_inconsistent: bool
@@ -125,8 +127,11 @@ def normalize_run_event(payload: dict, *, sse_id=None) -> SafeEvent:
     # Hermes uses turn_exit_reason in terminal run events and error reason in
     # some status surfaces; avoid raw "error" text.
     reason = _safe_reason(payload.get("turn_exit_reason") or payload.get("reason_code"))
+    tool_error = payload.get("error") if (
+        kind == "tool.completed" and isinstance(payload.get("error"), bool)
+    ) else None
     return SafeEvent(run_id, kind, seq, timestamp, tool_id,
-                     approval_id, reason, kind == "replay.truncated")
+                     approval_id, reason, tool_error, kind == "replay.truncated")
 
 
 class CausalRunAuditor:
@@ -146,17 +151,20 @@ class CausalRunAuditor:
         self._last_timestamp: Optional[float] = None
         self._reported_terminal: Optional[str] = None
         self._pending_tools: set[str] = set()
+        self._tool_errors = 0
         self._pending_approvals: set[str] = set()
         self._missing_events = False
         self._anomalies: set[str] = set()
         self._reason: Optional[str] = None
         self._status: Optional[str] = None
+        self._status_updated_at: Optional[float] = None
 
     def observe(self, event: SafeEvent) -> None:
         if event.run_id != self.run_id:
             raise InvalidTelemetry("Cross-run event cannot join a run")
         if self._event_count >= _MAX_FRAMES:
             raise InvalidTelemetry("Event count exceeds audit limit")
+        late_event = False
         if event.seq is None:
             self._missing_events = True
         else:
@@ -169,6 +177,7 @@ class CausalRunAuditor:
                     self._missing_events = True
                     self._anomalies.add("SEQUENCE_GAP")
                 if event.seq < self._highest_seq:
+                    late_event = True
                     self._missing_events = True
                     self._anomalies.add("OUT_OF_ORDER_EVENT")
             elif event.seq > 0:
@@ -180,6 +189,12 @@ class CausalRunAuditor:
             self._highest_seq = max(event.seq, self._highest_seq if self._highest_seq is not None else -1)
 
         self._event_count += 1
+        if late_event:
+            # Do not allow a delayed older event to roll back the current
+            # projection or create false pending tool/approval states.
+            # The ordered history remains incomplete until independently
+            # reconciled, even if later events fill this sequence gap.
+            return
         self._last_event = event.kind
         self._last_timestamp = event.timestamp
         if event.truncated:
@@ -192,6 +207,9 @@ class CausalRunAuditor:
                 self._missing_events = True
                 self._anomalies.add("TOOL_CORRELATION_MISSING")
         elif event.kind in _TOOL_END:
+            if event.tool_error is True:
+                self._tool_errors += 1
+                self._anomalies.add("TOOL_ERROR_OBSERVED")
             if event.tool_call_id:
                 if event.tool_call_id not in self._pending_tools:
                     self._missing_events = True
@@ -206,6 +224,15 @@ class CausalRunAuditor:
         elif event.kind in _APPROVAL_END:
             if event.request_id:
                 self._pending_approvals.discard(event.request_id)
+            elif len(self._pending_approvals) == 1:
+                # Some upstream approval.responded events omit request_id
+                # when the unscoped operator decision resolves the only
+                # pending approval. This is a weak inference, not proof.
+                self._pending_approvals.clear()
+                self._anomalies.add("APPROVAL_INFERRED_SINGLE_PENDING")
+            elif self._pending_approvals:
+                self._missing_events = True
+                self._anomalies.add("APPROVAL_RESOLUTION_UNCORRELATED")
         if event.kind in _FINISH_EVENT:
             new_terminal = _FINISH_EVENT[event.kind]
             if self._reported_terminal and self._reported_terminal != new_terminal:
@@ -223,6 +250,17 @@ class CausalRunAuditor:
         if not isinstance(value, str) or not _SAFE_CODE.fullmatch(value):
             raise InvalidTelemetry("Run status is missing or invalid")
         self._status = value
+        raw_updated = status.get("updated_at")
+        if raw_updated is not None:
+            try:
+                updated = float(raw_updated)
+            except (TypeError, ValueError, OverflowError):
+                raise InvalidTelemetry("Invalid run status timestamp") from None
+            if not 0 <= updated < 4102444800:
+                raise InvalidTelemetry("Invalid run status timestamp")
+            self._status_updated_at = updated
+            if self._last_timestamp is not None and updated + 0.001 < self._last_timestamp:
+                self._anomalies.add("STATUS_SNAPSHOT_STALE")
         if status.get("turn_exit_reason"):
             self._reason = _safe_reason(status["turn_exit_reason"])
 
@@ -237,13 +275,18 @@ class CausalRunAuditor:
             stop_reason, action = "EVIDENCE_INCOMPLETE", "FETCH_STATUS_AND_REPLAY_EVENTS"
         elif self._pending_tools:
             stop_reason, action = "POSSIBLE_EXTERNAL_EFFECT_UNKNOWN", "RECONCILE_TOOL_EFFECT"
+        elif "STATUS_SNAPSHOT_STALE" in self._anomalies:
+            stop_reason, action = "STALE_STATUS_SNAPSHOT", "REFETCH_AUTHORITATIVE_STATUS"
         elif self._pending_approvals:
             stop_reason, action = "WAITING_APPROVAL", "WAIT_FOR_AUTHORIZED_APPROVAL"
         elif inconsistent:
             stop_reason, action = "CONTRADICTORY_STATUS", "FETCH_STATUS_AND_REPLAY_EVENTS"
         elif self._status in _TERMINAL:
-            stop_reason, action = (
-                self._reason or self._status.upper(), "NO_RETRY;_INSPECT_TERMINAL_RESULT")
+            if self._status == "completed" and self._tool_errors:
+                stop_reason, action = "COMPLETED_WITH_TOOL_ERRORS", "INSPECT_TOOL_FAILURE_RECOVERY"
+            else:
+                stop_reason, action = (
+                    self._reason or self._status.upper(), "NO_RETRY_INSPECT_TERMINAL_RESULT")
         elif self._reported_terminal:
             stop_reason, action = "TERMINAL_EVENT_NOT_STATUS_VERIFIED", "FETCH_RUN_STATUS"
         elif self._status == "waiting_for_approval":
@@ -261,6 +304,7 @@ class CausalRunAuditor:
             last_event_timestamp=self._last_timestamp,
             reported_terminal=self._reported_terminal, supplied_status=self._status,
             pending_tool_calls=len(self._pending_tools),
+            tool_errors=self._tool_errors,
             pending_approvals=len(self._pending_approvals),
             missing_events=self._missing_events, status_inconsistent=inconsistent,
             stop_reason=stop_reason, next_action=action, evidence=tuple(reasons))
