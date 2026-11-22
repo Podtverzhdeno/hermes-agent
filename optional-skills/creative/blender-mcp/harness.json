@@ -86,5 +86,6 @@
   "failure_modes": [
     "Never run latest unpinned remote addon or accept arbitrary untrusted bpy source.",
     "On unknown socket outcome inspect scene first; never blindly replay deletes."
-  ]
+  ],
+  "skill_git_blob": "2b4f18933b02476d95fba6fa091dfa9e71bfe1d6"
 }

@@ -67,5 +67,6 @@
   "failure_modes": [
     "Do not claim scan completeness from a single parsed text fragment.",
     "Never upload restricted files to remote OCR or persist private images in logs."
-  ]
+  ],
+  "skill_git_blob": "2fdf4ea4137d00bc6a01b21cd1319f886b8aab1a"
 }
