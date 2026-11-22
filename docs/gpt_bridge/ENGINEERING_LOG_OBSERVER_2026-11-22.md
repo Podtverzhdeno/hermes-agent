@@ -59,6 +59,9 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 
 
 | O-22 | OBSERVED_RELEASE_TAG | Verified upstream tag v0.23.3 docs and `api_server_runs.py`: canonical durable admissions, scope-bound approvals, replay-truncated SSE and `unknown` recovery with generation fencing exist. | Align migration with current upstream behavior; do not reintroduce April legacy races. |
-| O-23 | CHANGE_ISOLATION | Renamed this PR's metadata v1 parser to `gateway/gpt_bridge_metadata_audit.py` and its test to `test_gpt_bridge_metadata_audit.py` in one expected-HEAD Git tree update. | Exact-path overlap with #4 removed; semantic integration/adapter still OPEN. |
+| O-23 | CHANGE_ISOLATION | Renamed this PR's metadata v1 parser to `gpt_bridge_metadata_audit.py` and its test to `test_gpt_bridge_metadata_audit.py` in one expected-HEAD Git tree update. | Exact-path overlap with #4 removed; semantic integration/adapter still OPEN. |
 
 **O-22/O-23 verification:** only release-tag source inspection and atomic Git source-change provenance; new PR CI and Windows integration require separate evidence.
+
+
+| O-24 | OBSERVED_CODE + FIX | `gateway/__init__.py -> hermes_cli.config -> yaml` causes implicit third-party import for offline tests. Moved observer to root stdlib-only module; CI uses exact-HEAD docs triggers and per-PR concurrency cancellation. | Validate all 3 Python versions through GitHub Actions; HOLD until complete. |

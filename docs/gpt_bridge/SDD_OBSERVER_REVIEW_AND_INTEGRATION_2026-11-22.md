@@ -294,4 +294,11 @@ This audit is a bounded snapshot through authenticated GitHub connector calls. N
 ### ADR-GPT-018 (decision)
 **ACCEPT for integration planning:** upstream v0.23.3 parity + native Runs API observer + trust-boundary adapter. **REJECT:** building a new authoritative queue or independent recovery engine first. This is higher priority than growing the offline parser, but deployment remains blocked until the real Windows extension and user-approved credentials are inspected.
 
-**Conflict-resolution executed in this draft:** this PR's metadata schema parser moved from `gateway/gpt_bridge_event_audit.py` to `gateway/gpt_bridge_metadata_audit.py`, with matching test move. This is NOT a claim that native SSE parser PR #4 and our metadata parser are integrated; it simply removes an unnecessary same-path write collision while preserving the review boundary. Both still require an explicit adapter and unified regression review.
+**Conflict-resolution executed in this draft:** this PR's metadata schema parser moved from `gateway/gpt_bridge_event_audit.py` to `gpt_bridge_metadata_audit.py`, with matching test move. This is NOT a claim that native SSE parser PR #4 and our metadata parser are integrated; it simply removes an unnecessary same-path write collision while preserving the review boundary. Both still require an explicit adapter and unified regression review.
+
+
+### CI isolation correction — O-24
+
+**OBSERVED_CODE:** `main` includes a non-empty `gateway/__init__.py` which imports `hermes_cli.config`, importing `yaml` at module load time. This makes a supposedly pure-stdlib check under `gateway/` dependent on the full application environment, even if the audit code itself only imports Python standard library. The audit module was moved out to root `gpt_bridge_metadata_audit.py` with a matching isolated import in tests. The real gateway remains unchanged. This is deliberately an **offline** tool and cannot be mistaken for a runtime-installed gateway adapter.
+
+**CI scope correction:** the isolated GitHub workflow now checks documentation changes on exact HEAD and uses per-PR `concurrency.cancel-in-progress` to avoid leaving obsolete checks queued as dozens of agents push. Cancelled checks are not success evidence. A future production observer should be added only through an explicit authenticated adapter and separate integration PR.

@@ -4,7 +4,7 @@ This package is a **reviewable, isolated patch**, not a live-installed extension
 
 ## Contents
 
-- `gateway/gpt_bridge_metadata_audit.py`: strict metadata-only NDJSON event parser and causal audit, no side effects.
+- `gpt_bridge_metadata_audit.py`: strict metadata-only NDJSON event parser and causal audit, no side effects.
 - `scripts/gpt_bridge_pr_collision_audit.py`: PR overlap and SHA-bound CI evidence checker, never auto-merges.
 - `tests/`: 58 pure-stdlib unit/negative tests for privacy, malicious input, replay, unknown effects, source gaps, 30+ agent coordination.
 - `docs/gpt_bridge/SDD_OBSERVER_REVIEW_AND_INTEGRATION_2026-11-22.md`: architecture evaluation, failure catalog, gates, decisions.
@@ -14,7 +14,7 @@ This package is a **reviewable, isolated patch**, not a live-installed extension
 ## Test offline from repository root
 
 ```sh
-python -m compileall -q gateway/gpt_bridge_metadata_audit.py scripts/gpt_bridge_pr_collision_audit.py
+python -m compileall -q gpt_bridge_metadata_audit.py scripts/gpt_bridge_pr_collision_audit.py
 python -m unittest discover -s tests/gateway -p 'test_gpt_bridge_metadata_audit.py' -q
 python -m unittest discover -s tests/scripts -p 'test_gpt_bridge_pr_collision_audit.py' -q
 python -m gateway.gpt_bridge_metadata_audit redacted-events.ndjson --output audit.json
