@@ -1,38 +1,38 @@
 # Hermes ↔ GPT: Causal Observability and 50-Agent Reliability (SDD addendum)
 
 **Date:** 2026-11-22. **Status:** reviewed architecture and offline prototype; **not deployed**.
-**Parent design:** draft PR #7 (\`docs/gpt_bridge/SDD.md\`).
-**Source baseline:** fork \`main@7e9100901819ee44c16b4ddcb79a6bcb7909f591\`; rebase against modern upstream required.
-**Isolation:** this workstream MUST NOT edit \`gateway/platforms/api_server.py\`, \`autopilot/ledger.py\`, ACP callback code or other agents' branches. Do not merge without review and exact-SHA tests.
+**Parent design:** draft PR #7 (`docs/gpt_bridge/SDD.md`).
+**Source baseline:** fork `main@7e9100901819ee44c16b4ddcb79a6bcb7909f591`; rebase against modern upstream required.
+**Isolation:** this workstream MUST NOT edit `gateway/platforms/api_server.py`, `autopilot/ledger.py`, ACP callback code or other agents' branches. Do not merge without review and exact-SHA tests.
 
 ## ADR-01: one state authority, many evidence readers (ACCEPT)
 
 Current upstream Hermes provides durable Runs API and Kanban worker lanes. Upstream must be reviewed as the lifecycle owner. A new GPT extension must **not** introduce its own task queue, approvals, leases or authoritative success state. Browser UI is a non-authoritative observer; optional explicit, user-approved interaction is a separate capability. The fork's prototype Autopilot PR #1 must be compared to upstream, not blindly layered as a second scheduler.
 
-\`\`\`
+```
 Owner instruction -> versioned run/task contract -> upstream Hermes Runs/Kanban
                                                   -> trusted tool + effect gateway
                                                   -> independently verified receipts
          +-- authenticated, bounded event adapter -> diagnostic event journal
                                                        -> causal projection
                                                        -> operator / optional MV3 UI
-\`\`\`
+```
 
-For an external write, \`prepare -> effect reserved -> remote call -> verified receipt\` has crash windows. A timeout after reservation means **UNKNOWN OUTCOME**, never an automatic repeated write. Persist the ledger reservation and outbox atomically in the authoritative system. The read-only observer below cannot enforce authorization or exactly-once effects.
+For an external write, `prepare -> effect reserved -> remote call -> verified receipt` has crash windows. A timeout after reservation means **UNKNOWN OUTCOME**, never an automatic repeated write. Persist the ledger reservation and outbox atomically in the authoritative system. The read-only observer below cannot enforce authorization or exactly-once effects.
 
 ## ADR-02: heartbeat is not progress (ACCEPT)
 
-Upstream issue https://github.com/NousResearch/hermes-agent/issues/100971 documents active heartbeats during a stuck tool loop. Track four dimensions independently: \`transport_connected\`, \`worker_recent_heartbeat\`, \`verified_progress\`, \`authoritative_task_succeeded\`. A model's "done" message, a heartbeat or a ChatGPT spinner disappearing cannot complete a task.
+Upstream issue https://github.com/NousResearch/hermes-agent/issues/100971 documents active heartbeats during a stuck tool loop. Track four dimensions independently: `transport_connected`, `worker_recent_heartbeat`, `verified_progress`, `authoritative_task_succeeded`. A model's "done" message, a heartbeat or a ChatGPT spinner disappearing cannot complete a task.
 
 Detect repeated *same* operation fingerprint within one producer/task/attempt/fence/revision since the last independent matching verifier event. An unrelated task's verification or an earlier successful batch must never suppress a later loop. This bug was discovered and fixed during the second independent review. Four new adversarial tests cover cross-task, cross-attempt, wrong-revision and post-verifier repeated-intent cases. Classify as **NO_VERIFIED_PROGRESS / suspect**, not a proven hang. A legitimate workflow may repeat the same operation. No restart or cancellation solely from this heuristic.
 
 ## ADR-03: append-only causal event envelope (ACCEPT, prototype)
 
-An event records \`schema_version=1\`, canonical \`event_id\`, \`producer_id\`, positive \`source_event_seq\`, \`run_id\`, \`task_id\`, \`attempt_id\`, \`lease_fence\`, allowlisted \`kind\`, optional \`effect_key\` and \`operation_fingerprint\` as SHA256 digests, \`target_revision\` full Git hash, <=8 content-addressed \`evidence_refs\`. Maximum 4096 encoded bytes; unknown keys and raw prompts, cookies, credentials and tool arguments are rejected.
+An event records `schema_version=1`, canonical `event_id`, `producer_id`, positive `source_event_seq`, `run_id`, `task_id`, `attempt_id`, `lease_fence`, allowlisted `kind`, optional `effect_key` and `operation_fingerprint` as SHA256 digests, `target_revision` full Git hash, <=8 content-addressed `evidence_refs`. Maximum 4096 encoded bytes; unknown keys and raw prompts, cookies, credentials and tool arguments are rejected.
 
-**Trust comes from an independently authenticated adapter**, never a model-supplied event flag. Correlation IDs are not authorization; SHA256 hashes alone are not evidence of correctness. Use one producer incarnation ID per process boot; its sequence is global across runs. Event ordering across producers is partial, not chronological. Durable event ingest must be atomic, deduplicating by \`event_id\` and \`(producer_id, source_event_seq)\`. Conflicting redelivery is an error, never an overwrite or trust upgrade. SQLite WAL is a **single-host** prototype, not a distributed consensus service or shared-network filesystem database.
+**Trust comes from an independently authenticated adapter**, never a model-supplied event flag. Correlation IDs are not authorization; SHA256 hashes alone are not evidence of correctness. Use one producer incarnation ID per process boot; its sequence is global across runs. Event ordering across producers is partial, not chronological. Durable event ingest must be atomic, deduplicating by `event_id` and `(producer_id, source_event_seq)`. Conflicting redelivery is an error, never an overwrite or trust upgrade. SQLite WAL is a **single-host** prototype, not a distributed consensus service or shared-network filesystem database.
 
-The isolated candidate implementation + 29 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. \`authoritative_task_state\` remains null by design.
+The isolated candidate implementation + 29 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. `authoritative_task_state` remains null by design.
 
 ## ADR-04: deterministic reason precedence and recovery
 
@@ -59,7 +59,7 @@ Retain secondary diagnoses alongside the highest-priority safety action. A stale
 | #7 SDD | Design-only PR; general Tests cancelled | Reference architecture, not proof of deployment |
 | This branch | Causal diagnostics SDD / independent proof-of-concept | No contested API or agent execution changes |
 
-#4 has a concrete test mismatch: \`test_agent_error_returns_500\` expects raw "Provider failed", while code now returns a generic error with run ID. Keep production response redacted; update tests deliberately, don't disclose internal errors to satisfy old assertions.
+#4 has a concrete test mismatch: `test_agent_error_returns_500` expects raw "Provider failed", while code now returns a generic error with run ID. Keep production response redacted; update tests deliberately, don't disclose internal errors to satisfy old assertions.
 
 Each of 30–50 workers has a unique producer incarnation, immutable task and requirements revision, scoped worktree, resource lease/fence at the **trusted effect adapter**, inherited parent budget, explicit approval identity and independent verification. A read-only observer never promotes a task to success. No model marks its own evidence trusted.
 
@@ -98,8 +98,8 @@ Unverified and REQUIRED for promotion: Python 3.11/3.12 package imports in actua
 
 ## Evidence log — 2026-11-22
 
-- OBSERVED: \`Podtverzhdeno/hermes-agent\` main remains old fork; multiple overlapping draft API PRs. #6 targeted CI green; #4 full Tests failed. The full failure log includes many missing OpenAI-key errors, and a specific API test mismatch; not all 29 failures have been independently classified.
-- OBSERVED/BLOCKED: Local_WorkSpace returned \`Session terminated\`. The Windows extension under the historically reported \`chat-launch-smoke-desktop-test/web-extension\` and bridge process were **not freshly inspected**, no local files updated and no live monitoring performed.
+- OBSERVED: `Podtverzhdeno/hermes-agent` main remains old fork; multiple overlapping draft API PRs. #6 targeted CI green; #4 full Tests failed. The full failure log includes many missing OpenAI-key errors, and a specific API test mismatch; not all 29 failures have been independently classified.
+- OBSERVED/BLOCKED: Local_WorkSpace returned `Session terminated`. The Windows extension under the historically reported `chat-launch-smoke-desktop-test/web-extension` and bridge process were **not freshly inspected**, no local files updated and no live monitoring performed.
 - TESTED OFFLINE: 25 isolated diagnostic tests passed; this is a proof-of-concept only, not mainline Hermes CI or a deployed observer.
 - NEXT OWNER: verify extension manifest/files SHA, actual transport and local logs after connector recovery. Integrate official task feed with authenticated producer and durable cursor **only after** upstream source parity and security review.
 
