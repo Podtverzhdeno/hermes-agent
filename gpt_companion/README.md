@@ -2,7 +2,7 @@
 
 **Status (2026-11-22):** offline journal + diagnosis only. It does not monitor a running GPT session until an authorized Hermes/provider adapter emits events. No browser DOM scraping, tool dispatch, automatic retry, external write, or autonomous approval.
 
-See [SDD](../docs/sdd/GPT_COMPANION_SDD.md) for the full architecture, threat model, failure matrix and release gates.
+See [SDD](../docs/sdd/GPT_COMPANION_SDD.md) and [agent mandate](../docs/sdd/GPT_COMPANION_AGENT_MANDATE.md) for the full architecture, threat model, failure matrix and release gates.
 
 ## What the code actually does
 
@@ -46,6 +46,7 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | State | Action |
 | --- | --- |
 | `NOT_OBSERVED` | Inspect authenticated intake and observer connection |
+| `CLOCK_SKEW_DETECTED` | Check server clock/time sync; do not diagnose a dead worker from invalid timestamps |
 | `TRACE_INCOMPLETE` | Replay missing source-local sequences from durable outbox |
 | `RECENT_TELEMETRY` | Observe; do not infer task success |
 | `ALIVE_NO_PROGRESS` | Check tool stage, budget, provider response and true process state |
