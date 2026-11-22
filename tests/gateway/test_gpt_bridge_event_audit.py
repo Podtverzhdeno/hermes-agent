@@ -304,3 +304,28 @@ def test_arbitrary_status_is_not_echoed_or_treated_as_terminal():
     assert credential not in json.dumps(out)
     assert out["supplied_status"] == "unknown_status"
     assert "UNRECOGNIZED_STATUS" in out["evidence"]
+
+
+def test_native_interim_and_stopping_events_are_not_schema_errors():
+    wire = sse(event("run.queued", 0), event("message.interim", 1,
+                          text="PRIVATE_ASSISTANT_COMMENTARY"),
+               event("run.stopping", 2))
+    out = explain_sse(wire, RID)
+    assert out["missing_events"] is False
+    assert "UNRECOGNIZED_EVENT" not in out["evidence"]
+    assert "PRIVATE_ASSISTANT_COMMENTARY" not in json.dumps(out)
+    assert out["last_event"] == "run.stopping"
+
+
+@pytest.mark.parametrize("final_status", ["cancelled", "interrupted"])
+def test_cancelled_run_status_not_proof_remote_effect_stopped(final_status):
+    # A live Bot Chat owner can continue after gateway-level cancellation;
+    # lack of a pending local tool event does not prove no external effects.
+    out = explain_sse(
+        sse(event("run.queued", 0),
+            event("run." + final_status, 1)),
+        RID, {"run_id": RID, "status": final_status,
+              "updated_at": 1795344001.0})
+    assert out["stop_reason"] == final_status.upper()
+    assert out["next_action"] == "VERIFY_EXTERNAL_EFFECTS_BEFORE_RETRY"
+    assert "CANCELLATION_NOT_EFFECT_PROOF" in out["evidence"]
