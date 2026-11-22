@@ -17,8 +17,15 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 ZERO_HASH = "0" * 64
-OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,127}$")
-REASON_CODE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+REASON_CODES = frozenset({
+    "AUTH_DENIED", "PERMISSION_DENIED", "RATE_LIMITED", "HTTP_RETRY",
+    "MODEL_TIMEOUT", "TOOL_TIMEOUT", "TRANSPORT_LOST", "CDP_DETACHED",
+    "APPROVAL_EXPIRED", "EFFECT_UNCERTAIN", "EFFECT_RECONCILED",
+    "WORKER_CRASHED", "WORKER_REPLACED", "RUN_CANCELLED",
+    "SCHEMA_INVALID", "RESULT_MISMATCH", "VERIFICATION_FAILED",
+    "TASK_FAILED", "INTERRUPTED", "SERVICE_UNAVAILABLE", "UNKNOWN",
+})
 KINDS = frozenset({
     "task.started", "worker.heartbeat", "step.started", "step.finished",
     "model.request_started", "model.request_finished", "tool.started",
@@ -66,8 +73,8 @@ def _details(details: Mapping[str, Any] | None) -> dict[str, Any]:
         if key in {"step_id", "action_id", "target_id", "channel_id", "request_id"}:
             sanitized[key] = _id(key, value)
         elif key == "reason_code":
-            if not isinstance(value, str) or not REASON_CODE.fullmatch(value):
-                raise EventValidationError("reason_code must be a symbolic enum, not an error message")
+            if not isinstance(value, str) or value not in REASON_CODES:
+                raise EventValidationError("reason_code must match the fixed v1 reason catalog")
             sanitized[key] = value
         elif key == "http_status":
             if type(value) is not int or not 100 <= value <= 599:
