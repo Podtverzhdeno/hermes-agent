@@ -306,3 +306,38 @@ and candidate runs are captured with the same prompt, model, harness,
 tool registry and resource state. Future corpus expansions should add
 paraphrases, ambiguity, mixed requests, partial tool errors and multiple
 languages, then keep a sealed holdout set.
+
+### Second-pass domain hardening — 2026-11-22
+
+Individual harness manifests are not sufficient when the corresponding SKILL.md
+contains obsolete API calls or unsafe runtime defaults. The GitHub Issues,
+PDF/OCR, Notion, mcporter and FastMCP procedures were audited individually.
+
+Notion: corrected the 2025-09-03 database/data-source distinction, switched
+row creation to the selected data_source_id, switched database creation to
+POST /v1/databases with initial_data_source.properties, and documented
+2026-03-11 as a newer version with breaking field changes. The former
+2025-09-03 latest-version claim and wrong creation endpoint were defects.
+
+mcporter: npx can fetch and execute remote packages; discovered server
+entries and tool descriptions are not trust grants. Configuration, OAuth,
+remote writes and stdio launches need explicit authority. Errors after a
+non-idempotent tool call must be reconciled before retry.
+
+FastMCP: use an authorized isolated environment; do not register clients or
+deploy HTTP servers by default. The bundled file processor formerly allowed
+unbounded reads from arbitrary absolute paths. It now requires explicit
+MCP_FILE_ROOT, rejects traversal/absolute/symlink paths, bounds bytes and
+previews, and refuses unknown/oversized inputs. The real helper is exercised
+by tests with a stub FastMCP host; this does not require provider credentials.
+
+**Residual risk:** Python path checks are not a full OS security boundary
+and cannot remove all filesystem TOCTOU races. A hostile shared directory
+also requires process and OS-level isolation. Source-level tests do not
+demonstrate actual domain success against remote APIs.
+
+Primary references:
+- https://developers.notion.com/docs/upgrade-guide-2025-09-03
+- https://developers.notion.com/docs/upgrade-guide-2026-03-11
+- https://mcporter.sh/install.html
+- https://blog.gofastmcp.com/3mufbh2vcv22o
