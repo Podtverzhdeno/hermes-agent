@@ -142,6 +142,17 @@ class OfflineLedgerContract(unittest.TestCase):
         self.assertEqual(self.ledger.get(task)["status"], "blocked")
         self.assertEqual(self.ledger.approval_queue(), [])
 
+    def test_project_stop_revokes_all_active_leases(self):
+        task = self.task()
+        claim = self.claim()
+        self.assertEqual(self.ledger.stop_project("sandbox"), 1)
+        self.assertEqual(self.ledger.stop_project("sandbox"), 1)
+        with self.assertRaises(LedgerConflict):
+            self.ledger.heartbeat(task, "worker", claim["fence"])
+        self.assertEqual(self.ledger.resume_project("sandbox"), 2)
+        with self.assertRaises(LedgerConflict):
+            self.ledger.begin_verification(task, "worker", claim["fence"])
+
     def test_cancel_revokes_mutations(self):
         task = self.task()
         claim = self.claim()
