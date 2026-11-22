@@ -423,3 +423,57 @@ def test_project_controls_persist_across_restart(ctx):
         submit(reopened, key="new-on-stopped")
     assert reopened.resume_project("My_shelter") == 2
     assert reopened.project_control("My_shelter")["stopped"] == 0
+
+
+def test_additive_schema_migration_from_early_prototype(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old-prototype.db"
+    with sqlite3.connect(path) as db:
+        db.execute("""
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY,
+                request_key TEXT UNIQUE NOT NULL,
+                project TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                revision TEXT NOT NULL,
+                required_evidence TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 0,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL,
+                available_at REAL NOT NULL,
+                owner TEXT,
+                fence INTEGER NOT NULL DEFAULT 0,
+                lease_until REAL,
+                cancel_requested INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+        """)
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 0
+
+    clock = Clock()
+    upgraded = AutopilotLedger(path, clock)
+    task = submit(upgraded, key="migrated")
+    assert upgraded.claim("A1", lease_seconds=15)["id"] == task
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        columns = {x[1] for x in db.execute("PRAGMA table_info(tasks)")}
+        assert "project_generation" in columns
+        assert "resume_without_attempt" in columns
+    reopened = AutopilotLedger(path, clock)
+    assert reopened.get(task)["status"] == "running"
+
+
+def test_future_schema_is_rejected_without_writes(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "unknown.db"
+    with sqlite3.connect(path) as db:
+        db.execute("PRAGMA user_version=999")
+    with pytest.raises(LedgerConflict, match="newer"):
+        AutopilotLedger(path, Clock())
+    with sqlite3.connect(path) as db:
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 999
+        assert db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
