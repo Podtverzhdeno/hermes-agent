@@ -204,3 +204,20 @@ def test_offline_cli_only_outputs_metadata(tmp_path):
 def test_invalid_max_event_bytes_does_not_create_fake_acceptances():
     o = ReadOnlyEventObserver(max_event_bytes=10)
     assert not o.ingest(evt()).accepted
+
+
+def test_cli_rejects_duplicate_json_keys_without_raw_leak():
+    import subprocess
+    import sys
+    from pathlib import Path
+    cli = Path(__file__).resolve().parents[2] / "scripts" / "gpt_bridge_observe.py"
+    event = evt()
+    import json
+    raw = json.dumps(event)
+    poisoned = raw[:-1] + ', "kind": "task.completed"}'
+    proc = subprocess.run([sys.executable, str(cli)], input=(poisoned + "\n").encode(),
+                          capture_output=True, timeout=10, check=True)
+    summary = json.loads(proc.stdout)
+    assert summary["outcomes"]["invalid_json"] == 1
+    assert summary["observer"]["recent_events"] == 0
+    assert "task.completed" not in proc.stdout.decode()
