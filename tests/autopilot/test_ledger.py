@@ -329,3 +329,30 @@ def test_unstructured_failure_message_is_not_logged(ctx):
     serialized = json.dumps(events)
     assert secret not in serialized
     assert "UNCLASSIFIED_FAILURE" in serialized
+
+
+def test_legacy_tasks_table_is_migrated_without_losing_records(tmp_path):
+    import sqlite3
+    path = tmp_path / "legacy.sqlite3"
+    with sqlite3.connect(path) as conn:
+        conn.execute("""
+            CREATE TABLE tasks (
+                id TEXT PRIMARY KEY, request_key TEXT UNIQUE NOT NULL,
+                project TEXT NOT NULL, goal TEXT NOT NULL, revision TEXT NOT NULL,
+                required_evidence TEXT NOT NULL, status TEXT NOT NULL,
+                priority INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0,
+                max_attempts INTEGER NOT NULL, available_at REAL NOT NULL,
+                owner TEXT, fence INTEGER NOT NULL DEFAULT 0,
+                lease_until REAL, cancel_requested INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL, updated_at REAL NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO tasks (id,request_key,project,goal,revision,required_evidence,
+                status,max_attempts,available_at,created_at,updated_at)
+            VALUES('old','old-key','proj','goal','sha','["ci"]','queued',3,0,0,0)
+        """)
+    ledger = AutopilotLedger(path)
+    assert ledger.get("old")["retry_allowed"] == 1
+    assert ledger.submit(request_key="old-key", project="proj", goal="goal",
+                         revision="sha", required_evidence=["ci"]) == "old"
