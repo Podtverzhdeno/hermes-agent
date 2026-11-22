@@ -400,6 +400,35 @@ Do not treat file-sha differences alone as proof of an upstream fix's correctnes
 
 **Decision D-011 (PROPOSED):** because upstream has significantly evolved ACP state/interrupt management, every old-fork fix needs source-parity comparison before merge. Passing local tests alone is not evidence of safe integration with the current user-installed Hermes or future upstream versions.
 
+## 12.3 Comparative engineering review: competing gateway API PRs
+
+**Scope:** source patches of #4, #5, #6, #11 and new idempotency helpers inspected via GitHub. These are design assessments, **not** completed fault-injection or deployment benchmarks. All three cache variants are process-local, not a durable exactly-once remote side-effect guarantee.
+
+| Safety criterion | PR #4 | PR #5 | PR #6 | PR #11 |
+|---|---|---|---|---|
+| Full canonical request fingerprint | Yes | Yes | Yes for nonstream | Input validation only |
+| Principal/session-scoped idempotency key | Hashes auth + client session + key | Raw key per adapter | Raw key with `chat:` prefix | Retains old behavior |
+| Same-key in-flight collision | 409 without dispatch | Await shielded single-flight task | Await shielded task | No atomic new cache |
+| Failed/unknown external outcome | Tombstone until short TTL/eviction | **Key evicted after exception** | Unknown state retained in process memory | Depends on old unsafe cache |
+| Bounded concurrent distinct keys | In-flight map **unbounded** | In-flight capacity bounded | Total cache bounded, unknown entries persistent | N/A |
+| Crash/restart durability | No | No | No | No |
+| SSE requests carrying an idempotency key | Not rejected by added nonstream cache | Not rejected by added nonstream cache | Rejected | Rejected |
+| Error-valued final response | Partial detection | May be cached | Interruption/failed/completed flags added, still permits some ambiguous cases | Not solved |
+
+**Decision D-012 (PROPOSED — DO NOT BLINDLY MERGE):** no candidate alone satisfies the acceptance contract for retryable external writes. Preserve #4's caller/session identity namespace, #5's bounded-inflight queue, #6's no-eviction-of-unknown-outcome approach and explicit status reporting, and #11's strict request preflight / keyed-SSE rejection, but select **one implementation** that passes all failure injection. **Durable** effect reservation and independent reconciliation are mandatory before allowing a new worker/restart to replay a write.
+
+**Adversarial gateway test matrix:**
+1. Two authenticated principals share identical `Idempotency-Key` and payload. Each must receive its own result/session; no cross-principal response leaks.
+2. One key fails after remote effect commit but before HTTP reply; repeat after 301s, eviction pressure and complete server restart. Never execute effect twice without independent proof.
+3. 2,000 distinct in-flight keys with capacity 1,000. Must reject predictably with bounded memory, no untracked invocation.
+4. An agent result with `error` *and* non-empty `final_response` must never become unquestioned success.
+5. Streaming request with idempotency key must be rejected **before** model/tool dispatch until a durable replay contract for SSE exists.
+6. A client disconnects during streamed content; distinguish `client_gone`, `agent_cancelling`, `effect_unknown` and `agent_done`. Nonstandard SSE error events require explicit client support checks.
+7. Provider quota hit across 30 workers; coordinated backpressure and parent budget enforcement, not a storm of local 429 retries.
+8. Cache entry and external effect belong to a versioned `task_id/fence/effect_key`; invalid target revision refuses completion.
+
+**Merge integration owner gate:** #14 should coordinate this tradeoff review. #4/#5/#6/#11 cannot be marked mutually compatible just because individual unit tests pass; their API request and error semantics are mutually exclusive in several paths. Do not assign numeric quality ratings before the test results exist.
+
 ## 13. Primary sources (selection, not an exhaustive literature claim)
 
 - Chrome MV3 service-worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
