@@ -17,7 +17,22 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import (
+    Request, HTTPRedirectHandler, ProxyHandler, build_opener,
+)
+
+
+class _RejectRedirects(HTTPRedirectHandler):
+    """Never forward the bearer token after an HTTP redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+# Avoid implicit proxy environment variables for a local trusted control API.
+# Remote proxy support requires a separately audited explicit transport.
+_SAFE_HTTP_OPENER = build_opener(ProxyHandler({}), _RejectRedirects)
+
 import uuid
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -58,8 +73,8 @@ def get_json(base_url: str, path: str, api_key: str, timeout: float = 8) -> dict
     headers = {"Accept": "application/json", "User-Agent": "HermesReadOnlyRunObserver/0.1"}
     if api_key:
         headers["Authorization"] = "Bearer " + api_key
-    with urlopen(Request(base_url + path, headers=headers, method="GET"),
-                 timeout=timeout) as response:
+    with _SAFE_HTTP_OPENER.open(Request(base_url + path, headers=headers, method="GET"),
+                                timeout=timeout) as response:
         raw = response.read(_MAX_RESPONSE_BYTES + 1)
     if len(raw) > _MAX_RESPONSE_BYTES:
         raise ValueError("Response exceeds safe size limit")
