@@ -326,10 +326,12 @@ class EventJournal:
                            ("run.reported_completed", "run.reported_failed", "worker.stopped")]
         # Only a source-local sequence is ordered. Contradictory terminal
         # reports from multiple emitters require operator reconciliation.
-        terminal_sources = {e["source"] for e in terminal_events}
-        cross_source_terminal = len(terminal_sources) > 1
-        # A worker stop is lifecycle cleanup, not a reported task outcome.
+        # A worker may stop under a different source identity than the
+        # coordinator that reports the outcome. That is expected, not a
+        # conflict: only *run outcome reporters* compete over terminal truth.
         outcome_reports = [e for e in terminal_events if e["kind"] != "worker.stopped"]
+        report_sources = {e["source"] for e in outcome_reports}
+        cross_source_terminal = len(report_sources) > 1
         conflicting_outcomes = len({e["kind"] for e in outcome_reports}) > 1
         if cross_source_terminal or conflicting_outcomes:
             contradictory = True
