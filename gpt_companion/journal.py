@@ -249,8 +249,16 @@ class EventJournal:
                 continue
             source_frontier[src] = sequence
             frontier_receipts.append((src, received_at, event["kind"]))
-            if (event["kind"] not in ("worker.heartbeat", "run.accepted")
-                    and (not worker_sources or src in worker_sources)):
+            # Only meaningful *completed* stage boundaries can refresh the
+            # progress clock. Starting a worker/LLM call repeatedly or simply
+            # sending heartbeats proves neither result nor forward progress.
+            completed_stage = event["kind"] in (
+                "worker.progress", "llm.response_received",
+                "tool.effect_acknowledged", "tool.effect_not_executed",
+                "approval.resolved", "run.reported_completed",
+                "run.reported_failed",
+            )
+            if completed_stage and (not worker_sources or src in worker_sources):
                 progress_receipts.append(received_at)
         # Gateway/observer traffic does not keep a known worker alive. If this
         # attempt has worker.* signals, measure worker-only source frontiers.
