@@ -5,6 +5,7 @@ selection and real tool execution require an independent end-to-end eval.
 """
 import copy
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -86,6 +87,11 @@ class TestBundledHarnesses(unittest.TestCase):
                 self.assertTrue(skill_doc.startswith("---\n"))
                 profile = json.loads((folder / "harness.json").read_text(encoding="utf-8"))
                 self.assertIn("name: " + profile["skill"], skill_doc.split("---", 2)[1])
+                raw = (folder / "SKILL.md").read_bytes()
+                git_object = hashlib.sha1(
+                    b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw
+                ).hexdigest()
+                self.assertEqual(profile.get("skill_git_blob"), git_object)
                 self.assertEqual(load_skill_harness(folder, profile["skill"]), profile)
                 self.assertNotIn(profile["skill"], names)
                 names.add(profile["skill"])
@@ -111,6 +117,28 @@ class TestBundledHarnesses(unittest.TestCase):
 class TestHarnessValidation(unittest.TestCase):
     def test_valid(self):
         self.assertEqual(validate_harness(example(), "my-skill")["risk"], "external_write")
+
+    def test_pinned_profile_rejects_stale_skill_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            raw = b"---\\nname: my-skill\\ndescription: Example\\n---\\nVersion one"
+            raw = raw.replace(b"\\n", b"\n")
+            (folder / "SKILL.md").write_bytes(raw)
+            p = example()
+            p["skill_git_blob"] = hashlib.sha1(
+                b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw
+            ).hexdigest()
+            (folder / "harness.json").write_text(json.dumps(p), encoding="utf-8")
+            self.assertEqual(load_skill_harness(folder, "my-skill"), p)
+            (folder / "SKILL.md").write_bytes(raw + b" changed")
+            with self.assertRaisesRegex(SkillHarnessError, "SKILL.md changed"):
+                load_skill_harness(folder, "my-skill")
+
+    def test_invalid_git_blob_pin_rejected(self):
+        profile = example()
+        profile["skill_git_blob"] = "not-a-valid-sha"
+        with self.assertRaisesRegex(SkillHarnessError, "invalid Git blob"):
+            validate_harness(profile, "my-skill")
 
     def test_wrong_identity(self):
         with self.assertRaises(SkillHarnessError):
