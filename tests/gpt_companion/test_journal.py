@@ -299,3 +299,17 @@ def test_backward_clock_step_without_new_event_is_visible(context):
     db.ingest(event(1, "worker.started"))
     clock.jump(-10)
     assert db.assess("run-1")["state"] == "CLOCK_SKEW_DETECTED"
+
+
+def test_failed_then_completed_same_attempt_cannot_hide_contradiction(context):
+    db, _ = context
+    db.ingest(event(1, "run.reported_failed", reason_code="UPSTREAM_TIMEOUT"))
+    db.ingest(event(2, "run.reported_completed"))
+    assert db.assess("run-1")["state"] == "TRACE_INCOMPLETE"
+
+
+def test_worker_progress_after_terminal_same_attempt_needs_review(context):
+    db, _ = context
+    db.ingest(event(1, "run.reported_completed"))
+    db.ingest(event(2, "worker.progress"))
+    assert db.assess("run-1")["state"] == "TRACE_INCOMPLETE"
