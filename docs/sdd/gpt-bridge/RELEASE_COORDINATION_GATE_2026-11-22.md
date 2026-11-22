@@ -106,7 +106,7 @@ Examples (read only):
 
 Exit 0 = NO_STACK_ISSUES_NOT_MERGE_APPROVAL; exit 1 = REVIEW_REQUIRED; exit 2 = AUDIT_INCOMPLETE. No output implies it can merge. GitHub has no globally atomic PR snapshot in these separate API calls: rerun against exact candidate refs just before a merge, perform final merged-tree CI, and re-check policies.
 
-Local test evidence: 18 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 36 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
+Local test evidence: 21 offline stacked guard tests passed under Python 3.13, including invalid inventory, stale parent, divergent body, missing proof, nested overlap, fail-closed CLI, pagination, no redirect, exact HEAD checks and no write requests. Another comparative generic scanner prototype had 18 passing offline tests, but is intentionally NOT added here due to PR #14 ownership. The total 39 passing tests are local simulation, not end-to-end Hermes/browser or GitHub CI proof. Full Python 3.11 packaging/CI at this PR's exact commit still required.
 
 ## 7. Multi-agent governance and integration queue
 
@@ -158,3 +158,16 @@ Sources and further verification:
 - Temporal activity semantics (comparison, not adoption): https://docs.temporal.io/activities
 
 This SDD records the complexity and quality bar for subsequent workers. It does NOT claim persistent autonomous monitoring is deployed or that a chat instance will operate after the turn ends.
+
+
+## 11. Additional hardening, exact-SHA evidence and sourced transport notes
+
+The remote branch was updated after the initial review to reject malformed GitHub PR and comparison response shapes before any green result and to detect a cycle in stacked PR base dependencies. Even two branch refs temporarily pointing at identical commits must not make a circular stack appear mergeable. Three new negative tests cover the above; the offline local comparison suite is now 39/39 passing (21 stack guard tests in this PR, 18 generic prototype tests kept local). These are source-level and offline test claims; CI must run on the **latest** commit SHA, not the original PR creation SHA.
+
+API workers should distinguish:
+- OpenAI Responses background mode provides provider-managed long-running response IDs and retrieval in supported cases. This is different from persisting Hermes tool outcomes and must not silently substitute for an action ledger. See https://developers.openai.com/api/docs/guides/background .
+- OpenAI webhook delivery may repeat; verify webhook authenticity before parsing and deduplicate by the documented event identifier, with durable inbox acknowledgment. See https://developers.openai.com/api/docs/guides/webhooks .
+- Chrome MV3 can terminate idle service workers; behavior depends on browser version and active APIs, and chrome.debugger sessions have extended lifetime rules since Chrome 118. Never depend on an in-memory interval as a durable worker. See https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/ .
+- OpenTelemetry GenAI tool spans provide a model for instrumentation without logging sensitive arguments/results by default. The error.type attribute should remain low-cardinality. See https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md .
+
+The practical product objective should be stated as a measurable rollout gate: in a representative fault-injection suite, every accepted run has an explainable last trusted state and explicit unknown status on ambiguous effects; no false SUCCEEDED, no duplicate unapproved effect, no irreversible write on stale fence, and no release approval from stale CI evidence. This is a **proposed criterion**, not an achieved production SLO.
