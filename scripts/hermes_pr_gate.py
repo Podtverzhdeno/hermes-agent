@@ -60,6 +60,29 @@ def pages(path, token, limit):
             return rows
     raise EvidenceError("pagination incomplete")
 
+def _unstable_prs(before, after):
+    """Detect exact head/base/draft drift; return numeric PR IDs for incident evidence."""
+    def index(rows):
+        return {p["number"]: (p["head"]["sha"], p["base"]["sha"],
+                              p.get("draft"), p["head"].get("ref"),
+                              p["base"].get("ref")) for p in rows}
+    first, second = index(before), index(after)
+    return sorted(n for n in first.keys() | second.keys()
+                  if first.get(n) != second.get(n))
+
+
+def _incident_code(reason):
+    if "PRs changed during snapshot" in reason:
+        return "SNAPSHOT_RACE"
+    if "HTTP 429" in reason:
+        return "UPSTREAM_RATE_LIMIT"
+    if "HTTP 403" in reason:
+        return "UPSTREAM_PERMISSION_OR_RATE_LIMIT"
+    if "GitHub API unavailable" in reason:
+        return "TRANSPORT_UNAVAILABLE"
+    return "EVIDENCE_INCOMPLETE"
+
+
 def live_snapshot(repository, token=None):
     if not REPO.fullmatch(repository) or ".." in repository:
         raise EvidenceError("invalid repository")
@@ -95,9 +118,12 @@ def live_snapshot(repository, token=None):
                           "state": s.get("state")} for s in statuses["statuses"]],
         })
     second = pages(root + "/pulls?state=open", token, MAX_PRS)
-    stamp = lambda arr: {p["number"]: (p["head"]["sha"], p["base"]["sha"], p.get("draft")) for p in arr}
-    if stamp(first) != stamp(second):
-        raise EvidenceError("PRs changed during snapshot; retry, do not greenlight")
+    moved = _unstable_prs(first, second)
+    if moved:
+        raise EvidenceError("PRs changed during snapshot: #" +
+                            ",#".join(str(n) for n in moved[:30]) +
+                            (" and others" if len(moved) > 30 else "") +
+                            "; retry, do not greenlight")
     return {"schema_version": 1, "repository": repository,
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "consistent": True, "prs": result}
@@ -264,8 +290,7 @@ def main(argv=None):
             "schema_version": 1, "repository": args.repo,
             "observed_at": datetime.now(timezone.utc).isoformat(),
             "status": "EVIDENCE_UNAVAILABLE", "merge_ready": False,
-            "reason_code": "SNAPSHOT_RACE" if "PRs changed during snapshot" in reason
-                           else "EVIDENCE_INCOMPLETE",
+            "reason_code": _incident_code(reason),
             "reason": reason,
         }
         if args.output_json:

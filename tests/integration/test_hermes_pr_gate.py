@@ -144,6 +144,22 @@ class GateTests(unittest.TestCase):
         self.assertNotIn(chr(10) + "# fake", md)
         self.assertIn("skipped", md)
 
+    def test_head_drift_names_specific_prs(self):
+        def remote_row(num, sha, base="main"):
+            return {"number": num, "head": {"sha": sha, "ref": "p" + str(num)},
+                    "base": {"sha": "b" * 40, "ref": base}, "draft": True}
+        before = [remote_row(2, "a" * 40), remote_row(4, "c" * 40)]
+        after = [remote_row(2, "d" * 40), remote_row(4, "c" * 40),
+                 remote_row(5, "e" * 40)]
+        self.assertEqual(m._unstable_prs(before, after), [2, 5])
+
+    def test_incident_code_separates_snapshot_transport_and_429(self):
+        self.assertEqual(m._incident_code("PRs changed during snapshot: #2"), "SNAPSHOT_RACE")
+        self.assertEqual(m._incident_code("GitHub API failed HTTP 429"), "UPSTREAM_RATE_LIMIT")
+        self.assertEqual(m._incident_code("GitHub API failed HTTP 403"), "UPSTREAM_PERMISSION_OR_RATE_LIMIT")
+        self.assertEqual(m._incident_code("GitHub API unavailable: TimeoutError"), "TRANSPORT_UNAVAILABLE")
+        self.assertEqual(m._incident_code("missing evidence"), "EVIDENCE_INCOMPLETE")
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))
