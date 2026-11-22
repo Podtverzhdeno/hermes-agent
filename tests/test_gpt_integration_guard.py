@@ -1,5 +1,6 @@
 """Offline tests for no-false-green and parallel-worker integration gates."""
 import importlib.util
+import io
 from contextlib import closing
 import json
 from pathlib import Path
@@ -215,6 +216,19 @@ class IntegrationGateTests(unittest.TestCase):
         with mock.patch.object(mod, '_get_json', side_effect=fake_get):
             with self.assertRaisesRegex(mod.IncompleteScan, 'Main HEAD changed'):
                 mod.collect('Podtverzhdeno/hermes-agent')
+
+    def test_github_request_is_get_only_and_redirects_disabled(self):
+        payload = io.BytesIO(b'{"ok": true}')
+        with mock.patch.object(mod._SAFE_OPENER, 'open', return_value=payload) as opened:
+            result = mod._get_json('Podtverzhdeno/hermes-agent', 'branches/main', 'fake')
+        req = opened.call_args.args[0]
+        self.assertEqual(result, {'ok': True})
+        self.assertEqual(req.get_method(), 'GET')
+        self.assertEqual(req.full_url,
+                         'https://api.github.com/repos/Podtverzhdeno/hermes-agent/branches/main')
+        self.assertEqual(req.headers['Authorization'], 'Bearer fake')
+        self.assertIsNone(mod._NoRedirect().redirect_request(None, None, 302, '', {},
+                                                               'https://elsewhere.example/'))
 
     def test_repo_arg_cannot_override_host(self):
         with self.assertRaises(ValueError):
