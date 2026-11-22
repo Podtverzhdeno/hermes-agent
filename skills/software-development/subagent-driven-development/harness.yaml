@@ -1,0 +1,23 @@
+# Declarative, advisory-only contract; does NOT grant capabilities.
+schema_version: 1
+skill: subagent-driven-development
+activation:
+  when: ["A multi-part implementation has independently testable work packages","Parallel expert reviews can improve quality without shared-write conflicts"]
+  not_when: undefined
+capabilities:
+  tools: ["delegate_task","todo","read_file","terminal"]
+  side_effects: local_write
+  approval_required: ["Unreviewed merges, production releases and external service mutation"]
+lifecycle:
+  preflight: ["Break work into bounded tasks with single owners and explicit dependencies","Record immutable inputs, worktrees and acceptance criteria"]
+  execute: ["Give each delegate an isolated scope and capped budget","Use independent spec and quality checks before accepting outputs"]
+  verify: ["Integrate only verified artifacts and inspect aggregate diff","Run integration checks, not merely delegates' self-reports"]
+  recover: ["Cancel stalled tasks and reassign after capturing durable state","Never replay non-idempotent writes without checking previous results"]
+budget:
+  max_tool_calls: 80
+  max_reference_bytes: 524288
+evidence:
+  required: ["Task owner, input revision and output revision","Independent review notes and integration test evidence"]
+output:
+  format: "Task matrix, verified changes, blockers and integration result"
+  acceptance: ["No simultaneous unsynchronized writes to same path","No claims of verification without independent evidence"]
