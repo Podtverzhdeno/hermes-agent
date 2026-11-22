@@ -106,3 +106,26 @@ All of these are **reference contracts**, not evidence that the user's local ins
 | H-014 | CONFIRMED → PATCHED | Journal `missing=sum(max(seq)-len)` counted an unseen source prefix `1..49` as 49 proven holes when first observed seq was 50 | In multi-source or late-attach monitoring, coverage misinformation can cause false gap alarms and incorrect replay operator advice | PR #17 switches to internal `max-min+1-count` + separate unverified-prefix flag and action, 5 regression tests; needs exact-head CI |
 
 **H-014 evidence limits:** no trusted producer cursor or source incarnation is currently available; `unverified_prefix_sources` is a **conservative uncertainty marker**, not a verified missing sequence count. Parent watcher _fingerprint currently omits prefix list, and the signed checkpoint remains an unimplemented release gate. This change is offline only.
+
+
+## 11. Subsequent concrete findings and source fixes
+
+| ID | State | Evidence (source) | Failure mode | Change / gate |
+| --- | --- | --- | --- | --- |
+| H-015 / OBS-010 | CONFIRMED → PATCHED | `EventJournal.assess` read `MAX(attempt)` and rows via two SQLite autocommit SELECTs | concurrent ingestion can create a read without a stable point-in-time snapshot | one correlated SELECT; 2 deterministic source-contract tests; not cross-database atomicity |
+| H-016 / OBS-011 | CONFIRMED → PATCHED | `progress_receipts` counted `worker.started` and `llm.request_started` as progress | agent repeatedly starting tasks but never finishing could avoid `ALIVE_NO_PROGRESS` indefinitely | only completed-stage event kinds refresh progress, 4 tests with mutable clock |
+| H-017 / API-001 | CONFIRMED DRAFT DEFECT | PR #4 keyed `stream=true` path starts `_run_agent` before nonstream-only idempotency check | duplicate keyed streaming requests can be dispatched without a guard | advisory comment PR #4, propose PR #11 safe preflight & negative test; do not change peer handler |
+| H-018 / API-002 | CONFIRMED DRAFT DEFECT | PR #5 `IdempotencyCache` removes `_inflight` key on exception; test explicitly expects second invocation | throw after committed effect, then retry may repeat same write | advisory comment PR #5; sticky unknown-effect tombstone & external readback, no blind retry |
+| H-019 / API-003 | CONDITIONAL DESIGN RISK | PR #5 cache identity lacks trusted principal; only raw key+endpoint, fingerprint body+session | cross-principal result alias if multiple authenticated principals use one adapter | owner must establish supported auth topology or bind principal; security regression test |
+
+**No production incidents are claimed.** The reviewed gateway PRs are draft proposals; neither source defect proves a successful external duplicate. The source defects do establish that the proposed API contract is unsafe to call "exactly once" without gateway-side reconciliation. At this audit no durable trusted effect coordinator or live browser client was observed.
+
+## 12. Evidence from engineering standards
+
+- SQLite [Isolation](https://www.sqlite.org/isolation.html) verifies transaction-scoped WAL snapshots; one correlated SELECT avoids torn MAX(attempt)/rows access.
+- [OpenTelemetry GenAI harness + Weaver experiment, 2026-11-12](https://opentelemetry.io/blog/2026/agent-harness-genai-instrumentation/) documents why cross-model self-review sometimes missed invalid semantic conventions; deterministic registry validation is needed.
+- [Temporal Activities](https://docs.temporal.io/activities) explicitly recommends idempotent external actions because retries are normal. This is an external design comparison, not a claim that Hermes uses Temporal.
+
+**Additional metadata test:** 30 interleaved producer streams, each sequence 1–3, then source 7 jumps to 5; all other producers must not hide its internal gap. This only simulates interleaved events, not 30 simultaneously executing operating-system agents.
+
+**Outstanding release checks:** current exact-head isolated Python 3.11/3.13 jobs, full repo CI on parent+child merged SHA, parent and PR #23 ownership convergence, actual Windows extension source/manifest and trusted ingress health. No code is deployed.
