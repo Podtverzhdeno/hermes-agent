@@ -120,6 +120,8 @@ Any model-supplied value in this contract must be validated by the control plane
 {
   "schema_version": 1,
   "event_id": "uuid",
+  "source": "worker",
+  "producer_id": "worker-boot-uuid",
   "source_event_seq": 18462,
   "run_id": "uuid",
   "task_id": "uuid",
@@ -143,7 +145,7 @@ Any model-supplied value in this contract must be validated by the control plane
 }
 ```
 
-Events must be persisted with an atomic DB transaction before acknowledgment. Enforce unique `event_id` and source+sequence key, bounded payload length and version compatibility. **Ordering** comes from durable source sequence and causal edges, not wall-clock timestamps; different sources have only a partial order. Trace context propagates across process boundaries by documented W3C Trace Context semantics; `trace_id` is for correlation, not authorization. Never log prompts, model completions, private chat, credentials, cookies, or raw tool arguments by default. Persist only allowlisted metadata, redacted status and content hashes; configurable short-retention diagnostics require explicit owner consent.
+Events must be persisted with an atomic DB transaction before acknowledgment. Enforce unique `event_id` and (`producer_id`, `source_event_seq`) key, bounded payload length and version compatibility. Each `producer_id` identifies one producer incarnation (new ID at process restart); two workers may legitimately both emit sequence 1. **Ordering** comes from per-producer sequence and causal edges, not wall-clock timestamps; different sources have only a partial order. Trace context propagates across process boundaries by documented W3C Trace Context semantics; `trace_id` is for correlation, not authorization. Never log prompts, model completions, private chat, credentials, cookies, or raw tool arguments by default. Persist only allowlisted metadata, redacted status and content hashes; configurable short-retention diagnostics require explicit owner consent.
 
 ### 3.3 Event vocabulary
 
