@@ -20,6 +20,8 @@ from pathlib import Path
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_PRS, MAX_FILES = 150, 1000
+# Renamed files count as two touched paths: previous_filename and filename.
+MAX_TOUCHED_PATHS = MAX_FILES * 2
 MAX_COLLISION_PAIRS = 5000
 
 class EvidenceError(ValueError):
@@ -157,7 +159,7 @@ def assess(snapshot):
         if type(n) is not int or n <= 0 or n in ids or not SHA.fullmatch(str(p.get("head_sha", ""))):
             raise EvidenceError("duplicate/malformed PR identity")
         ids.add(n)
-        if not isinstance(p.get("files"), list) or len(p["files"]) > MAX_FILES or not all(isinstance(f, str) for f in p["files"]):
+        if not isinstance(p.get("files"), list) or len(p["files"]) > MAX_TOUCHED_PATHS or not all(isinstance(f, str) for f in p["files"]):
             raise EvidenceError("missing changed-file evidence")
         if not isinstance(p.get("checks"), list):
             raise EvidenceError("missing check-run list")
@@ -312,7 +314,7 @@ def main(argv=None):
         if not args.output_md:
             print(human)
         return 2 if args.fail_on_collision and report["collisions"] else 0
-    except (EvidenceError, OSError, ValueError) as exc:
+    except (EvidenceError, OSError, ValueError, TypeError, KeyError) as exc:
         # Emit a durable incident artifact even when no trustworthy snapshot exists.
         # Explicitly NOT authorized for a merge; this is a diagnosis, not success.
         reason = "INPUT_IO_ERROR" if isinstance(exc, OSError) else str(exc)

@@ -79,3 +79,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Rename-vs-edit collision negative tests
 - Audit discovered its own false-negative: GitHub /pulls/{n}/files reports a renamed file with status=renamed, filename=new path and previous_filename=old path. Earlier collector only inspected filename, so a rename A->B and another PR editing A appeared disjoint. Fix: record BOTH names for every rename and fail closed if previous_filename absent, with two adversarial contract tests. This is source/metadata test, not a real merge integration test.
+
+## Additional audit robustness: full rename cap / malformed fields
+- Live file endpoint allows up to 1000 changed files, yet each of 1000 renamed files produces two touched paths. Earlier max_files 1000 check would fail closed on valid 1000 renames; now MAX_TOUCHED_PATHS=2000, with offline test.
+- Main audit error handler now includes KeyError/TypeError from malformed API/fixture payloads and persists typed EVIDENCE_UNAVAILABLE instead of losing incident artifact to an unhandled parser exception. Failure is not success, and merge_ready stays false.

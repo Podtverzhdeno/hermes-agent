@@ -191,6 +191,24 @@ class GateTests(unittest.TestCase):
         with self.assertRaises(m.EvidenceError):
             m._changed_paths([{"filename": "new.py", "status": "renamed"}])
 
+    def test_max_github_renames_allow_twice_as_many_touched_paths(self):
+        changes = [{"filename": "new/%04d.py" % i,
+                    "previous_filename": "old/%04d.py" % i,
+                    "status": "renamed"} for i in range(m.MAX_FILES)]
+        paths = m._changed_paths(changes)
+        self.assertEqual(len(paths), m.MAX_TOUCHED_PATHS)
+        self.assertEqual(m.assess(snapshot(pr(1, files=paths)))["collisions"], [])
+
+    def test_malformed_snapshot_keys_have_failure_artifacts(self):
+        with tempfile.TemporaryDirectory() as folder:
+            inp = Path(folder) / "bad.json"
+            out = Path(folder) / "incident.json"
+            inp.write_text(json.dumps({"schema_version": 1, "consistent": True,
+                                       "prs": [{"number": 1}]}))
+            rc = m.main(["--snapshot", str(inp), "--output-json", str(out)])
+            self.assertEqual(rc, 3)
+            self.assertEqual(json.loads(out.read_text())["status"], "EVIDENCE_UNAVAILABLE")
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))
