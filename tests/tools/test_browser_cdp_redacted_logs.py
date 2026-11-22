@@ -54,3 +54,76 @@ def test_cdp_session_creation_does_not_log_browser_websocket_credentials(caplog)
     assert session["cdp_url"] == websocket
     assert SECRET not in caplog.text
     assert "devtools/browser" not in caplog.text
+
+
+def _exercise_cdp_child(tmp_path, caplog, *, stdout_text, stderr_text, rc):
+    import os
+    from tools.browser_tool import _run_browser_command
+
+    websocket = f"wss://user:{SECRET}@example.test:9223/devtools/browser/{SECRET}"
+    session = {"session_name": "cdp_test", "cdp_url": websocket}
+    class FakeProcess:
+        returncode = rc
+        def wait(self, timeout=None):
+            return rc
+        def kill(self):
+            pass
+
+    def fake_popen(cmd_parts, *, stdout, stderr, stdin, env):
+        assert "--cdp" in cmd_parts
+        assert websocket in cmd_parts
+        os.write(stdout, stdout_text.encode())
+        os.write(stderr, stderr_text.encode())
+        return FakeProcess()
+
+    with caplog.at_level(logging.DEBUG, logger="tools.browser_tool"):
+        with patch("tools.browser_tool._find_agent_browser", return_value="agent-browser"), \
+             patch("tools.browser_tool._get_session_info", return_value=session), \
+             patch("tools.browser_tool._socket_safe_tmpdir", return_value=str(tmp_path)), \
+             patch("tools.interrupt.is_interrupted", return_value=False), \
+             patch("tools.browser_tool.subprocess.Popen", side_effect=fake_popen):
+            return _run_browser_command("opaque-task", "click", ["@e1"], timeout=3)
+
+
+def test_cdp_subprocess_nonjson_stdout_and_stderr_are_not_logged_or_returned(tmp_path, caplog):
+    result = _exercise_cdp_child(tmp_path, caplog, stdout_text=f"bad output: {SECRET}",
+                                 stderr_text=f"failed to connect {SECRET}", rc=1)
+    assert not result["success"]
+    assert SECRET not in caplog.text
+    assert SECRET not in str(result)
+    assert "devtools/browser" not in caplog.text
+
+
+def test_cdp_subprocess_empty_stdout_does_not_log_cmd_prefix_with_cdp_url(tmp_path, caplog):
+    result = _exercise_cdp_child(tmp_path, caplog, stdout_text="",
+                                 stderr_text=f"connection error: {SECRET}", rc=0)
+    assert result["success"]
+    assert SECRET not in caplog.text
+    assert "devtools/browser" not in caplog.text
+
+
+def test_cdp_subprocess_structured_error_return_does_not_echo_credentials(tmp_path, caplog):
+    import json
+    raw = json.dumps({"success": False, "error": f"CDP failure: {SECRET}",
+                      "data": {"stderr": f"ws://{SECRET}"}})
+    result = _exercise_cdp_child(tmp_path, caplog, stdout_text=raw,
+                                 stderr_text=f"failed: {SECRET}", rc=1)
+    assert not result["success"]
+    assert SECRET not in caplog.text
+    assert SECRET not in str(result)
+
+
+def test_cdp_subprocess_exception_redacts_secret_bearing_exception(tmp_path, caplog):
+    from tools.browser_tool import _run_browser_command
+
+    session = {"session_name": "cdp_test", "cdp_url": f"wss://{SECRET}@example.test"}
+    with caplog.at_level(logging.WARNING, logger="tools.browser_tool"):
+        with patch("tools.browser_tool._find_agent_browser", return_value="agent-browser"), \
+             patch("tools.browser_tool._get_session_info", return_value=session), \
+             patch("tools.browser_tool._socket_safe_tmpdir", return_value=str(tmp_path)), \
+             patch("tools.interrupt.is_interrupted", return_value=False), \
+             patch("tools.browser_tool.subprocess.Popen", side_effect=RuntimeError(SECRET)):
+            result = _run_browser_command("opaque-task", "click", ["@e1"], timeout=3)
+    assert not result["success"]
+    assert SECRET not in caplog.text
+    assert SECRET not in str(result)
