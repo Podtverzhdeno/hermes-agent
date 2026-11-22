@@ -114,7 +114,8 @@ def test_critical_operation_rejected_by_default_even_if_allowlisted():
 
 @pytest.mark.parametrize("branch", [
     "main", "feature-any", "autopilot/../main", "autopilot//bad",
-    "autopilot/.", "autopilot/..", None,
+    "autopilot/.", "autopilot/..", "autopilot/a..b", "autopilot/abc.lock",
+    "autopilot/foo bar", "autopilot/evil\nnext", "autopilot/bad;cmd", None,
 ])
 def test_arbitrary_or_ambiguous_branch_denied(branch):
     p = allow("github.branch.create")
@@ -134,6 +135,12 @@ def test_missing_pr_base_or_head_denied():
         p.evaluate(intent("github.pr.create", {"head": "autopilot/a"}))
     with pytest.raises(PolicyDenied):
         p.evaluate(intent("github.pr.create", {"base": "main"}))
+    with pytest.raises(PolicyDenied):
+        p.evaluate(intent("github.pr.create",
+                          {"head": "autopilot/evil; command", "base": "main"}))
+    with pytest.raises(PolicyDenied):
+        p.evaluate(intent("github.pr.create",
+                          {"head": "autopilot/good", "base": "main..other"}))
 
 
 def test_path_capabilities_denied_until_scoped_adapter_exists():
