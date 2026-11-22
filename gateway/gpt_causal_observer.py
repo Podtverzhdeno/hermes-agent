@@ -6,6 +6,7 @@ Caller MUST authenticate producers independently before setting trusted_origin.
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -102,6 +103,8 @@ class CausalObserver:
         self._conn = sqlite3.connect(path, timeout=5, check_same_thread=False)
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.execute("PRAGMA journal_mode=WAL")
+        # Schema creation and migration share the writer lock across processes.
+        self._conn.execute("BEGIN IMMEDIATE")
         self._conn.execute("""CREATE TABLE IF NOT EXISTS diagnostic_events (
             event_id TEXT PRIMARY KEY,
             producer_id TEXT NOT NULL,
@@ -119,8 +122,14 @@ class CausalObserver:
             trusted_origin INTEGER NOT NULL,
             receive_epoch TEXT NOT NULL,
             received_mono REAL NOT NULL,
+            received_at_utc TEXT NOT NULL,
             UNIQUE(producer_id, source_event_seq)
         )""")
+        # Legacy schema had no durable UTC clock; mark old wall times unknown.
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(diagnostic_events)")}
+        if "received_at_utc" not in columns:
+            self._conn.execute(
+                "ALTER TABLE diagnostic_events ADD COLUMN received_at_utc TEXT NOT NULL DEFAULT ''")
         self._conn.execute("CREATE INDEX IF NOT EXISTS diag_by_run ON diagnostic_events(run_id)")
         self._conn.commit()
 
@@ -153,13 +162,15 @@ class CausalObserver:
                     event_id, producer_id, source_event_seq, run_id, task_id,
                     attempt_id, lease_fence, kind, effect_key,
                     operation_fingerprint, target_revision, evidence_refs,
-                    payload_hash, trusted_origin, receive_epoch, received_mono
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    payload_hash, trusted_origin, receive_epoch, received_mono,
+                    received_at_utc
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (v["event_id"], v["producer_id"], v["source_event_seq"],
                      v["run_id"], v["task_id"], v["attempt_id"], v["lease_fence"],
                      v["kind"], v.get("effect_key"), v.get("operation_fingerprint"),
                      v.get("target_revision"), json.dumps(v["evidence_refs"]),
-                     digest, int(trusted_origin), self._epoch, time.monotonic()))
+                     digest, int(trusted_origin), self._epoch, time.monotonic(),
+                     datetime.now(timezone.utc).isoformat(timespec="milliseconds")))
                 self._conn.commit()
             except BaseException:
                 self._conn.rollback()
@@ -254,7 +265,11 @@ class CausalObserver:
             last_by_producer = {
                 p: {"seq": max(x["source_event_seq"] for x in rows if x["producer_id"] == p),
                     "last_kind": max((x for x in rows if x["producer_id"] == p),
-                                     key=lambda x: x["source_event_seq"])["kind"]}
+                                     key=lambda x: x["source_event_seq"])["kind"],
+                    "last_event_id": max((x for x in rows if x["producer_id"] == p),
+                                         key=lambda x: x["source_event_seq"])["event_id"],
+                    "received_at_utc": max((x for x in rows if x["producer_id"] == p),
+                                           key=lambda x: x["source_event_seq"])["received_at_utc"] or None}
                 for p in sorted(producers)
             }
             trusted_proof_count = sum(
@@ -269,6 +284,48 @@ class CausalObserver:
                     "independent_evidence_markers": trusted_proof_count,
                     "next_safe_action": next_action,
                     "authoritative_task_state": None}
+
+    def timeline(self, run_id: str, *, limit: int = 100,
+                 after_producer: str = "", after_seq: int = 0) -> dict[str, Any]:
+        """Return bounded metadata-only events in per-producer cursor order.
+
+        Lexicographic (producer, seq) is a storage ordering, NOT causal order
+        across producers. This is never proof of task success.
+        """
+        if not isinstance(run_id, str) or not IDENT.fullmatch(run_id):
+            raise ValueError("invalid run_id")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid page limit")
+        if not isinstance(after_producer, str) or (after_producer and not IDENT.fullmatch(after_producer)):
+            raise ValueError("invalid producer cursor")
+        if type(after_seq) is not int or not 0 <= after_seq < 2**63:
+            raise ValueError("invalid sequence cursor")
+        with self._lock:
+            self._conn.row_factory = sqlite3.Row
+            rows = [dict(r) for r in self._conn.execute("""
+                SELECT event_id, producer_id, source_event_seq, task_id,
+                       attempt_id, lease_fence, kind, effect_key,
+                       operation_fingerprint, target_revision, evidence_refs,
+                       trusted_origin, received_at_utc
+                FROM diagnostic_events
+                WHERE run_id = ? AND (
+                    producer_id > ? OR (producer_id = ? AND source_event_seq > ?))
+                ORDER BY producer_id, source_event_seq LIMIT ?
+            """, (run_id, after_producer, after_producer, after_seq, limit+1))]
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        for row in page:
+            row["evidence_refs"] = json.loads(row["evidence_refs"])
+            row["trusted_origin"] = bool(row["trusted_origin"])
+            if not row["received_at_utc"]:
+                row["received_at_utc"] = None  # never invent old schema wall time
+        last = page[-1] if page else None
+        return {"run_id": run_id, "events": page,
+                "has_more": has_more,
+                "next_cursor": {"after_producer": last["producer_id"],
+                                "after_seq": last["source_event_seq"]} if has_more else None,
+                "ordering": "per_producer_only_cross_producer_partial_order",
+                "authoritative_task_state": None}
 
     def close(self) -> None:
         with self._lock:
