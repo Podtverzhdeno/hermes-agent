@@ -69,3 +69,35 @@ At integration checkpoint 85db47caedb87490cee58aab70257c4bdf835ef1, PR #12 has c
 ## 7. De-duplication decision (2026-11-22)
 
 PR #23 is selected as **candidate canonical owner** of cross-attempt effects and watcher fingerprinting; it must still pass independent exact-head verification. Our PR #17 previously added a similar but less strict implementation; its code and six overlapping tests were intentionally reverted in later commits. OBS-006 remains a confirmed parent defect until PR #23 is integrated; no operator should interpret this PR as fixing that risk by itself. Related review handoff: https://github.com/Podtverzhdeno/hermes-agent/pull/23 .
+
+
+## 8. Thirty-PR cross-agent integration checkpoint
+
+A read-only listing of all 30 open PRs and their changed-file names was performed in three batches (10 PRs each) using the GitHub connector, rather than relying only on titles. The listing was **not atomic across PR head mutations**; current HEADs must be rechecked by an integration gate before any merge.
+
+**Observed high-risk exact-path collisions:**
+
+- `gateway/platforms/api_server.py`: PR #4, #5, #6, #11 (4 candidate implementations of preflight/idempotency/SSE logic).
+- `gpt_companion/journal.py`: #12, #17, #23 (canonical parent, narrow terminal diagnostics, causal effect implementation).
+- `tools/browser_tool.py`: #13 and #15 (CDP redaction/diagnostics vs externally owned browser cleanup).
+- `autopilot/ledger.py`: #1 and #10 (duplicate reliability/ledger work).
+- `gateway/gpt_bridge_event_audit.py`: #4 and #30 (competing audit behavior).
+- `pyproject.toml`: #1, #9, #12, #13 (package metadata/dependency changes).
+- `gpt_companion/watch.py`: #12 and #23; `tests/gpt_companion/test_watch.py`: #12 and #23.
+- `gpt_companion/README.md`: #12 and #17; `docs/sdd/GPT_COMPANION_SDD.md`: #12, #17, #23; our audit log: #17 and #23.
+- Additional exact overlaps observed in `tests/gateway/test_api_server.py` (#4/#6), `tests/autopilot/test_ledger.py` (#1/#10), `tests/gateway/test_gpt_bridge_event_audit.py` (#4/#30), and `docs/sdd/HERMES_GPT_EXTENSION_COMPONENT_CONTRACT.md` (#4/#30).
+
+This yields **at least 15 colliding exact paths in the sampled inventory**, excluding the larger problem of semantically competing observer and PR-review implementations with *different* filenames. Proposed queue: canonical lifecycle/effects → gateway idempotency → browser ownership → one observer contract → exact-HEAD verifier → optional UI. No automatic merging of drafts.
+
+## 9. CI evidence: do not confuse passing jobs with a passing release
+
+- Exact SHA `8636373446505a5c21d6736fbaa5499000c62bb4`: targeted [GitHub Actions run 45014924959](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45014924959) completed **success** in both isolated Python 3.11 and 3.13 jobs, per GitHub workflow-run and job metadata.
+- Later code/SDD/workflow commits invalidate this as **exact-current-HEAD** evidence. A dedicated workflow on every push to our stacked branch was installed, with no real API keys and tests constrained to `tests/gpt_companion`. Earlier runs were cancelled by newer commits; cancelled ≠ failed tests nor a clean release.
+- Parent PR #12 and safety PR #23 have their own workflows, with head SHAs and statuses changing independently; any green status must be matched to the branch's currently pinned SHA, not a prior code revision.
+- GitHub checks alone cannot prove runtime integration, installed Chrome permissions, truthful producer identity, provider effects, or local Windows/Obsidian synchronization.
+
+## 10. Reviewed independent constraints
+
+Official Hermes Observer Hooks are **fail-open** and can surface sanitized provider/tool metadata but do not act as a durable external effect authority: https://hermes-agent.nousresearch.com/docs/developer-guide/observer-hooks . Upstream Kanban worker lanes already own task lifecycle and review transitions: https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-worker-lanes . Browser companion's profile/version/consent capability boundary: https://github.com/abundantbeing/hermes-browser-extension/blob/main/companion-plugin/README.md . OpenAI API background response ID and signed webhook lifecycle are separate from ChatGPT web UI: https://developers.openai.com/api/docs/guides/background and https://developers.openai.com/api/docs/guides/webhooks .
+
+All of these are **reference contracts**, not evidence that the user's local installed Hermes or browser already exposes them.
