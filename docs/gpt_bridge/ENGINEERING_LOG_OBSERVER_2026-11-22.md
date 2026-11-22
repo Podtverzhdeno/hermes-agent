@@ -80,3 +80,6 @@ Production deployment remains **HOLD** until the trusted adapter, actual local e
 | O-30 | SOURCE_REVIEW + COMMENT | Latest heads of competing gateway PR #4/#5/#6/#11 inspected. #6 and #11 categorically reject keyed SSE in the April legacy API, unlike v0.23.3 canonical mode where keyed streaming is supported. PR #5's in-process shielded cache is not durable admission. | PR #6 comment #7078247851; mode-specific E2E, rebase and single integration owner. This is a compatibility finding, not proven production regression. |
 
 | O-31 | TESTED_OFFLINE | Two different task IDs reserving one global effect key were invisible to the prior per-task reducer. Added cross-task key-reuse warning, redacted hash, same-task repeated-reservation warning; two targeted tests. | 71 local contract tests pass (55+16); verify new GitHub HEAD CI, no automatic retry or authority promotion. |
+
+
+| O-32 | VERIFIED_UPSTREAM_TAG + DESIGN | Inspected v0.23.3 Kanban worker-lanes contract: task_runs, task_events, claim extension, crash/give_up/timeout, stranded and stale diagnostics, review deadlocks, owner receipts and cooperative descendants fence. | Added phase-specific stop taxonomy and Kanban/Runs evidence join in SDD §17. No live installed Kanban/extension observed, no scheduler added. |

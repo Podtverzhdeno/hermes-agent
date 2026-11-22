@@ -370,3 +370,36 @@ These are **new test requirements**, not test results. Cross-PR review comment w
 **Trust/response boundary:** This offline analysis cannot establish whether the external system committed twice, whether the operation is idempotent, or whether it was reconciled. It never authorizes cancellation, a retry or a success state. Only the authoritative owner can reserve/fence external operations; the observer flags evidence gaps and advises read-back of immutable receipts.
 
 **Verified locally:** Two targeted new tests cover cross-task collisions with redaction/no-auto-retry, and legitimate same-task repeated reservations with independent fence warning. Current total is **55 metadata tests + 16 PR gate tests = 71/71** on Python 3.13 isolated `-S`. GitHub CI on the exact new HEAD is a separate gate; 3.11/3.12/3.13 status must be rechecked.
+
+
+## 17. Official v0.23.3 Kanban failure taxonomy and lane ownership (SOURCE VERIFIED)
+
+Verified release-tag reference: https://github.com/NousResearch/hermes-agent/blob/v0.23.3/website/docs/user-guide/features/kanban-worker-lanes.md . Native Kanban is **canonical task lifecycle and audit trail**, worker lanes are executors, and a reviewer gates “done”. Its worker contract already supplies task_runs, task_events, kanban_show, per-task log paths, hermes kanban tail / runs and read-only hermes kanban diagnostics. This is **target release behavior**, not proof that the April fork currently runs these features.
+
+| Native observed state/event | Atomic interpretation | Safe diagnostic next action | Explicitly prohibited inference |
+|---|---|---|---|
+| ready with skipped_nonspawnable | assignee does not match a spawnable worker lane | inspect assignee/profile registry and workspace routing | do not route to arbitrary fallback agent |
+| ready plus stranded_in_ready | ready for longer than configured threshold without a claim; may be missing pool/profile | compare lane health, assignee and capacity | do not call it a failed model turn |
+| running plus heartbeat / claim_extended | worker PID appears alive; a slow tool-free model call may still be progressing | inspect elapsed time, max_runtime and run PID evidence | do not reclaim solely because claim TTL elapsed |
+| worker process exited without lifecycle call | kernel reaps crashed / gave_up / timed_out depending PID, breaker and deadline | inspect task_runs exit/log reference, task_events, exact run ID | do not report complete because process exited zero |
+| waiting in review | implementation finished, awaiting reviewer | request proper same-card review OR downstream child QA, never both | do not treat review as crashed or blocked |
+| blocked with external reason | deliberate policy/owner blocker | obtain authorised resolution and unblock through Kanban owner | do not automatically clear a human policy block |
+| running with stale_running | progress/ownership ambiguity, possibly stuck owner | verify host, PID fingerprint, heartbeat age, ledger claim, deadline | do not trust PID number alone or auto-kill another host |
+| running_with_open_parents | reopened or incomplete dependency while child still running | examine task graph, parent change and current claim; propose controlled fix | do not auto-unlink or complete child |
+| review_dependency_deadlock | legacy sticky-review parent blocks dependency-gated child | choose one review model and repair graph under owner control | do not relaunch both phases to escape deadlock |
+| owner_admitted with lost worker | previous owner receipt not resolved | prove original process gone, heartbeat stale and all known worker PIDs dead; otherwise HOLD | do not reclaim if fingerprint absent/live or remote owner uncertain |
+| browser MV3 service worker suspended | **observer transport** disconnected | reconnect status/SSE from last durable cursor, mark any replay gap | never mark Hermes task failed or start a duplicate run |
+
+Native claim TTL is documented as 15 min by default; a live worker can have its claim extended, while max_runtime separately caps wall time. Stranded detection defaults to 30 min and escalates by configured multiples. Treat these numbers as **defaults from the verified release docs**, not universal user deployment settings. Ensure an operator can inspect each run's actual policy and timeline instead of assuming constants.
+
+### Multi-agent scope enforcement
+
+A Kanban worker's execution envelope contains HERMES_KANBAN_TASK, HERMES_KANBAN_RUN_ID, HERMES_KANBAN_CLAIM_LOCK, board DB path, pinned workspace and profile/tenant. The worker terminates with exactly one of kanban_complete, kanban_request_review or kanban_block; otherwise lifecycle events classify the abnormal exit. Termination must check the exact expected_run_id when appropriate to reject a stale superseded worker. Descendant subprocesses inherit a cooperative **non-owner fence** that restricts ordinary CLI/tool Kanban mutations; this is **not OS confinement** and cannot prevent hostile direct SQLite writes. Production isolation additionally needs OS/filesystem permissions, scoped credentials and reviewer-controlled merge.
+
+### Required atomic investigator view
+
+Read authenticated Kanban task_events (transition order + causation), task_runs (attempt, PID, exit, log path), kanban_show and diagnostics, plus native Runs API status/SSE (admission_id, execution_generation, replay cursor) and exact GitHub head/check status. Normalize only allowlisted metadata. Render: **what was observed**, **where evidence is missing**, **which owner holds authority**, **candidate root cause**, **safe recovery condition** and **independent verification receipt**. No combination of redacted logs and an agent self-report is enough to certify external side effects. This proposed view is not deployed in the current PR.
+
+### ADR-GPT-021
+
+**ACCEPT** an upstream-native Kanban + Runs API diagnostic adapter in the future, without a duplicate scheduling authority. **ACCEPT** fail-closed ambiguity and verified PID/heartbeat/claim fencing before a reclaim. **REJECT** using a Chrome extension heartbeat to adjudicate a worker's health, auto-unblocking an approval or manually editing Kanban SQLite as an ordinary worker.
