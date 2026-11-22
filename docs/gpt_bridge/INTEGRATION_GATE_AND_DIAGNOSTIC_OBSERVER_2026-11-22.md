@@ -51,7 +51,7 @@ Sources:
 Files:
 - gateway/gpt_bridge_observer.py: strict metadata-only v1 event-envelope validator and bounded causal-sequence advisory observer.
 - scripts/gpt_bridge_observe.py: offline standard-input JSONL probe, emitting only aggregate counters and uncertainty labels.
-- tests/gateway/test_gpt_bridge_observer.py: 38 offline unit/parameterized checks including 30 producers × 50 out-of-order events, invalid fields, bounded resource use and redaction.
+- tests/gateway/test_gpt_bridge_observer.py: 40 offline unit/parameterized checks including 30 producers × 50 out-of-order events, invalid fields, bounded resource use and redaction.
 
 Accepted v1 envelope uses per-incarnation producer_id and source_event_seq, unique event_id, run/task/attempt IDs, UTC timestamps, W3C-shape trace and span IDs, optional causation/fence/effect metadata, a finite event vocabulary, allowlisted hashes as evidence. Unknown fields, raw prompt or credentials, invalid kinds, future schemas and oversized messages fail closed without copying raw content into diagnostic output.
 
@@ -66,7 +66,7 @@ From the repository root, run:
     python -m pytest tests/gateway/test_gpt_bridge_observer.py -q
     python scripts/gpt_bridge_observe.py < trusted_metadata_events.jsonl
 
-**TESTED-OFFLINE:** 38 tests passed in an isolated interpreter and compile checks passed. GitHub CI, real Windows extension, Native Messaging host, live gateway integration and 24-hour soak are **not** covered by this result.
+**TESTED-OFFLINE:** 40 tests passed in an isolated interpreter and compile checks passed. GitHub CI, real Windows extension, Native Messaging host, live gateway integration and 24-hour soak are **not** covered by this result.
 
 ## 3. Production invariants and crash boundaries
 
@@ -147,3 +147,7 @@ Any unknown external effect, unverified approval, audit outage before privileged
 - GitHub SHA-based checks: https://docs.github.com/en/rest/checks/runs
 
 **Engineering conclusion:** reconstructing causality and making missing evidence explicit is feasible as a read-only offline component. True atomicity and safe self-repair are separate, harder integration projects requiring durable controls and independent evidence.
+
+## 9. Independent parser self-audit
+
+A changed event with the same event ID and source sequence is **not** a valid replay. The first offline version compared only IDs/sequence and thus could not distinguish a modified payload from identical delivery. This was found in a second review and repaired: the observer now records SHA-256 of the entire validated canonical event alongside identity, rejects payload collisions and has an explicit regression test. The CLI also rejects duplicate JSON object keys, which otherwise could change the apparent event meaning using last-key-wins parsing. **40 tests pass in an isolated Python environment**; these claims are limited to the standalone observer, not end-to-end Hermes/GPT or Windows. For an authenticated durable observer, persist the digest in a transactional event store rather than rely on this bounded in-memory cache.
