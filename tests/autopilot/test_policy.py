@@ -1,6 +1,5 @@
 """Fail-closed policy contract tests; no live API or filesystem writes."""
 
-import math
 import pytest
 
 from autopilot.policy import ActionIntent, ActionPolicy, PolicyDenied
@@ -106,7 +105,11 @@ def test_owner_policy_allowlists_are_immutable_after_creation():
 def test_critical_operation_rejected_by_default_even_if_allowlisted():
     with pytest.raises(PolicyDenied, match="critical"):
         allow("github.pr.merge").evaluate(intent("github.pr.merge"))
-    decision = allow("github.pr.merge", critical=True).evaluate(intent("github.pr.merge"))
+    with pytest.raises(PolicyDenied, match="exact PR number"):
+        allow("github.pr.merge", critical=True).evaluate(intent("github.pr.merge"))
+    decision = allow("github.pr.merge", critical=True).evaluate(
+        intent("github.pr.merge", {"pull_number": 45,
+                                  "expected_head_sha": "a" * 40}))
     assert decision.risk == "R3"
     assert decision.requires_owner_approval
     assert decision.requires_secondary_confirmation
@@ -171,3 +174,28 @@ def test_reused_revision_does_not_authorize_new_target():
     with pytest.raises(PolicyDenied):
         p.evaluate(b)
     assert a.digest != b.digest
+
+
+def test_unsupported_repository_deletion_stays_denied_even_with_critical_flag():
+    policy = allow("github.repo.delete", critical=True)
+    with pytest.raises(PolicyDenied, match="unknown capability"):
+        policy.evaluate(intent("github.repo.delete"))
+
+
+def test_comment_requires_exact_issue_and_bounded_message():
+    policy = allow("github.issue.comment")
+    with pytest.raises(PolicyDenied):
+        policy.evaluate(intent("github.issue.comment", {"body": "hi"}))
+    with pytest.raises(PolicyDenied):
+        policy.evaluate(intent("github.issue.comment",
+                               {"issue_number": 1, "body": "a" * 8193}))
+    decision = policy.evaluate(intent("github.issue.comment",
+                                     {"issue_number": 41, "body": "Bounded status."}))
+    assert decision.requires_owner_approval
+
+
+def test_merge_digest_binds_pr_number_and_exact_head():
+    policy = allow("github.pr.merge", critical=True)
+    a = intent("github.pr.merge", {"pull_number": 1, "expected_head_sha": "a" * 40})
+    b = intent("github.pr.merge", {"pull_number": 1, "expected_head_sha": "b" * 40})
+    assert policy.evaluate(a).digest != policy.evaluate(b).digest
