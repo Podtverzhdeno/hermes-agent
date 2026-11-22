@@ -54,3 +54,35 @@ The observer reports **persisted prototype task state**, not true browser tab st
 6. Only after a version-pinned upstream Kanban canary establishes actual task delivery and root-cause telemetry should an authenticated worker adapter be developed. No direct production upgrade/merge until independently reviewed.
 
 **Not done:** local Obsidian sync, Windows host live monitoring, GPT provider integration, service deployment, verified tests or continuous unattended operation. All remain explicit blocked/next-work items; this audit does not count them as completed.
+
+## Audit continuation — CDP wire validation and 27-agent collision wave
+
+**New code:** pure `autopilot/cdp_contract.py` validator for exactly correlated `request_id/content/tool_calls`, capped UTF-8 payload and nested arguments, strict tool allowlist, duplicate JSON/call rejection and safe error categories. `tests/autopilot/test_cdp_contract.py` includes deterministic adversarial fixtures. No extension/Playwright/CDP socket was contacted, no tool effect was invoked.
+
+**Additional observed regression (H-013):** With one trusted `ci/kind/source/revision` record already present, `record_evidence` previously accepted a contradictory new trusted result at the same key, overwriting the old conclusion. This allowed a later pass to erase a trusted failure before finalize. Current PR adds exact-replay idempotency and **rejects contradictory trusted overwrite**; different CI runs require distinct `source` identifiers. Test names: `test_trusted_failure_cannot_be_overwritten_by_same_source_pass`, `test_trusted_evidence_exact_replay_is_idempotent_and_run_identity_stable`. **Still a prototype trust boundary:** any direct Python caller can set `trusted=True`; only an authenticated verifier gateway can establish provenance in the future integrated runtime.
+
+**Interoperability research:** actual upstream Windows issue #147613 identified telemetry `get_version_info -> git rev-parse HEAD -> subprocess.run(timeout=3) -> unbounded reader-thread join` as a prompt delivery hang on v0.22.5. Open PR #151449 proposes managed-worker guard, not yet merged at this audit. Distinguish bound process, delivered prompt, first model call and external receipt. Related issue #146955 observed absence of a `prompt.request` frame, #148389 observed native extension import stall, #152364 reported event-loop lag under ten active workers. These source reports are NOT proof of active defects on user's Windows host or v0.23.3.
+
+**Competing PR audit (H-014):** live open draft PR count rose from 10 to 27. `MULTI_AGENT_INTEGRATION_MATRIX_2026-11-22.md` now records all 27, actual changed-path overlaps and separate semantic overlaps. Confirmed direct collisions: #4/#5/#6/#11 `gateway/platforms/api_server.py`; #12/#17/#23 `gpt_companion/journal.py`; #13/#15 `tools/browser_tool.py`; #4/#26 event auditor; #1/#10 prototype ledger; multiple `pyproject.toml` authors. Six separate read-only PR collision guards are proposed (#14/#18/#22/#24/#26/#27) and must converge to one implementation, not six independent scheduled monitors.
+
+**CDP browser safety (H-015):** PR #15 proposes to avoid `Browser.close` on user-supplied CDP override; #13 removes CDP endpoints from logs. Must merge conceptually in a single tested `tools/browser_tool.py` patch. At one inspected head of #15, targeted CDP ownership QA passed but broader project test failed; not ready for production.
+
+**GitHub coordination limitation:** creating a tracker Issue failed HTTP **410** because repository Issues are disabled. No Issue was created. Source of truth remains GitHub PRs and SDD notes; Obsidian remains inaccessible until tunnel is restored.
+
+### Exact CI history (not conflated across SHAs)
+
+- Run [45013359159](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013359159) on original code head `55e0ef80...` — **failure**, 72 passed / 2 failed due mismatched unit-test assumptions (second lease duration, invalid enum exception). Both assertions were corrected with contract rationale.
+- Run [45013450647](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45013450647) on `1bdfd1b22f77ec6691df3722e45eac211999d758` — **success**, Python 3.11, 3.12, 3.13 on Ubuntu and Python 3.12 on Windows; Python3.11 log reported 77 passed.
+- Run [45014121910](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45014121910) after CDP tests — **failure**, one test passed a literal backslash-u sequence rather than a true unpaired surrogate. Test was repaired to encode `chr(0xD800)` through JSON wire format; this was a **test fixture defect** and no runtime loophole was proven by the failure.
+- Runs between these and the final exact SHA may be **cancelled** by workflow `cancel-in-progress: true` as successive fixes/docs were committed. Cancellation is neither failure nor proof of success. See GitHub check runs on the exact HEAD.
+- As of the final audit update, new immutable-trusted-evidence test commit `9c78b6ecce096c6c08c3941dbf69d480ef4db5e6` has a new CI run [45014746754](https://github.com/Podtverzhdeno/hermes-agent/actions/runs/45014746754); **do not assert it is green until all jobs complete**. Later documentation commits supersede that CI head; always verify latest HEAD after final edits.
+
+### Structural security caveats not resolved by these prototype fixes
+
+- `AutopilotLedger.record_evidence(trusted=True)` is a direct caller-supplied Boolean. It must never be exposed to GPT/ACP workers. A privileged verifier registry must attest source identity, exact checked revision and workflow run ID before accepting trusted evidence.
+- `AutopilotLedger.reconcile_effect(...,proof_ref)` accepts an opaque string without cryptographic/provider verification; its docstring explicitly requires **trusted control plane only**. It must not become a public model tool.
+- Worker IDs/action keys/result refs may be privacy-sensitive; avoid putting untrusted raw tokens, CDP endpoints or credentials in keys. Future policy gateway needs strict identifier schemas and redacted audit emissions.
+- A local SQLite replica/snapshot is not proof that a remote provider did or did not execute a write. Cross-process and cross-host exactly-once guarantees cannot be asserted without compatible provider idempotency and independent read-back.
+- PR #10 targets a **frozen review base** `snapshots/autopilot-ledger-6c0d2e-20261122` after the parent advanced concurrently. It is not approved for direct merge to `main`. Rebase/reconcile with the latest PR #1 and rerun all required tests first.
+
+**Done now:** source inspection, isolated code and specs committed, 27 PR overlaps mapped, confirmed previous CI result and new regressions authored. **Still not done:** current exact-head all-platform CI acceptance until completed, live CDP/ChatGPT extension E2E, authenticated Kanban integration, automatic OS-supervised monitor, local Obsidian sync, multi-agent soak, merge/release.
