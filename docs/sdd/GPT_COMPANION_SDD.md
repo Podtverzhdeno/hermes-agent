@@ -452,3 +452,14 @@ Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolve
 **Tests:** table-driven SQLite code classification including unknown codes and one CLI injection of `SQLITE_BUSY` with a sensitive local path in error text, verifying only the normalized reason appears. Release metrics should distinguish lock wait p95, disk pressure, I/O faults and true journal integrity failures; do not automatically delete or rebuild the event DB.
 
 **Future enhancement:** reason-code taxonomy must be shared with the operator dashboard and alert routing. A single `JOURNAL_INTEGRITY_FAILED` banner for all SQLite failures is unacceptable for incident diagnosis.
+
+
+### ADR-037: Metadata-only journal still requires private local storage (P1, POSIX implemented; Windows pending)
+
+**Finding C-11:** `sqlite3.connect` creates new database files using operating-system default permissions. On POSIX with `umask 022`, a newly created SQLite file was experimentally **0644** even though the journal stores only opaque run IDs, attempts, action IDs, error reasons and traces. A user choosing a shared directory could expose activity metadata. The external Hermes Browser Extension companion already documents `0600` for its JSONL metadata journal; GPT Companion should not silently regress this expectation.
+
+**Fix in stacked audit:** POSIX-only `_prepare_private_sqlite_path` creates a regular file mode `0600` before the SQLite connection, refuses a pre-existing symlink using `O_NOFOLLOW`, and narrows existing owned regular-file mode to `0600`. Newly created leaf directories request `0700`. Both `EventJournal` and separate `StatusWatch` DB use it. SQLite WAL and SHM permissions were checked in a local POSIX 022-umask smoke to inherit `0600`; the exact GitHub CI still needs final verification. This improves local metadata privacy but **is not full filesystem access security**.
+
+**Limits:** Windows `chmod` is not proof of restrictive NTFS ACLs; no ACL fix is claimed for Windows. A path-controlled attacker who can mutate parent directories may still race between creation and SQLite open; production must use owner-controlled, non-world-writable app data directories. Existing deployments need backup/migration and ACL inspection; source metadata still must be sanitized by authenticated emitter. Reject storing prompts, passwords, cookies, full page text or model outputs regardless of filesystem permissions.
+
+**Tests introduced:** `test_local_journal_is_private_on_posix`, `test_local_journal_rejects_symlink_path_on_posix`, `test_status_watcher_db_private_file_on_posix`. Verify Windows ACL via a dedicated Windows CI or installer smoke before production. Do not claim E2E security from file mode unit tests.
