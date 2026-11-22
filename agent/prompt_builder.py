@@ -270,7 +270,7 @@ CONTEXT_TRUNCATE_TAIL_RATIO = 0.2
 _SKILLS_PROMPT_CACHE_MAX = 8
 _SKILLS_PROMPT_CACHE: OrderedDict[tuple, str] = OrderedDict()
 _SKILLS_PROMPT_CACHE_LOCK = threading.Lock()
-_SKILLS_SNAPSHOT_VERSION = 1
+_SKILLS_SNAPSHOT_VERSION = 2
 
 
 def _skills_prompt_snapshot_path() -> Path:
@@ -291,7 +291,7 @@ def clear_skills_system_prompt_cache(*, clear_snapshot: bool = False) -> None:
 def _build_skills_manifest(skills_dir: Path) -> dict[str, list[int]]:
     """Build an mtime/size manifest of all SKILL.md and DESCRIPTION.md files."""
     manifest: dict[str, list[int]] = {}
-    for filename in ("SKILL.md", "DESCRIPTION.md"):
+    for filename in ("SKILL.md", "DESCRIPTION.md", "harness.yaml"):
         for path in iter_skill_index_files(skills_dir, filename):
             try:
                 st = path.stat()
@@ -358,6 +358,24 @@ def _build_snapshot_entry(
     if isinstance(platforms, str):
         platforms = [platforms]
 
+    # Skill-specific routing metadata is small; keep full procedures out of
+    # the system prompt and load them only on skill_view activation.
+    route = {}
+    harness_status = "legacy"
+    try:
+        from agent.skill_harness import SkillHarnessError, load_skill_harness
+        contract = load_skill_harness(
+            skill_file.parent, str(frontmatter.get("name", skill_name))
+        )
+        if contract is not None:
+            harness_status = "declared"
+            route = {
+                "when": contract["activation"]["when"][0],
+                "not_when": contract["activation"]["not_when"][0],
+            }
+    except SkillHarnessError:
+        harness_status = "invalid"
+
     return {
         "skill_name": skill_name,
         "category": category,
@@ -365,6 +383,8 @@ def _build_snapshot_entry(
         "description": description,
         "platforms": [str(p).strip() for p in platforms if str(p).strip()],
         "conditions": extract_skill_conditions(frontmatter),
+        "harness_status": harness_status,
+        "route": route,
     }
 
 
@@ -433,6 +453,20 @@ def _skill_should_show(
     return True
 
 
+def _skill_index_description(entry: dict) -> str:
+    """Short, bounded routing cues without loading the full skill procedure."""
+    description = entry.get("description", "")
+    route = entry.get("route") or {}
+    if entry.get("harness_status") != "declared":
+        return description
+    when = route.get("when", "")
+    not_when = route.get("not_when", "")
+    if not isinstance(when, str) or not isinstance(not_when, str):
+        return description
+    # Use only one positive and one negative cue to limit startup tokens.
+    return f"{description} [Use: {when[:130]}; Avoid: {not_when[:130]}]"
+
+
 def build_skills_system_prompt(
     available_tools: "set[str] | None" = None,
     available_toolsets: "set[str] | None" = None,
@@ -492,6 +526,8 @@ def build_skills_system_prompt(
                 continue
             if frontmatter_name in disabled or skill_name in disabled:
                 continue
+            if entry.get("harness_status") == "invalid":
+                continue
             if not _skill_should_show(
                 entry.get("conditions") or {},
                 available_tools,
@@ -499,7 +535,7 @@ def build_skills_system_prompt(
             ):
                 continue
             skills_by_category.setdefault(category, []).append(
-                (skill_name, entry.get("description", ""))
+                (skill_name, _skill_index_description(entry))
             )
         category_descriptions = {
             str(k): str(v)
@@ -517,6 +553,8 @@ def build_skills_system_prompt(
             skill_name = entry["skill_name"]
             if entry["frontmatter_name"] in disabled or skill_name in disabled:
                 continue
+            if entry.get("harness_status") == "invalid":
+                continue
             if not _skill_should_show(
                 extract_skill_conditions(frontmatter),
                 available_tools,
@@ -524,7 +562,7 @@ def build_skills_system_prompt(
             ):
                 continue
             skills_by_category.setdefault(entry["category"], []).append(
-                (skill_name, entry["description"])
+                (skill_name, _skill_index_description(entry))
             )
 
         # Read category-level DESCRIPTION.md files
@@ -571,6 +609,8 @@ def build_skills_system_prompt(
                     continue
                 if entry["frontmatter_name"] in disabled or skill_name in disabled:
                     continue
+                if entry.get("harness_status") == "invalid":
+                    continue
                 if not _skill_should_show(
                     extract_skill_conditions(frontmatter),
                     available_tools,
@@ -579,7 +619,7 @@ def build_skills_system_prompt(
                     continue
                 seen_skill_names.add(skill_name)
                 skills_by_category.setdefault(entry["category"], []).append(
-                    (skill_name, entry["description"])
+                    (skill_name, _skill_index_description(entry))
                 )
             except Exception as e:
                 logger.debug("Error reading external skill %s: %s", skill_file, e)
