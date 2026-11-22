@@ -169,7 +169,7 @@ def load_skill_harness(skill_dir: Path | None, expected_skill: str) -> dict | No
         # The Git blob hash is a *version consistency check*, not an
         # authenticity guarantee. Never use it to authorize a tool.
         actual = hashlib.sha1(
-            b"blob " + str(len(raw)).encode("ascii") + b"\\x00" + raw
+            b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw
         ).hexdigest()
         if actual != profile["skill_git_blob"]:
             raise SkillHarnessError(
