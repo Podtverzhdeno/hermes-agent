@@ -7,6 +7,7 @@ Actual capabilities remain subject to the Hermes tool/security policies.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -177,4 +178,6 @@ def load_skill_harness(skill_dir: Path, expected_name: str) -> Optional[Dict[str
         parsed = yaml.safe_load(content)
     except (OSError, UnicodeError, yaml.YAMLError) as exc:
         raise SkillHarnessError(f"Cannot parse harness manifest: {exc}") from exc
-    return validate_skill_harness(parsed, expected_name)
+    checked = validate_skill_harness(parsed, expected_name)
+    checked["manifest_sha256"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    return checked
