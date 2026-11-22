@@ -776,7 +776,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 "choices": [{
                     "index": 0,
                     "message": {"role": "assistant", "content": final_response},
-                    "finish_reason": "stop" if outcome == "succeeded" else "length",
+                    "finish_reason": (
+                        "stop" if outcome == "succeeded" else
+                        "cancelled" if outcome == "interrupted" else "length"
+                    ),
                 }],
                 "usage": {
                     "prompt_tokens": usage.get("input_tokens", 0),
@@ -784,6 +787,11 @@ class APIServerAdapter(BasePlatformAdapter):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
+            if outcome != "succeeded":
+                payload["hermes"] = {
+                    "stop_reason": "agent_interrupted"
+                    if outcome == "interrupted" else "agent_incomplete",
+                }
             return {
                 "payload": payload, "session_id": session_id,
                 "agent_outcome": outcome,
@@ -939,36 +947,45 @@ class APIServerAdapter(BasePlatformAdapter):
                 return response
 
             outcome = _agent_run_outcome(result)
-            if outcome in ("failed", "interrupted"):
-                reason = (
-                    "agent_reported_failed" if outcome == "failed"
-                    else "agent_interrupted"
-                )
+            if outcome != "succeeded":
+                reason = {
+                    "failed": "agent_reported_failed",
+                    "interrupted": "agent_interrupted",
+                    "incomplete": "agent_incomplete",
+                }[outcome]
                 _api_event(
                     "agent_not_completed", request.get("hermes_request_id", "-"),
                     phase="stream", reason_code=reason,
                 )
-                await response.write((
-                    "data: " + json.dumps(_openai_error(
-                        "Hermes agent did not complete; inspect server logs.",
-                        err_type="server_error", code=reason,
-                    )) + "\n\n"
-                ).encode())
-                await response.write(b"data: [DONE]\n\n")
-                return response
+                if outcome == "failed":
+                    await response.write((
+                        "data: " + json.dumps(_openai_error(
+                            "Hermes agent did not complete; inspect server logs.",
+                            err_type="server_error", code=reason,
+                        )) + "\n\n"
+                    ).encode())
+                    await response.write(b"data: [DONE]\n\n")
+                    return response
 
             # Finish chunk
             finish_chunk = {
                 "id": completion_id, "object": "chat.completion.chunk",
                 "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {},
-                             "finish_reason": "stop" if outcome == "succeeded" else "length"}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": (
+                    "stop" if outcome == "succeeded" else
+                    "cancelled" if outcome == "interrupted" else "length"
+                )}],
                 "usage": {
                     "prompt_tokens": usage.get("input_tokens", 0),
                     "completion_tokens": usage.get("output_tokens", 0),
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
+            if outcome != "succeeded":
+                finish_chunk["hermes"] = {
+                    "stop_reason": "agent_interrupted"
+                    if outcome == "interrupted" else "agent_incomplete",
+                }
             await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
             await response.write(b"data: [DONE]\n\n")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
@@ -1110,7 +1127,10 @@ class APIServerAdapter(BasePlatformAdapter):
             response_data = {
                 "id": response_id,
                 "object": "response",
-                "status": "completed" if outcome == "succeeded" else "incomplete",
+                "status": (
+                    "completed" if outcome == "succeeded" else
+                    "cancelled" if outcome == "interrupted" else "incomplete"
+                ),
                 "created_at": int(time.time()),
                 "model": body.get("model", "hermes-agent"),
                 "output": self._extract_output_items(result),
@@ -1120,10 +1140,11 @@ class APIServerAdapter(BasePlatformAdapter):
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
-            if outcome != "succeeded":
+            if outcome == "interrupted":
+                response_data["hermes"] = {"stop_reason": "agent_interrupted"}
+            elif outcome == "incomplete":
                 response_data["incomplete_details"] = {
-                    "reason": "agent_interrupted" if outcome == "interrupted"
-                    else "agent_incomplete",
+                    "reason": "agent_incomplete",
                 }
             if store:
                 self._response_store.put(
