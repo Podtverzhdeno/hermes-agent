@@ -203,3 +203,48 @@ def test_worker_stopped_without_run_report_stays_unconfirmed(journal):
     journal.ingest(event(1, 1, "worker.started"))
     journal.ingest(event(1, 2, "worker.stopped"))
     assert journal.assess("run-causal")["state"] == "STOPPED_UNCONFIRMED"
+
+
+def test_duplicate_approvals_do_not_silently_clear_pending_request(journal):
+    journal.ingest(event(1, 1, "approval.required", source="worker", action="deploy"))
+    journal.ingest(event(1, 1, "approval.required", source="gateway", action="deploy"))
+    journal.ingest(event(1, 2, "approval.resolved", source="gateway", action="deploy"))
+    status = journal.assess("run-causal")
+    assert status["state"] == "TRACE_INCOMPLETE"
+    assert status["pending_approvals"] == ["deploy"]
+
+
+def test_duplicate_approval_resolutions_are_not_proof(journal):
+    journal.ingest(event(1, 1, "approval.required", source="worker", action="deploy"))
+    journal.ingest(event(1, 2, "approval.resolved", source="worker", action="deploy"))
+    journal.ingest(event(1, 1, "approval.resolved", source="gateway", action="deploy"))
+    status = journal.assess("run-causal")
+    assert status["state"] == "TRACE_INCOMPLETE"
+    assert status["pending_approvals"] == ["deploy"]
+
+
+def test_single_same_source_approval_pair_is_not_a_duplicate(journal):
+    journal.ingest(event(1, 1, "approval.required", action="deploy"))
+    journal.ingest(event(1, 2, "approval.resolved", action="deploy"))
+    assert journal.assess("run-causal")["pending_approvals"] == []
+
+
+def test_worker_stop_from_other_emitter_does_not_conflict_with_run_failure(journal):
+    journal.ingest(event(1, 1, "run.reported_failed", source="coordinator", reason="CI_FAILED"))
+    journal.ingest(event(1, 1, "worker.stopped", source="worker-1"))
+    result = journal.assess("run-causal")
+    assert result["state"] == "REPORTED_FAILED"
+    assert result["reported_reason_code"] == "CI_FAILED"
+
+
+def test_two_independent_run_reporters_remain_contradictory(journal):
+    journal.ingest(event(1, 1, "run.reported_failed", source="coordinator", reason="CI_FAILED"))
+    journal.ingest(event(1, 1, "run.reported_failed", source="other", reason="AUTH_DENIED"))
+    result = journal.assess("run-causal")
+    assert result["state"] == "TRACE_INCOMPLETE"
+
+
+def test_multiple_worker_stops_are_not_cross_report_conflict(journal):
+    journal.ingest(event(1, 1, "worker.stopped", source="worker-1"))
+    journal.ingest(event(1, 1, "worker.stopped", source="worker-2"))
+    assert journal.assess("run-causal")["state"] == "STOPPED_UNCONFIRMED"
