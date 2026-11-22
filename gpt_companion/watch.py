@@ -30,6 +30,28 @@ def _fingerprint(assessment: dict) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
+def _sqlite_stop_code(exc: sqlite3.DatabaseError) -> str:
+    """Classify a SQLite failure without copying error text or local paths.
+
+    Extended SQLite errors have primary reason in their low 8 bits.
+    Unknown codes fail closed as an unavailable diagnostic store, not
+    automatically as file corruption.
+    """
+    code = getattr(exc, "sqlite_errorcode", None)
+    if type(code) is not int:
+        return "WATCH_DB_UNAVAILABLE"
+    primary = code & 0xFF
+    if primary in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        return "WATCH_DB_LOCKED"
+    if primary == sqlite3.SQLITE_FULL:
+        return "WATCH_STORAGE_FULL"
+    if primary in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+        return "JOURNAL_INTEGRITY_FAILED"
+    if primary == sqlite3.SQLITE_IOERR:
+        return "WATCH_IO_ERROR"
+    return "WATCH_DB_UNAVAILABLE"
+
+
 class StatusWatch:
     """Append transitions at most once per changed diagnosis per run, per DB.
 
@@ -148,8 +170,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except KeyboardInterrupt:
         return 0
-    except sqlite3.DatabaseError:
-        print('{"state":"JOURNAL_INTEGRITY_FAILED"}', file=sys.stderr)
+    except sqlite3.DatabaseError as exc:
+        print(json.dumps({"state": _sqlite_stop_code(exc)}), file=sys.stderr)
         return 3
     except (JournalConflict, OSError, ValueError):
         print('{"state":"WATCH_INSPECTION_REJECTED"}', file=sys.stderr)
