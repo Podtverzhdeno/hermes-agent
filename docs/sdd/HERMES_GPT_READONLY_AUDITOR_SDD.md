@@ -13,6 +13,10 @@ Modern upstream surfaces:
 - `gateway.api_server.max_concurrent_runs` documented default **10** (HTTP 429 beyond capacity). 30 GPT clients may experience **intentional admission backpressure**, not a Hermes crash. The actual configured value must be read from running instance.
 - `RunIdempotencyStore` may fall back to non-durable in-memory storage. Check `GET /v1/capabilities` and the effective authorization/profile; do not assume all installations are durable.
 
+- **CANCELLED does not necessarily mean externally stopped:** pinned upstream `gateway/platforms/api_server_runs.py`, `_execute_run_via_live_owner` (lines 1016–1024), explicitly states that a live Bot Chat owner may continue its claimed task even after gateway `/stop` marks a run `cancelled`. Do not infer the absence of tool effects from a terminal cancellation status; the auditor returns `VERIFY_EXTERNAL_EFFECTS_BEFORE_RETRY`.
+- Native events also include `message.interim` and `run.stopping`, not only `message.delta` and terminal run events. The allowlist must stay pinned to the inspected upstream revision; legitimate new event types need a schema change rather than being mislabeled as an agent crash.
+
+
 **The problem**: When a GPT UI observer disconnects or an agent stalls, determine what is known, unknown, and safe to do next. Do not invent private reasoning, tool effects, or full history from a truncated stream. Tens of agents share one human operator: reports must be short, structured, authenticated, and comparable.
 
 ## 2. Ownership and architecture
@@ -58,6 +62,10 @@ Invariants:
 - `tool.completed` with error flag remains visible even if later run status says completed, so the operator can inspect recovery evidence.
 - All outputs are an allowlist of IDs, booleans, counters, diagnostic codes and safe timestamps, bounded by maximum input/event limits. No user content is echoed on parsing errors.
 
+- **Syntactic validity is not redaction.** A single-token credential can match a permissive “reason code” regex. Audit metadata now uses closed allowlists for event names, run statuses and reason categories. Unknown labels are replaced by `event.unrecognized`, `unknown_status` or `UNCLASSIFIED`; tests check that fake token-shaped inputs do not reach diagnostic JSON.
+- A terminal `cancelled`/`interrupted` state is an execution-control report, **not proof that a remote Bot Chat owner or previously launched external tool stopped**. Preserve this distinction in the operator action field.
+
+
 ## 4. Reason codes and deterministic next actions
 
 | Reason | Meaning | Safe operator action |
@@ -93,6 +101,8 @@ Before merging: tests must finish green on exact HEAD, compare to unmodified mai
 | 2026-11-22 | PR #4 earlier Actions: 7,513 passed, 29 failed; 171 skipped, old compatibility assertion and environment problems | Full-suite release gate failed on earlier SHA | No merge claim; latest CI required |
 | 2026-11-22 | Modern official source exposes max 10 direct runs and bounded SSE replay by default | Expected capacity and evidence-loss conditions | Prefer reason-coded 429 and replay gap reporting |
 | 2026-11-22 | This branch copies only read-only auditor, synthetic tests and extension-specific contract | Implementation proposed | CI/live verification pending |
+| 2026-11-22 | Upstream _execute_run_via_live_owner explicitly documents local /stop limitation on a claimed Bot Chat turn | Verified source contract | On cancelled/interrupted, independently reconcile remote effects before retry |
+| 2026-11-22 | Single-token secrets passed through safe-code regex in initial auditor design | Self-review identified and code fixed using closed allowlists | Regression tests added; CI on exact HEAD is the gate |
 
 ## 7. Follow-on implementation (NOT included here)
 
