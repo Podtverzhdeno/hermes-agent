@@ -191,6 +191,8 @@ Outputs:
 - NO_COLLISION_FOUND_NOT_MERGE_APPROVAL: this *one gate* found no conflict; still require CI/security/revision check.
 - INCOMPLETE_AUDIT: missing SHA, truncation, API outage, invalid inventory; never green.
 
+**Atomicity caveat (post-implementation review):** GitHub REST does not provide a repository-wide atomic snapshot of simultaneously moving PRs and branches. Compare immutable base/head commit SHAs, verify PR head/base again after paginated PR file fetch, and verify branch SHA after comparing. If either moves, return INCOMPLETE_AUDIT instead of a green result. HEAD checks reduce time-of-check/time-of-use errors but cannot eliminate an adversarial ABA ref move or unrelated new branch appearing during pagination. Production integration must freeze a recorded source revision, re-inventory immediately before merge, and require the exact approved commit/check SHAs. A read-only scanner is not a distributed lock.
+
 The gate is intentionally read-only: it cannot merge PRs, call models, write to the user's machine, approve permissions, or schedule work. Example:
 
     python scripts/hermes_gpt_coordination_audit.py --repo Podtverzhdeno/hermes-agent --base main --output report.json
