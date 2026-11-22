@@ -84,23 +84,23 @@ Strong IDs: task, run, attempt, operation, emitter, artifact SHA, evidence ID, p
 
 Global quotas must apply to entire DAG: concurrent provider jobs, browser tabs, workers, tokens/spend and shared verification slots. Backpressure before dropping events. Watchdog monitors queue age and lease expiry, but can only *diagnose* an uncertain effect, not repeat it. Use jittered bounded retries for pure read operations, not unverified external writes. Keep owner-visible stop cause, next allowed action, deadlines and per-source connection health.
 
-## 8. Candidate idea scoring (engineering estimates, not measurements)
+## 8. Candidate idea scoring — reproducible, provisional
 
-Scoring model: 2*(0.30 user impact + 0.25 reliability + 0.20 feasibility + 0.15 evidence quality + 0.10 risk reduction); each component 1-5.
+Score/10 = 2 × (0.30 impact + 0.25 reliability + 0.20 feasibility + 0.15 evidence + 0.10 risk reduction), each input on the subjective 1–5 scale. These are engineering priors, **not measured outcomes**. Re-score against authenticated incidents and fault-injection data. This table makes every rating mathematically auditable.
 
-| Idea | Score /10 | Decision |
-|---|---:|---|
-| Metadata-only causal events and diagnostics | 10.0 | phase 0 |
-| Reuse Autopilot ledger/leases/effect reservation | 9.6 | phase 1 integration after review |
-| Supported OpenAI provider response IDs / webhook reconciliation | 9.6 | preferred authorized provider adapter |
-| Verify fencing immediately before any side effect | 9.2 | required release gate |
-| Independent multi-channel status and exact-SHA evidence | 9.2 | phase 0 and later verifier |
-| Fair global multi-worker quotas | 8.3 | phase 2 |
-| Deterministic crash/duplicate/fault injection | 8.1 | before deployment |
-| MV3 local durable outbox with owner consent | 7.9 | only if browser bridge genuinely needed |
-| ML-based anomaly model | 4.1 | defer; need labeled incidents first |
-| DOM selector auto-repair as task authority | 3.0 | reject; UI is not authoritative |
-| Distributed cluster before local hardening | 3.9 | reject premature scope |
+| Idea | Impact | Reliability | Feasibility | Evidence | Risk reduction | Score /10 | Decision |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Metadata-only causal events and diagnostics | 5 | 5 | 5 | 5 | 5 | 10.0 | Phase 0 |
+| Reuse Autopilot ledger and effect reservations | 5 | 5 | 4 | 5 | 5 | 9.6 | Integrate after branch review |
+| Supported API response IDs and receipts | 5 | 5 | 4 | 5 | 5 | 9.6 | Preferred with API authorization |
+| Tool gateway fencing | 5 | 5 | 3 | 5 | 5 | 9.2 | Required release gate |
+| Five-axis observable status and exact-SHA evidence | 5 | 4 | 5 | 4 | 5 | 9.2 | Phase 0 projection; verifier later |
+| Global multi-tenant queues and quotas | 5 | 4 | 3 | 4 | 5 | 8.4 | Phase 2 |
+| Deterministic fault injection and event replay | 4 | 4 | 3 | 4 | 5 | 7.8 | Required before live adapter |
+| Authorized Chrome MV3 durable outbox | 4 | 4 | 3 | 4 | 4 | 7.6 | Only if browser adapter is needed |
+| Statistical anomaly detection | 2 | 2 | 2 | 2 | 3 | 4.2 | Defer until labeled incidents |
+| Auto-repair ChatGPT DOM selectors as correctness foundation | 2 | 1 | 2 | 2 | 1 | 3.3 | Reject |
+| Distributed services before local hardening | 2 | 2 | 1 | 3 | 2 | 3.9 | Reject premature complexity |
 
 ## 9. Phase gates and tests
 
