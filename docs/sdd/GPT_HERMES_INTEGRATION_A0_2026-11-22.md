@@ -237,3 +237,7 @@ Additional scalability decisions:
 ## 17. Monitor self-interference control
 
 A live scan on EVERY draft PR push caused repeated full GitHub list+files+checks+statuses GET across ~30 PRs. This architecture amplifies contention and, under changing heads, produces recurring snapshot races. Fixed A0 workflow: PR push => offline unit tests only; manual workflow_dispatch => serialized live audit with failure artifacts; schedule every six hours => applies ONLY after workflow is merged into default branch, not to draft PR. This is NOT a claim that continuous monitoring is active. Long-term design uses authenticated webhook as trigger, incremental cache with conditional GET/ETag, and bounded independent reconciliation. Full review and owner acceptance before merging workflow.
+
+## 18. Owner target: isolated CDP rather than intercepting normal browser
+
+Owner had earlier authorized a web-chatgpt-high-cdp direct CDP canary and selected a separate Control Center without required browser plugin or disruption of normal PC use. Source-local app unavailable today; these are earlier requirements, not live proof. Architecture must support native Runs+Kanban status, plus separate isolated Chromium/CDP lane with exclusive writer lease, sanitized event projection and explicit user grant; do not target the personal browser by default. See [ADR-A0-03](GPT_ISOLATED_CDP_CONTROL_CENTER_ADR_A0_2026-11-22.md).

@@ -68,3 +68,8 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Monitor self-interference / API pressure correction
 - Repeated A0 draft PR pushes launched a live-evidence scan with ~3 GETs for every open PR in parallel with other agents' scanners. This contributed controllable API pressure and increased chance of SNAPSHOT_RACE (not proof of API rate limiting, which was not observed). Immediate fix: separate cheap offline-contract on PR from manually dispatched live-evidence, restrict concurrent live collectors to one and provide a future default-branch-only 6-hour safety snapshot. Schedule does NOT run while draft PR #28 is unmerged. Production proposal is webhook+incremental reconciliation instead of expensive polling.
+
+## Owner project context refinement
+- Retrieved prior authorized CDP canary context for model route web-chatgpt-high-cdp (Nov 14–15) and newer preference for a separate Agent Control Center without mandatory browser extension and without interfering with normal browser. Historical context is not a current health check.
+- Local_WorkSpace access recovered partially: list_workspaces exposed only the unrelated shelter Obsidian vault. No authorized Hermes project/root/runtime/log path was available, so Hermes Windows/CDP E2E remains BLOCKED. Did not write Hermes docs into the shelter game vault.
+- New ADR-A0-03 separates Hermes native run authority from an isolated opt-in CDP browser lane, consolidates typed failure cases and 30–100-worker acceptance, and keeps all execution/approval gates explicit.
