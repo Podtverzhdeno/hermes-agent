@@ -2,9 +2,9 @@
 
 Date: 2026-11-22. Status: **decision proposal / prototype audit**, not production approval.
 Sources were checked against the upstream repository and official docs on this date.
-The local fork is \`Podtverzhdeno/hermes-agent\` at main SHA
-\`7e9100901819ee44c16b4ddcb79a6bcb7909f591\` (2026-04-01).
-Upstream \`NousResearch/hermes-agent\` released **v0.23.3 on 2026-11-19**
+The local fork is `Podtverzhdeno/hermes-agent` at main SHA
+`7e9100901819ee44c16b4ddcb79a6bcb7909f591` (2026-04-01).
+Upstream `NousResearch/hermes-agent` released **v0.23.3 on 2026-11-19**
 (published 2026-11-20): https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3.
 
 ## Executive decision
@@ -16,7 +16,7 @@ comments, worktrees, review gates, and exact-head GitHub PR completion contracts
 
 Instead:
 
-1. Preserve the prototype \`autopilot/ledger.py\` in this unmerged draft for
+1. Preserve the prototype `autopilot/ledger.py` in this unmerged draft for
    **offline validation of effect/approval/evidence invariants**, never as a
    new concurrent production scheduler next to Kanban.
 2. Upgrade/test a **separate canary install** from current stable upstream
@@ -31,7 +31,7 @@ Instead:
    propagation and recovery tests pass against the exact stable release.
 
 This supersedes any earlier architecture wording that suggests operating
-\`AutopilotLedger.claim()\` as the long-term top-level scheduler for a modern
+`AutopilotLedger.claim()` as the long-term top-level scheduler for a modern
 Hermes deployment. That claim() implementation is a deliberately isolated
 experimental reference against the **older fork**; future integration must
 avoid duplicating upstream task rows or dispatching the same task twice.
@@ -67,7 +67,7 @@ Neither should be presented as verified on the user's machine.
 | Code PR acceptance | No first-class PR gate | Exact PR contract, required checks/ruleset checks | GitHub auth, repo config, post-merge promotion |
 | Project canonical decisions | Plain notes | Project concept partially separate; formal mission issue open | Versioned project policy/decision/evidence |
 | External side effects | Generic command approval | Evolving publisher/worker boundaries | Bound approval, effect receipt, reconciliation |
-| Obsidian notes | Separate scoped MCP gateway | \`dir:<path>\` workspace possible | Restricted writer; SHA preconditions; sync queue |
+| Obsidian notes | Separate scoped MCP gateway | `dir:<path>` workspace possible | Restricted writer; SHA preconditions; sync queue |
 | Cross-service cost budgets | No inspected global budget | Partial per-worker limits (scope to verify) | Aggregate budget authority / kill switch |
 | Global stop | Gateway/cron separate | Several intertwined worker/cron systems | Cancel DAG, scheduled watchers, all dependent workers |
 | Proof against chat hallucination | No trusted outcome gate | PR completion contracts exist | Extend to Obsidian, builds, runtime, policy |
@@ -79,7 +79,7 @@ Neither should be presented as verified on the user's machine.
 ### A. No risky in-place upstream pull
 
 The user's fork main is older by many months and may contain implicit local
-state outside Git. \`git pull NousResearch main\` directly onto the working
+state outside Git. `git pull NousResearch main` directly onto the working
 Windows directory is **not** an acceptable migration method.
 
 Safe sequence:
@@ -89,7 +89,7 @@ Safe sequence:
 2. Backup Git worktree + configuration + SQLite files using SQLite backup API
    where applicable. Encrypt/limit access; **do not commit backups**.
 3. Clone a clean **stable v0.23.3** canary side-by-side with its own
-   isolated \`HERMES_HOME\` / profiles / ports / gateway / Kanban database.
+   isolated `HERMES_HOME` / profiles / ports / gateway / Kanban database.
 4. Map config migrations and behavior changes by comparing controlled
    test cases. Do not point both old and new dispatchers at the same board DB.
 5. Perform read-only smoke checks before granting any write scopes.
@@ -102,7 +102,7 @@ Safe sequence:
 
 For modern deployment:
 
-\`\`\`text
+```text
 Human request / GitHub webhook / scheduled signal
          │
          ▼
@@ -121,18 +121,18 @@ Project policy + intake validation ─► Kanban task_id
                             Kanban review/done/blocked
                                        │
                                    notifications
-\`\`\`
+```
 
-Kanban owns \`ready/running/review/done/blocked\`; the effect journal owns
-\`prepared/reserved/confirmed/unknown\` for **external writes only**.
-The project record owns \`scope, constraints, accepted facts, decisions,
-current revision, budget\`. A worker session owns only its transient context.
+Kanban owns `ready/running/review/done/blocked`; the effect journal owns
+`prepared/reserved/confirmed/unknown` for **external writes only**.
+The project record owns `scope, constraints, accepted facts, decisions,
+current revision, budget`. A worker session owns only its transient context.
 Never let an LLM fill in a missing source-of-truth field with fluent prose.
 
 ### C. Strong stop semantics
 
 A global STOP for project P must atomically transition project policy to
-\`paused\`, record a monotonic revocation generation, and fan out to:
+`paused`, record a monotonic revocation generation, and fan out to:
 - running and queued Kanban cards in **all boards** belonging to P;
 - child/delegated processes, still-running terminal commands and gateway jobs;
 - recurring cron/webhook-created monitors dedicated to P;
@@ -140,7 +140,7 @@ A global STOP for project P must atomically transition project policy to
 - pending notifications that should be suppressed or consolidated.
 
 Already-dispatched external actions are not magically undone: mark them
-\`unknown\` until reconciled. No new actions may start after revocation.
+`unknown` until reconciled. No new actions may start after revocation.
 A stopped project must not be restarted by a lingering schedule. A STOP
 acceptance drill requires *actual* absence of new model calls and writes,
 not just an informational "stopped" message. The 2026-09 upstream
@@ -205,9 +205,9 @@ softening policy to make the demo look successful.
 
 ## Exact status of this feature branch
 
-- \`autopilot/ledger.py\` is an **experimental single-host SQLite coordination
+- `autopilot/ledger.py` is an **experimental single-host SQLite coordination
   kernel and future effect-journal reference**, not a complete plugin.
-- \`tests/autopilot\` contains offline contract tests; check actual CI before
+- `tests/autopilot` contains offline contract tests; check actual CI before
   claiming pass. GitHub Actions runs on the fork were absent during audit.
 - No Hermes runtime worker, provider, CI, browser, Obsidian writer or publisher
   is yet wired to this kernel.
