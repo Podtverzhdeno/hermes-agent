@@ -1,6 +1,16 @@
 # Hermes Autopilot — design review and phased implementation
 
 Status: **engineering proposal + independently testable coordination kernel** (2026-11-22).
+
+**Architecture update (2026-11-22):** Modern upstream Hermes v0.23.3 already has
+first-class durable Kanban, worker dispatch, reviewer gates and exact GitHub PR
+completion checks. **Do not deploy this prototype as a second task scheduler.**
+Use the supported upstream Kanban as canonical lifecycle, and adapt the
+prototype's approval/effect/evidence concepts as a narrow publisher sidecar.
+The prior SQLite-vs-Temporal comparison applies to the older April fork and
+research simulation only. See [ADR-001 and upstream parity audit](./UPSTREAM_PARITY_AUDIT_2026-11-22.md)
+for the migration and updated decision.
+
 Target fork snapshot: Podtverzhdeno/hermes-agent @ 7e9100901819ee44c16b4ddcb79a6bcb7909f591 (2026-04-01).
 **Not** an activated unattended agent runner. No production tasks, privileged actions, model calls, browser control, or automatic merges are enabled by this change.
 
