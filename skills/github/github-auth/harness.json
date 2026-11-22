@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "skill": "github-auth",
+  "purpose": "Establish the exact GitHub identity without leaking credentials or silently increasing scope.",
+  "risk": "critical",
+  "routing": {
+    "trigger": [
+      "Configure GitHub CLI authentication securely for my account",
+      "Check which GitHub account has read access to the repository",
+      "Review the permissions needed before creating a fine-grained token"
+    ],
+    "do_not_trigger": [
+      "Merge this pull request after review",
+      "Extract my token from a hidden credentials file",
+      "Find source code tests without contacting GitHub"
+    ]
+  },
+  "preflight": [
+    "Confirm exact account, target repository and intended operations.",
+    "Use provider-hosted login and approved OS credential manager, never plaintext storage.",
+    "Keep GitHub identity and credential consent separate from authorization of later writes."
+  ],
+  "workflow": [
+    "Inspect existing authentication without printing secrets.",
+    "Explain the minimum authorization and request owner-controlled login only if required.",
+    "Validate read-only access to exact repository and record capability scope.",
+    "If permissions need changing, obtain separate exact authorization and re-probe."
+  ],
+  "actions": [
+    {
+      "operation": "auth.inspect",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "identity-probe"
+      ]
+    },
+    {
+      "operation": "auth.configure",
+      "risk": "external_write",
+      "approval": "owner_exact",
+      "requires_evidence": [
+        "identity-probe",
+        "owner-consent",
+        "scope-proof"
+      ]
+    },
+    {
+      "operation": "auth.escalate",
+      "risk": "critical",
+      "approval": "owner_exact_and_secondary",
+      "requires_evidence": [
+        "identity-probe",
+        "owner-consent",
+        "scope-proof",
+        "secondary-consent"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "identity-probe",
+      "source": "remote_api",
+      "how_to_verify": "Use an authenticated read-only provider query to identify account and exact repo."
+    },
+    {
+      "id": "owner-consent",
+      "source": "human",
+      "how_to_verify": "Owner authorizes the exact login setup and target identity."
+    },
+    {
+      "id": "scope-proof",
+      "source": "artifact",
+      "how_to_verify": "Document least-privileged repository access without exposing credentials."
+    },
+    {
+      "id": "secondary-consent",
+      "source": "human",
+      "how_to_verify": "Owner separately confirms credential privilege escalation and affected accounts."
+    }
+  ],
+  "failure_modes": [
+    "Do not read from .env, git credential store, browser cookies or SSH private keys.",
+    "If account access is wrong or denied, stop rather than broadening permissions."
+  ]
+}
