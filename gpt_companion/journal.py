@@ -206,6 +206,12 @@ class EventJournal:
             rows = db.execute("""SELECT event_json,received_at,sequence,source
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
+            # An unresolved write from attempt N must survive attempt N+1. The
+            # task ledger is authoritative; this scan is a conservative hint.
+            prior_effect_rows = db.execute("""SELECT attempt,source,sequence,kind,event_json
+                FROM events WHERE run_id=? AND attempt<? AND kind IN
+                ('tool.effect_reserved','tool.effect_acknowledged','tool.effect_not_executed')
+                ORDER BY position""", (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Delivery can be reordered. A backfilled event with an older sequence
         # must NOT refresh liveness/progress and conceal an abandoned worker.
@@ -252,8 +258,36 @@ class EventJournal:
                 approval_requests[action] = origin
             elif kind == "approval.resolved":
                 approval_resolutions[action] = origin
-        reserved = set(reserved_events) - set(effect_resolutions)
+        # Cross-emitter events have no common sequence clock. An acknowledgement
+        # from another emitter must not silently clear an unresolved write.
+        cross_source_effects = {
+            action for action, resolution in effect_resolutions.items()
+            if action in reserved_events
+            and reserved_events[action][0] != resolution[0]
+        }
+        reserved = (set(reserved_events) - set(effect_resolutions)) | cross_source_effects
         pending_approval = set(approval_requests) - set(approval_resolutions)
+        for action, resolution in approval_resolutions.items():
+            if action in approval_requests and approval_requests[action][0] != resolution[0]:
+                pending_approval.add(action)
+                contradictory = True
+        # Never use the highest attempt as proof that prior attempts have no
+        # outstanding effects. Pair each reservation/resolution per attempt,
+        # action and emitter; caller-supplied telemetry is still NOT a receipt.
+        prior_reserved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        prior_resolved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        for row in prior_effect_rows:
+            event = json.loads(row["event_json"])
+            key = (row["attempt"], event["action_id"])
+            target = prior_reserved if event["kind"] == "tool.effect_reserved" else prior_resolved
+            target.setdefault(key, []).append((row["source"], row["sequence"]))
+        prior_unresolved = []
+        for (past_attempt, action_id), reservations in sorted(prior_reserved.items()):
+            resolutions = prior_resolved.get((past_attempt, action_id), [])
+            if (len(reservations) != 1 or len(resolutions) != 1
+                    or resolutions[0][0] != reservations[0][0]
+                    or resolutions[0][1] <= reservations[0][1]):
+                prior_unresolved.append({"attempt": past_attempt, "action_id": action_id})
         for resolution, request in ((effect_resolutions, reserved_events),
                                     (approval_resolutions, approval_requests)):
             for action, resolved_by in resolution.items():
@@ -270,12 +304,17 @@ class EventJournal:
         terminal_sources = {e["source"] for e in terminal_events}
         if len(terminal_sources) > 1:
             contradictory = True
-        last_terminal = (max(terminal_events, key=lambda e: e["sequence"])["kind"]
-                         if terminal_events else None)
-        reason = next((e["reason_code"] for e in reversed(terminal_events)
-                       if "reason_code" in e), "UNKNOWN")
-        if reserved and live_age >= liveness_timeout:
+        # Select both terminal kind and reason from the same source-local
+        # highest-sequence event. Delivery order is not execution order.
+        terminal = max(terminal_events, key=lambda e: e["sequence"]) if terminal_events else None
+        last_terminal = terminal["kind"] if terminal else None
+        reason = terminal.get("reason_code", "UNKNOWN") if terminal else "UNKNOWN"
+        if prior_unresolved or cross_source_effects or (reserved and live_age >= liveness_timeout):
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
+        elif moment + 0.001 < last_seen:
+            # A backwards wall-clock jump must not turn a stale worker into
+            # a recently active worker by clamping negative ages to zero.
+            state, next_action = "CLOCK_ANOMALY", "CHECK_OBSERVER_CLOCK_AND_TIMESTAMPS"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
         elif contradictory or missing:
@@ -297,6 +336,7 @@ class EventJournal:
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
+                "unresolved_effects_prior_attempts": prior_unresolved,
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
