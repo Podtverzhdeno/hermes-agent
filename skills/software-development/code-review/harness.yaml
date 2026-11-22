@@ -3,7 +3,7 @@ schema_version: 1
 skill: code-review
 activation:
   when: ["Review a local diff, patch or source file for actionable defects","Assess security, correctness and regression risks before shipping"]
-  not_when: undefined
+  not_when: ["Write a new implementation from a specification","Post a review to a remote pull request"]
 capabilities:
   tools: ["read_file","search_files","terminal (read-only commands)"]
   side_effects: none
