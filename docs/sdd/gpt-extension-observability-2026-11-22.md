@@ -232,7 +232,7 @@ Scored 1–5 against: **Impact 35%**, **root-cause visibility 25%**, **multi-age
 | Deterministic fault replay | 5 | 5 | 5 | 3 | 2 | 4.50 | P1 test infrastructure |
 | Context snapshot + provenance | 5 | 4 | 5 | 3 | 4 | 4.45 | P1 recovery |
 | Semantic event schema + OTel | 4 | 5 | 4 | 4 | 4 | 4.25 | P0–P1 incremental |
-| Schema/contract gates in CI | 4 | 4 | 5 | 5 | 5 | 4.35 | P0 implement |
+| Schema/contract gates in CI | 4 | 4 | 5 | 5 | 5 | 4.40 | P0 implement |
 | SLO burn-rate alerting | 4 | 4 | 4 | 4 | 4 | 4.00 | P1 when metrics exist |
 | AI-assisted incident hypothesis | 3 | 3 | 3 | 4 | 4 | 3.25 | P2 assist only |
 | Unreviewed autonomous push to main | 1 | 2 | 1 | 1 | 1 | 1.25 | REJECT |
