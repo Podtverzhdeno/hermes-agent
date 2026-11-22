@@ -23,6 +23,15 @@ class IncompleteSnapshot(ValueError):
     """Metadata is missing or cannot be trusted for a safe comparison."""
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: urllib otherwise forwards Authorization on redirects."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Repo renames/moves may redirect. Do not send the token to a
+        # noncanonical endpoint; require a fresh explicitly scoped scan.
+        raise IncompleteSnapshot('Unexpected GitHub API redirect; refusing token forwarding')
+
+
 def _api_json(path: str, token: str) -> Any:
     request = urllib.request.Request(
         API + path,
@@ -34,7 +43,8 @@ def _api_json(path: str, token: str) -> Any:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        opener = urllib.request.build_opener(_NoRedirect)
+        with opener.open(request, timeout=20) as response:
             return json.load(response)
     except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError) as exc:
         # Never print returned HTTP bodies or request headers: they may contain secrets.
@@ -176,7 +186,11 @@ def _is_sensitive(path: str) -> bool:
     return path.endswith(('.py', '.js', '.ts', '.tsx', '.mjs', '.toml', '.yaml', '.yml', '.json')) or path.startswith('.github/workflows/')
 
 
-def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
+def analyze(snapshot: dict[str, Any], *, evidence_mode: str = 'unverified_input') -> dict[str, Any]:
+    if evidence_mode not in {'github_api', 'offline_snapshot', 'unverified_input'}:
+        raise IncompleteSnapshot('Unsupported evidence provenance')
+    if not isinstance(snapshot.get('collected_at'), str) or not snapshot['collected_at']:
+        raise IncompleteSnapshot('Snapshot collection timestamp unavailable')
     if snapshot.get('schema') != 'hermes.pr.snapshot.v3':
         raise IncompleteSnapshot('Unsupported snapshot schema; v3 required for rename/fork-safe ancestry')
     if not isinstance(snapshot.get('repository'), str) or not snapshot['repository']:
@@ -246,12 +260,17 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
     for n in pulls:
         ancestors(n)
     findings: list[dict[str, Any]] = []
+    provenance = {
+        'github_api': 'GitHub REST GET read; cross-PR snapshot non-atomic',
+        'offline_snapshot': 'Unverified offline snapshot replay; not current GitHub state',
+        'unverified_input': 'Caller-provided metadata; provenance unverified',
+    }[evidence_mode]
 
     def issue(code: str, severity: str, prs: list[int], paths: list[str],
               why: str, next_step: str) -> None:
         findings.append({
             'code': code, 'severity': severity, 'prs': sorted(prs),
-            'paths': sorted(paths), 'evidence': 'GitHub PR metadata',
+            'paths': sorted(paths), 'evidence': provenance,
             'why': why, 'next_step': next_step,
         })
 
@@ -331,6 +350,9 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
                    'review': sum(f['severity'] == 'review' for f in findings)},
         'findings': findings,
         'collection_status': 'COMPLETE_METADATA_SNAPSHOT',
+        'evidence_mode': evidence_mode,
+        'snapshot_currentness': 'RECENT_API_READ_NOT_ATOMIC' if evidence_mode == 'github_api' else 'UNVERIFIED_OFFLINE',
+        'provenance': provenance,
         'integration_verdict': 'HOLD_FOR_REVIEW' if any(f['severity'] == 'blocker' for f in findings) else 'REVIEW_ONLY',
         'runtime_verdict': 'UNOBSERVED',
         'ci_verdict': 'UNVERIFIED',
@@ -342,7 +364,8 @@ def markdown(report: dict[str, Any]) -> str:
     lines = [
         '# Hermes GPT PR integration watch',
         f"Open PRs: {report['open_pr_count']}; blockers: {report['counts']['blocker']}; reviews: {report['counts']['review']}.",
-        f"**Integration decision: {report['integration_verdict']}** (GitHub metadata only; CI {report['ci_verdict']}; runtime {report['runtime_verdict']}).",
+        f"**Integration decision: {report['integration_verdict']}** (CI {report['ci_verdict']}; runtime {report['runtime_verdict']}).",
+        f"**Evidence source:** {report['provenance']}.",
         f"Base HEAD: `{report['default_head_sha']}`.",
         '**Read-only metadata analysis; not a runtime monitor or test-success assertion.**',
     ]
@@ -374,7 +397,7 @@ def main(argv: list[str] | None = None) -> int:
             json.loads(args.snapshot_in.read_text(encoding='utf-8'))
             if args.snapshot_in else collect(args.repo, os.environ.get('GITHUB_TOKEN', ''))
         )
-        report = analyze(snapshot)
+        report = analyze(snapshot, evidence_mode=('offline_snapshot' if args.snapshot_in else 'github_api'))
         if args.snapshot_out:
             args.snapshot_out.write_text(json.dumps(snapshot, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
         if args.report_out:
