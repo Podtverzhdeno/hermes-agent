@@ -62,3 +62,6 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 ## Root-cause enrichment for moving PR snapshots
 - A0 live-evidence job at PR #28 older head 2f5f261652df1f8925b4a16b275c75c72cc5bec3 returned EVIDENCE_UNAVAILABLE after three attempts because PR heads changed during the 30-PR collection. GitHub Action job 137187226132 wrote durable JSON/Markdown incident to artifact ID 14751193836 despite exit 3. This is an expected fail-closed race, not a passing merge assessment.
 - Follow-up source changes record unstable PR numbers and differentiate SNAPSHOT_RACE, UPSTREAM_RATE_LIMIT, UPSTREAM_PERMISSION_OR_RATE_LIMIT, TRANSPORT_UNAVAILABLE and EVIDENCE_INCOMPLETE. Added two no-network tests. Still no continuous daemon, just CI on change.
+
+## Multi-producer liveness source schema audit
+- Source-level conditional correctness finding on PR #12: event schema/SQLite uniqueness uses (source,run_id,attempt,sequence), not producer_id; source may be category worker rather than unique worker incarnation. Multiple agents same source category can falsely conflict or merge liveness. A0 comment 7078274443 requests trusted per-producer ID/fence and negative tests. This is a design risk, not a live reproduced production incident.

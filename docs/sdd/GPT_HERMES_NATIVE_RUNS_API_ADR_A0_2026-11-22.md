@@ -77,3 +77,7 @@ Gate R4: 30–100 concurrent native workers with separate Kanban boards/leases, 
 Gate R5: combined integration SHA and independent security E2E with owner; allow only staged canary; rollback disables new dispatch and protects immutable evidence.
 
 **Current state:** SDD accepted target only; no code in PR #28 calls native Runs API, no changes merged into production, no live installed extension control, no claims of 24h background monitoring. Apply this ADR to constrain merging existing conflicting PRs.
+
+## 6. Многoагентная идентичность: source_kind != producer_id
+
+Дополнительный аудит PR #12: его отдельный SQLite observer использует UNIQUE(source,run_id,attempt,sequence) и вычисляет liveness по source. Если source означает категорию вроде worker, а десятки реальных worker имеют самостоятельные seq=1, то один worker теряется как sequence collision, а их время прогресса ошибочно смешивается. Схема допускает безопасную работу лишь если producer stream ID является уникальным и включает рабочую инкарнацию; нельзя подменять producer_id значением source_kind из неподписанного события. Нужны trusted producer_id, producer_epoch/fence, source_kind, scoped attempt/run и отрицательный тест двух producers одной категории с seq=1. В выбранной архитектуре native Runs SSE имеет отдельный run_id и seq; дополнительный journal нужен лишь для host/tool effect и должен иметь собственное доказуемое разделение производителей. Замечание на PR #12: https://github.com/Podtverzhdeno/hermes-agent/pull/12 (A0 comment 7078274443).
