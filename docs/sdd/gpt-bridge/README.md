@@ -1,13 +1,15 @@
 # Hermes × GPT — SDD integration hub for many collaborating agents
 
-**Last evidence review:** 2026-11-22. **Status:** draft, read-only findings, no automatic production changes. **Runtime owner:** TBD / requires approval. **Guard worktree:** PR #22 (not merge-ready). **Important:** This is a durable project instruction hub, **not** a replacement for system instructions, user consent, root `AGENTS.md`, upstream Hermes lifecycle or a live monitoring daemon.
+**Last evidence review:** 2026-11-22. **Status:** draft, read-only findings, no automatic production changes. **Runtime owner:** TBD / requires approval. **Guard worktree:** PR #22 (not merge-ready). **Integration preference:** use an authenticated read-only ChatGPT MCP plugin over a Hermes-side durable Runs/gateway monitor when the installed version advertises compatible capabilities; browser/CDP is a separate permissioned control lane, not the source of run truth. Neither plugin nor scheduled observer is currently deployed.
+
+**Important:** This is a durable project instruction hub, **not** a replacement for system instructions, user consent, root `AGENTS.md`, upstream Hermes lifecycle or a live monitoring daemon.
 
 ## Mission and one-hour-plus quality standard
 
 This is **a hard distributed-systems project**: no agent may pronounce it “done” just because a standalone script or happy-path request succeeds. The deliverable is a causal explanation of each stage, explicit unknown outcomes after crashes, safe recovery from stop reasons, exact-SHA proof and independent reviewers under dozens of concurrent agents. Prefer high-quality authoritative sources and source-level reproductions to unverified quantity claims. No access to a model's hidden reasoning is assumed.
 
 **Required reading, ordered:**
-1. `EXTENSION_CAUSAL_INCIDENT_PROTOCOL_2026-11-22.md` — canonical identities, evidence types, state machines, browser/API modes (including upstream native `/v1/runs` and `/v1/capabilities`), incident taxonomy and 30-agent chaos cases.
+1. `EXTENSION_CAUSAL_INCIDENT_PROTOCOL_2026-11-22.md` — canonical identities, evidence types, state machines, browser/API modes (including upstream native `/v1/runs`, `/v1/capabilities` and an official-supported scoped ChatGPT MCP plugin path), incident taxonomy and 30-agent chaos cases.
 2. `ENGINEERING_DECISION_SCORECARD_2026-11-22.md` — safety gates first; weights and sensitivity behind prioritization.
 3. `GUARD_CONVERGENCE_AND_EXTENSION_ADR_2026-11-22.md` — how to converge #14/#18/#22 into ONE integration scanner rather than duplicate monitors.
 4. `HERMES_GPT_INTEGRATION_GUARD_SDD_2026-11-22.md` — actual PR #22 read-only scanner behavior, exact limitations, test gates and GitHub Actions mode.
