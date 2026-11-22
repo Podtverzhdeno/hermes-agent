@@ -68,7 +68,7 @@ A run shared by multiple emitters returns `worker_sources_count` and `stale_work
 
 ## Opt-in read-only status watcher (NOT a live GPT connector)
 
-The watcher polls this local journal; it does **not** subscribe to a browser or provider, and no process is installed or started automatically. It records changed diagnoses in a **separate** SQLite status DB for restart-safe audit and prints each new transition once per DB fingerprint. The status DB is not trusted task/effect evidence.
+The watcher polls this local journal; it does **not** subscribe to a browser or provider, and no process is installed or started automatically. It records changed diagnoses in a **separate** SQLite status DB for restart-safe audit and prints each new transition once per DB fingerprint. A causal `event_position` watermark rejects late stale observer decisions, including after upgrading an older status DB. The status DB is not trusted task/effect evidence.
 
 ```bash
 # One read-only snapshot of up to 500 run IDs (default one cycle)
@@ -79,3 +79,13 @@ python -m gpt_companion.watch --db ./gpt-events.sqlite3 --status-db ./watch-hist
 ```
 
 The process prints only state transitions. A crash between persisting an alert and printing it means stdout can miss a line; the durable `transitions` table still contains the event. Neither polling interval nor event freshness proves that the user's GPT account/browser is alive. There is no external action, retry, repair, webhook, push notification, or auto-approval path.
+
+
+## Дополнительные защитные инварианты (проверены offline)
+
+- Поздние события старого attempt могут выявить **незавершённые внешние эффекты** после запуска нового worker; вывод `NEEDS_RECONCILIATION` имеет приоритет перед «новый worker жив».
+- Cross-source `effect_acknowledged` или `approval.resolved` не доказывает причинность; дублирующиеся reservations/terminal reports нельзя считать завершением.
+- История и диагностические запросы ограничены: по умолчанию 10 000 events текущей попытки и 10 000 старых effect-событий. Превышение — `TRACE_WINDOW_LIMIT_EXCEEDED`, без частичного успешного результата. `StatusWatch.history(limit=1000)` возвращает только последние состояния.
+- `worker.stopped` в multi-worker run является событием **одного worker**, не всей задачи.
+
+Локальный тест `python -m pytest tests/gpt_companion -q`: **74 passed** (Python 3.13.5); реальная GPT-телеметрия, авторизованный ingestion, long-running deployment и GitHub CI на финальном SHA **не подтверждены**.
