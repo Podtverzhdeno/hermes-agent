@@ -545,12 +545,14 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Non-streaming: run the agent (with optional Idempotency-Key)
         async def _compute_completion():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
+            # Cache/replay the original session and completion identifiers.
+            return result, usage, session_id, completion_id, created
 
         idempotency_key = request.headers.get("Idempotency-Key")
         try:
@@ -561,9 +563,9 @@ class APIServerAdapter(BasePlatformAdapter):
                     provided_session_id,
                 )
                 fp = canonical_fingerprint(body)
-                result, usage = await _idem_cache.get_or_set(key, fp, _compute_completion)
+                result, usage, response_session, response_id, response_created = await _idem_cache.get_or_set(key, fp, _compute_completion)
             else:
-                result, usage = await _compute_completion()
+                result, usage, response_session, response_id, response_created = await _compute_completion()
         except IdempotencyInProgress:
             log_bridge_event(logger, run_id, "rejected", reason_code="IN_PROGRESS",
                              session_id=session_id)
@@ -592,6 +594,7 @@ class APIServerAdapter(BasePlatformAdapter):
                 status=500, headers={"X-Hermes-Run-Id": run_id},
             )
 
+        session_id, completion_id, created = response_session, response_id, response_created
         final_response = result.get("final_response", "")
         if not final_response:
             final_response = result.get("error", "(No response generated)")
