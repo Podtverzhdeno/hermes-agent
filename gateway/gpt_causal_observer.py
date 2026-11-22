@@ -217,15 +217,25 @@ class CausalObserver:
                 grouped = defaultdict(list)
                 for r in p:
                     if r["kind"] == "tool.intent" and r["operation_fingerprint"]:
-                        grouped[(r["attempt_id"], r["lease_fence"], r["operation_fingerprint"])].append(r)
+                        # A verifier for task B cannot close a suspected loop
+                        # in task A, even on a shared agent process.
+                        group = (r["task_id"], r["attempt_id"], r["lease_fence"],
+                                 r["operation_fingerprint"], r["target_revision"])
+                        grouped[group].append(r)
                 for key, intents in grouped.items():
-                    first_seq = intents[0]["source_event_seq"]
-                    if len(intents) >= repeat_min and not any(
-                        x["source_event_seq"] >= first_seq and x["trusted_origin"]
+                    verified_sequences = [x["source_event_seq"] for x in p
+                        if x["task_id"] == key[0] and x["attempt_id"] == key[1]
+                        and x["lease_fence"] == key[2] and x["trusted_origin"]
                         and x["kind"] == "verifier.completed" and x["target_revision"]
-                        and json.loads(x["evidence_refs"]) for x in p):
-                        loops.append({"producer_id": producer, "operation_fingerprint": key[2],
-                                      "repetition_count": len(intents)})
+                        and (key[4] is None or x["target_revision"] == key[4])
+                        and json.loads(x["evidence_refs"])]
+                    last_verified_seq = max(verified_sequences, default=0)
+                    pending = [x for x in intents
+                               if x["source_event_seq"] > last_verified_seq]
+                    if len(pending) >= repeat_min:
+                        loops.append({"producer_id": producer,
+                                      "operation_fingerprint": key[3],
+                                      "repetition_count": len(pending)})
             if unresolved:
                 diagnostic, confidence, next_action = (
                     "EFFECT_OUTCOME_UNKNOWN", "conservative_suspect", "reconcile_external_effect_no_retry")
