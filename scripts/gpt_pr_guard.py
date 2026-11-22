@@ -7,6 +7,7 @@ No GitHub write requests are made. No prompts, credentials or tool inputs are lo
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,6 +15,7 @@ import os
 from pathlib import PurePosixPath, Path
 import re
 import sys
+import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -160,7 +162,8 @@ def analyze(snapshot: dict, required_checks: tuple[str, ...] = ("Tests",)) -> di
     return {"schema_version": 1, "repository": snapshot["repository"],
             "base_sha": snapshot["base_sha"], "captured_at_utc": snapshot.get("captured_at_utc"),
             "snapshot_sha256": hashlib.sha256(canonical_bytes(snapshot)).hexdigest(),
-            "pr_count": len(prs), "ready_for_merge": not any(f["severity"] == "block" for f in findings),
+            "pr_count": len(prs), "scan_attempts": snapshot.get("scan_attempts", 1),
+            "ready_for_merge": not any(f["severity"] == "block" for f in findings),
             "findings": findings,
             "disclaimer": "Read-only static evidence analysis, not proof of live browser/runtime health or authorization to merge."}
 
@@ -200,8 +203,7 @@ def collect_live(repository: str, token: str | None) -> dict:
     branch = _get_json(root + "/branches/main", token)
     base = branch.get("commit", {}).get("sha")
     first_inventory = _pages(root + "/pulls?state=open", token)
-    prs = []
-    for p in first_inventory:
+    def inspect_pr(p):
         sha = p["head"]["sha"]
         paths = [f["filename"] for f in _pages(root + f"/pulls/{p['number']}/files", token)]
         raw_runs = _pages(root + "/actions/runs?head_sha=" + quote(sha), token, key="workflow_runs")
@@ -209,9 +211,17 @@ def collect_live(repository: str, token: str | None) -> dict:
                  "conclusion": r.get("conclusion"), "head_sha": r.get("head_sha"),
                  "run_number": r.get("run_number", 0), "run_attempt": r.get("run_attempt", 0),
                  "id": r.get("id", 0)} for r in raw_runs if r.get("head_sha") == sha]
-        prs.append({"number": p["number"], "head_sha": sha, "head_ref": p["head"]["ref"],
-                    "base_ref": p["base"]["ref"], "draft": bool(p["draft"]),
-                    "files": paths, "runs": runs})
+        return {"number": p["number"], "head_sha": sha, "head_ref": p["head"]["ref"],
+                "base_ref": p["base"]["ref"], "draft": bool(p["draft"]),
+                "files": paths, "runs": runs}
+
+    # Bound read-only concurrency reduces the duration of the non-atomic REST
+    # scan when dozens of agents are pushing, without expanding privileges.
+    if len(first_inventory) > 8:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            prs = list(pool.map(inspect_pr, first_inventory))
+    else:
+        prs = [inspect_pr(p) for p in first_inventory]
     # An agent may push while the scan is running. Mixed-time file lists are NOT
     # a reliable snapshot. The double-read cannot solve every GitHub race, but
     # it reliably detects ordinary PR additions, removals and head moves.
@@ -230,6 +240,24 @@ def collect_live(repository: str, token: str | None) -> dict:
             "prs": prs}
 
 
+def collect_live_stable(repository: str, token: str | None, attempts: int = 3) -> dict:
+    """Retry a torn READ snapshot, never a task or external side effect."""
+    if not 1 <= attempts <= 5:
+        raise EvidenceError("Snapshot attempt count must be between 1 and 5")
+    for attempt in range(1, attempts + 1):
+        try:
+            snapshot = collect_live(repository, token)
+            snapshot["scan_attempts"] = attempt
+            return snapshot
+        except EvidenceError as exc:
+            if "moved during scan" not in str(exc) or attempt == attempts:
+                raise
+            print(f"EVIDENCE_RETRY attempt={attempt}/{attempts} reason=PR_OR_BASE_MOVED",
+                  file=sys.stderr)
+            time.sleep(0.25 * 2 ** (attempt - 1))
+    raise EvidenceError("Unreachable snapshot retry path")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
@@ -239,9 +267,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--snapshot-output", type=Path, help="Write captured raw evidence")
     parser.add_argument("--required-check", action="append", default=[], help="Required workflow name")
     parser.add_argument("--strict", action="store_true", help="Exit 2 when blockers exist")
+    parser.add_argument("--snapshot-attempts", type=int, default=3,
+                        help="Bounded read-only rescan attempts after moving PR heads (1..5)")
     args = parser.parse_args(argv)
     try:
-        snapshot = (collect_live(args.live, os.getenv("GITHUB_TOKEN")) if args.live else
+        snapshot = (collect_live_stable(args.live, os.getenv("GITHUB_TOKEN"),
+                                        args.snapshot_attempts) if args.live else
                     json.loads(args.snapshot.read_text(encoding="utf-8")))
         report = analyze(snapshot, tuple(args.required_check or ["Tests"]))
         if args.snapshot_output:
