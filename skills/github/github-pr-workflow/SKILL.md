@@ -19,26 +19,28 @@ Complete guide for managing the PR lifecycle. Each section shows the `gh` way fi
 - Authenticated with GitHub (see `github-auth` skill)
 - Inside a git repository with a GitHub remote
 
-### Quick Auth Detection
+### Quick Auth Detection (never harvest local credential files)
+
+Prefer an authenticated GitHub CLI session. For a REST fallback, use a token
+provided by the user or a trusted secret manager through an environment
+variable. **Do not** read, print, grep or parse ~/.git-credentials,
+~/.hermes/.env, keychains or other credential stores for tokens.
 
 ```bash
-# Determine which method to use throughout this workflow
-if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
   AUTH="gh"
-else
+elif [ -n "${GITHUB_TOKEN:-}" ]; then
   AUTH="git"
-  # Ensure we have a token for API calls
-  if [ -z "$GITHUB_TOKEN" ]; then
-    if [ -f ~/.hermes/.env ] && grep -q "^GITHUB_TOKEN=" ~/.hermes/.env; then
-      GITHUB_TOKEN=$(grep "^GITHUB_TOKEN=" ~/.hermes/.env | head -1 | cut -d= -f2 | tr -d '\n\r')
-    elif grep -q "github.com" ~/.git-credentials 2>/dev/null; then
-      GITHUB_TOKEN=$(grep "github.com" ~/.git-credentials 2>/dev/null | head -1 | sed 's|https://[^:]*:\([^@]*\)@.*|\1|')
-    fi
-  fi
+else
+  echo "GitHub authentication is required; run gh auth login or configure a scoped token using a secret manager."
+  exit 1
 fi
-echo "Using: $AUTH"
+echo "Authentication method selected: $AUTH (credentials redacted)"
 ```
 
+For API calls, favor `gh api` where available so credentials need not appear
+in command arguments. Avoid shell tracing (`set -x`) when using authenticated
+operations. Never log or include token contents in output.
 ### Extracting Owner/Repo from the Git Remote
 
 Many `curl` commands need `owner/repo`. Extract it from the git remote:
