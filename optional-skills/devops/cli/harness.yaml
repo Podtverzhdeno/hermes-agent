@@ -1,0 +1,23 @@
+# Individual advisory-only contract; not a runtime grant or sandbox.
+schema_version: 1
+skill: inference-sh-cli
+activation:
+  when: ["Discover and run an identified inference.sh image, video or AI application","Use an approved inference.sh account to create media or perform vendor-hosted inference"]
+  not_when: ["Generate media locally using an already available offline model","Run web search using native Hermes tools without any inference.sh intent"]
+capabilities:
+  tools: ["infsh","belt","inferencesh"]
+  side_effects: external_write
+  approval_required: ["Install or authenticate a vendor CLI, purchase credits or start metered inference","Upload any nonpublic media, biometric inputs or proprietary documents to third-party apps"]
+lifecycle:
+  preflight: ["Pin CLI version, provider account, exact app ID and input schema","Check cost and quota, data privacy, rights, model behavior and input size before chargeable call"]
+  execute: ["Search the vendor catalog read-only; select exact verified app and minimum input","Use JSON output and unique job ID; upload local files only after explicit consent"]
+  verify: ["Confirm completion status, returned media provenance and actual billed job identity","Verify no sensitive media or credentials appear in logs or final user output"]
+  recover: ["Poll existing job after timeout rather than submit duplicate billable tasks","Do not auto-install shell scripts or launch additional paid jobs to recover"]
+budget:
+  max_tool_calls: 30
+  max_reference_bytes: 262144
+evidence:
+  required: ["Account, vendor app ID/schema, parameters and approved input scope","Job identifier, completion or failure receipt and documented cost if available"]
+output:
+  format: "Inference run and media provenance report with cost/privacy caveats"
+  acceptance: ["No remote installer execution without separate authorization","No unapproved private data upload or duplicate billable jobs"]

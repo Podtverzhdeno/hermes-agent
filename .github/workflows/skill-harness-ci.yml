@@ -45,7 +45,7 @@ jobs:
       - name: Triage all SKILL.md instructions for dangerous patterns
         run: |
           source .venv/bin/activate
-          python -m scripts.audit_skill_procedures
+          python -m scripts.audit_skill_procedures --fail-on-critical
       - name: Run focused skill and compatibility tests
         run: |
           source .venv/bin/activate

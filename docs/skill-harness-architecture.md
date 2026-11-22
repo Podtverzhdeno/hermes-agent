@@ -341,3 +341,30 @@ Primary references:
 - https://developers.notion.com/docs/upgrade-guide-2026-03-11
 - https://mcporter.sh/install.html
 - https://blog.gofastmcp.com/3mufbh2vcv22o
+
+### Whole-catalog risk-guided expansion — 2026-11-22
+
+A new scanner traverses every SKILL.md and reports only path, line and rule,
+without exposing matched instructions or credentials. The first real run
+found 166 heuristic observations across 117 Skills, of which six needed
+manual inspection. Two were warnings against shell pipelines (false
+positives); four implicated real issues in Hugging Face, Xitter,
+inference.sh and Parallel CLI. Each now has a distinct harness and safer
+SKILL.md procedure. A negation-aware scanner now gates previously
+confirmed critical patterns in CI; ordinary package-install references
+remain review warnings, not proven vulnerabilities.
+
+Counts after this extension: 31 of 117 Skills have distinct harnesses,
+86 legacy Skills remain. Routing evaluation cases: 31 positive, 31 true
+negative and 12 adversarial = 74 static fixtures; these have NOT been
+run through live LLMs and do not imply routing or success percentages.
+
+Remaining engineering priorities:
+- Implement host-level capability admission using a signed/immutable
+  SkillExecutionContext and actual tool-dispatch policy enforcement.
+- Capture real tool-call traces and resource read-backs in a sealed
+  baseline/candidate test suite with cost and failure metrics.
+- Review remaining 86 Skills, plus all code templates and references;
+  a regex risk scan is triage, not a complete threat model.
+- Add adversarial filesystem tests for concurrent symlink replacement
+  and deploy sensitive file tools only in an OS-level sandbox.

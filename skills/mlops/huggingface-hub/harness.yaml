@@ -1,0 +1,23 @@
+# Individual advisory-only contract; not a runtime grant or sandbox.
+schema_version: 1
+skill: huggingface-hub
+activation:
+  when: ["Use hf to inspect, download or version-pin a Hugging Face model or dataset repository","Manage an explicitly authorized Hub repository, job, Space or inference endpoint"]
+  not_when: ["Run a local Transformers training loop with existing files and no Hub operation","Download an untrusted arbitrary URL unrelated to the Hugging Face Hub"]
+capabilities:
+  tools: ["hf","huggingface_hub","python"]
+  side_effects: external_write
+  approval_required: ["Install CLI or extensions, execute Hub code, launch paid jobs or deploy endpoint","Upload confidential files, publish a model or delete, move, change visibility or modify repositories"]
+lifecycle:
+  preflight: ["Pin Hub namespace, repo_type, repository ID, exact revision and intended account","Review license, gated access, token scope, payload size and paid compute budget"]
+  execute: ["Prefer read-only repo info, metadata and revision/manifest inspection first","Download exact allowed artifacts without executing repository code; ask before external writes"]
+  verify: ["Hash or compare artifact to known revision and check destination confinement","Read back Hub object state, commit hash and billable job IDs before claiming mutation success"]
+  recover: ["Inspect remote state before retrying uploads or jobs after ambiguous failure","Stop on rate limits, missing license access or unexpected auth scopes"]
+budget:
+  max_tool_calls: 35
+  max_reference_bytes: 262144
+evidence:
+  required: ["Canonical hub repo URL, type, revision and selected files","Verified artifact digest or remote commit/job receipt, costs and uncertainties"]
+output:
+  format: "Revision-pinned artifact or Hub mutation evidence ledger"
+  acceptance: ["No implicit remote-code execution or shell installer","No unrequested publishing, deletion, compute or token exposure"]

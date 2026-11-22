@@ -21,6 +21,7 @@ PILOT_NAMES = frozenset((
     "pytorch-fsdp", "chroma", "faiss", "qdrant-vector-search", "dspy",
     "evaluating-llms-harness", "writing-plans", "hermes-agent",
     "github-issues", "mcporter", "ocr-and-documents", "fastmcp", "notion",
+    "huggingface-hub", "xitter", "inference-sh-cli", "parallel-cli",
 ))
 
 
@@ -118,3 +119,16 @@ def test_document_skill_requires_authorized_remote_processing():
     assert "private inputs stay local" in content
     assert "page.get_textpage_ocr()" in content
     assert "privacy" in content.lower()
+
+@pytest.mark.parametrize('skill_path', [
+    'skills/mlops/huggingface-hub',
+    'skills/social-media/xitter',
+    'optional-skills/devops/cli',
+    'optional-skills/research/parallel-cli',
+])
+def test_risky_external_skills_have_explicit_security_gates(skill_path):
+    body = (REPO / skill_path / 'SKILL.md').read_text(encoding='utf-8')
+    assert 'harness.yaml' in body
+    assert not re.search(r'(?i)curl[^\n]{0,100}\|\s*(?:bash|sh)\b', body)
+    assert 'ln -sf ~/.hermes/.env' not in body
+    assert 'authorization' in body.lower() or 'approval' in body.lower()

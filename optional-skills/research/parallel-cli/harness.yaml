@@ -1,0 +1,23 @@
+# Individual advisory-only contract; not a runtime grant or sandbox.
+schema_version: 1
+skill: parallel-cli
+activation:
+  when: ["Perform vendor-specific Parallel web research, extraction or entity enrichment","Create or inspect an expressly requested Parallel research job or monitor"]
+  not_when: ["Perform a small ordinary web lookup using native web tools","Analyze a local document without transmitting prompts or data to Parallel"]
+capabilities:
+  tools: ["parallel-cli","web_search","web_extract"]
+  side_effects: external_write
+  approval_required: ["Install/upgrade vendor CLI or authorize paid processor and large-scale tasks","Upload private CSV, create recurring monitor or transfer persistent exports"]
+lifecycle:
+  preflight: ["Verify Parallel account and request scope; prefer native web for small queries","Establish provider rate/credit budget, privacy, source set and task type"]
+  execute: ["Use exact verified CLI flags and JSON output, avoid unreviewed curl-to-shell installers","For enrichment send only approved data; preserve source provenance and task IDs"]
+  verify: ["Corroborate factual claims with primary sources and job completion receipts","Validate row counts, citations, outputs and confidence independently of vendor text"]
+  recover: ["Poll identified jobs after ambiguous request rather than duplicate paid runs","Handle auth failures, timeouts and partial results explicitly"]
+budget:
+  max_tool_calls: 40
+  max_reference_bytes: 262144
+evidence:
+  required: ["Query, processor tier, account, job ID and privacy/credit scope","Returned sources and validated completion/output summary"]
+output:
+  format: "Source-grounded research result with audit trail, cost scope and uncertainty"
+  acceptance: ["No chargeable/background monitor or upload without authority","No fabricated citations or silent duplicate billing"]

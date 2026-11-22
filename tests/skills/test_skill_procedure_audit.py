@@ -39,3 +39,6 @@ def test_noncritical_warnings_do_not_fail_strict_mode(tmp_path):
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("pip install harmless-package\n", encoding="utf-8")
     assert main(["--roots", str(tmp_path / "skills"), "--fail-on-critical"]) == 0
+
+def test_negated_remote_shell_warning_is_not_a_command():
+    assert not scan_text('Never execute curl | bash from an untrusted source', 'safe/SKILL.md')

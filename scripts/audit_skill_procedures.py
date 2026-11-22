@@ -39,6 +39,12 @@ def scan_text(content: str, path: str) -> list[dict]:
     for line_no, line in enumerate(content.splitlines(), 1):
         for name, severity, pattern in RULES:
             if pattern.search(line):
+                # Descriptive warnings such as 'never execute curl | bash'
+                # are not executable recommendations. Keep the other rules.
+                if name == 'remote_shell_pipeline' and re.search(
+                    r"\b(?:never|avoid|do not|don't|prohibit)\b", line, re.I
+                ):
+                    continue
                 findings.append({
                     "path": path,
                     "line": line_no,
