@@ -180,6 +180,32 @@ class PRWatchTests(unittest.TestCase):
         self.assertIn('HOLD_FOR_REVIEW', summary)
         self.assertIn('UNOBSERVED', summary)
 
+    def test_thirty_agents_colliding_on_one_api_file_are_all_detected(self):
+        prs = [pr(n, ['gateway/platforms/api_server.py'])
+               for n in range(1, 31)]
+        report = guard.analyze(snapshot(*prs))
+        collisions = [i for i in report['findings']
+                      if i['code'] == 'INDEPENDENT_WRITE_COLLISION']
+        self.assertEqual(report['open_pr_count'], 30)
+        self.assertEqual(len(collisions), (30 * 29) // 2)
+        self.assertEqual(report['integration_verdict'], 'HOLD_FOR_REVIEW')
+
+    def test_one_hundred_disjoint_workers_no_false_collisions_or_merge_approval(self):
+        prs = [pr(n, [f'worktrees/agent-{n:03d}/unique.py'])
+               for n in range(1, 101)]
+        report = guard.analyze(snapshot(*prs))
+        self.assertEqual(report['open_pr_count'], 100)
+        self.assertEqual(report['counts'], {'blocker': 0, 'review': 0})
+        self.assertEqual(report['integration_verdict'], 'REVIEW_ONLY')
+        self.assertEqual(report['runtime_verdict'], 'UNOBSERVED')
+        self.assertEqual(report['ci_verdict'], 'UNVERIFIED')
+
+    def test_one_hundred_one_workers_refuses_partial_inventory(self):
+        prs = [pr(n, [f'worktrees/agent-{n:03d}/unique.py'])
+               for n in range(1, 102)]
+        with self.assertRaises(guard.IncompleteSnapshot):
+            guard.analyze(snapshot(*prs))
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
