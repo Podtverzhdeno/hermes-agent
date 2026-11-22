@@ -185,10 +185,10 @@ def test_parallel_agents_diagnostics_remain_strictly_isolated():
     seen = []
     for i in range(30):
         rid = f"run_{i:032x}"
+        payload = {"run_id": rid, "event": "run.queued",
+                   "seq": 0, "timestamp": 1795344000}
         projection = explain_sse(
-            f"id: 0\ndata: {json.dumps({'run_id': rid, 'event': 'run.queued',
-                                     'seq': 0, 'timestamp': 1795344000})}\n\n",
-            rid)
+            "id: 0\\ndata: " + json.dumps(payload) + "\\n\\n", rid)
         seen.append(projection["run_id"])
         assert projection["observed_events"] == 1
     assert len(set(seen)) == 30
