@@ -1,5 +1,8 @@
 # SDD: GPT ↔ Hermes Bridge (version 0.1, design under review)
 
+> **Architecture gate / update 2026-11-22:** Official upstream `v0.23.3` already implements native durable `/v1/runs`, idempotency, task Kanban, delivery, leases and recovery. **Use these as owners; do not implement the proposed duplicate ledger/queue on this outdated April fork.** Read the [source-verified upstream parity and PR coordination audit](upstream-parity-and-pr-coordination-2026-11-22.md) before implementing any item below. The SQL and other contracts below are compatibility/reference designs, **not approved instructions to replace upstream components**.
+
+
 **Snapshot**: 2026-11-22; source branch: `main` at `7e9100901819ee44c16b4ddcb79a6bcb7909f591`.
 **Scope**: Hermes interoperability with GPT/ChatGPT clients, including optional browser extension transport, end-to-end visibility, stop-reason explanation, safe recovery and dozens of independent engineering agents.
 **Status**: Proposed architecture; only the separately listed idempotency patch is implemented. Do not confuse SDD acceptance targets with achieved results.
