@@ -256,6 +256,10 @@ class EventJournal:
                 FROM events WHERE run_id=? AND attempt<? AND kind IN
                 ('tool.effect_reserved','tool.effect_acknowledged','tool.effect_not_executed')
                 ORDER BY position""", (run_id, a)).fetchall()
+            prior_approval_rows = db.execute("""SELECT attempt,source,sequence,kind,event_json
+                FROM events WHERE run_id=? AND attempt<? AND kind IN
+                ('approval.required','approval.resolved') ORDER BY position""",
+                (run_id, a)).fetchall()
             # A missing event in an older attempt can conceal a reservation
             # or failed stop. Advancing to a new attempt does not repair it.
             prior_seq_counts = db.execute("""SELECT attempt,source,MAX(sequence) AS high,
@@ -364,6 +368,28 @@ class EventJournal:
             key = (row["attempt"], event["action_id"])
             target = prior_reserved if event["kind"] == "tool.effect_reserved" else prior_resolved
             target.setdefault(key, []).append((row["source"], row["sequence"]))
+        # Approvals are scoped to the original attempt. An unresolved approval
+        # remains visible after a new agent takes over; a successful old ack
+        # does NOT grant the replacement worker new permissions.
+        old_approval_requests: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        old_approval_replies: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        for row in prior_approval_rows:
+            record = json.loads(row["event_json"])
+            key = (row["attempt"], record["action_id"])
+            bucket = (old_approval_requests if row["kind"] == "approval.required"
+                      else old_approval_replies)
+            bucket.setdefault(key, []).append((row["source"], row["sequence"]))
+        prior_pending_approvals = []
+        prior_orphan_approval_resolution = False
+        for (past_attempt, action_id), requests in sorted(old_approval_requests.items()):
+            replies = old_approval_replies.get((past_attempt, action_id), [])
+            if (len(requests) != 1 or len(replies) != 1
+                    or requests[0][0] != replies[0][0]
+                    or requests[0][1] >= replies[0][1]):
+                prior_pending_approvals.append({"attempt": past_attempt, "action_id": action_id})
+        for key in old_approval_replies:
+            if key not in old_approval_requests:
+                prior_orphan_approval_resolution = True
         missing_prior = sum(int(r["high"]) - int(r["seen"]) for r in prior_seq_counts)
         prior_unresolved = []
         for (past_attempt, action_id), reservations in sorted(prior_reserved.items()):
@@ -423,8 +449,10 @@ class EventJournal:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
         elif clock_reversed:
             state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
-        elif contradictory or missing or missing_prior:
+        elif contradictory or missing or missing_prior or prior_orphan_approval_resolution:
             state, next_action = "TRACE_INCOMPLETE", "FETCH_MISSING_EVENTS"
+        elif prior_pending_approvals:
+            state, next_action = "WAITING_APPROVAL", "RECONCILE_OR_REISSUE_SCOPED_APPROVAL"
         elif pending_approval:
             state, next_action = "WAITING_APPROVAL", "ASK_AUTHORIZED_REVIEWER"
         elif last_terminal == "run.reported_failed":
@@ -448,6 +476,7 @@ class EventJournal:
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
                 "missing_sequences_prior_attempts": missing_prior,
                 "unresolved_effects_prior_attempts": prior_unresolved,
+                "pending_approvals_prior_attempts": prior_pending_approvals,
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
