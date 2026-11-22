@@ -275,6 +275,10 @@ class ObservationStore:
         auth_blocked = False
         rate_limited = False
         terminal: tuple[str, str] | None = None
+        # Receipt order and producer sequence may disagree after replay/restart.
+        # Never classify a worker as healthy on an incomplete causal history.
+        producer_stats: dict[str, tuple[int, int, int, int]] = {}
+        out_of_order_events = 0
         last = None
         with self._db() as db:
             row = db.execute("SELECT MAX(fence) AS f FROM observations WHERE task_id=?", (task_id,)).fetchone()
@@ -287,7 +291,7 @@ class ObservationStore:
             # diagnostics (tab/transport/approval/terminal) belong only to the
             # latest worker epoch. Receipt order is not external causality.
             cursor = db.execute("""
-                SELECT sequence,fence,kind,received_at,payload FROM observations
+                SELECT sequence,fence,producer_id,source_seq,kind,received_at,payload FROM observations
                 WHERE task_id=? ORDER BY sequence
             """, (task_id,))
             latest_epoch_seen = -1
@@ -304,6 +308,15 @@ class ObservationStore:
                     uncertain_effects.pop(data["action_id"], None)
                 if epoch != fence:
                     continue
+                producer = e["producer_id"]
+                seq = int(e["source_seq"])
+                if producer in producer_stats:
+                    low, high, count, prev_seq = producer_stats[producer]
+                    if seq < prev_seq:
+                        out_of_order_events += 1
+                    producer_stats[producer] = (min(low, seq), max(high, seq), count + 1, seq)
+                else:
+                    producer_stats[producer] = (seq, seq, 1, seq)
                 last = e
                 if k == "approval.requested":
                     pending_approvals.add(data["action_id"])
@@ -337,9 +350,20 @@ class ObservationStore:
                     terminal = ("reported_completed", "COMPLETION_REPORTED")
 
         assert last is not None
-        age = max(0.0, float(self.clock()) - float(last["received_at"]))
+        now = float(self.clock())
+        if not 0 <= now <= 1e15 or now != now:
+            raise EventValidationError("diagnostic clock returned an invalid timestamp")
+        clock_rollback = now + 1 < float(last["received_at"])
+        age = max(0.0, now - float(last["received_at"]))
+        sequence_gaps = sum(high - low + 1 - count for low, high, count, _ in producer_stats.values())
         if uncertain_effects:
             status, reason = "needs_reconciliation", "EXTERNAL_EFFECT_UNKNOWN"
+        elif out_of_order_events:
+            status, reason = "observation_inconsistent", "PRODUCER_EVENTS_OUT_OF_ORDER"
+        elif sequence_gaps:
+            status, reason = "telemetry_incomplete", "PRODUCER_SEQUENCE_GAPS"
+        elif clock_rollback:
+            status, reason = "observation_inconsistent", "COLLECTOR_CLOCK_ROLLBACK"
         elif pending_approvals:
             status, reason = "waiting_approval", "APPROVAL_PENDING"
         elif auth_blocked:
@@ -358,7 +382,11 @@ class ObservationStore:
         else:
             status, reason = "observed_active", "EVENTS_RECEIVED"
         return {"task_id": task_id, "status": status, "reason": reason,
-                "confidence": "reported_only", "fence": fence,
+                "confidence": "none" if (out_of_order_events or sequence_gaps or clock_rollback) else "reported_only",
+                "fence": fence,
+                "producer_out_of_order_events": out_of_order_events,
+                "producer_sequence_gaps": sequence_gaps,
+                "collector_clock_rollback": clock_rollback,
                 "last_event_sequence": int(last["sequence"]),
                 "last_event_age_seconds": round(age, 3),
                 "open_effects": len(uncertain_effects),
