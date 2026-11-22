@@ -97,7 +97,6 @@ class DiagnosticTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-
 # Extended source-contract cases: effect receipts and Autopilot evidence names.
 class EvidenceAndEffectInvariantTests(unittest.TestCase):
     def setUp(self):
