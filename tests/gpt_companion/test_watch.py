@@ -123,3 +123,26 @@ def test_status_watcher_records_second_prior_attempt_effect(tmp_path):
     assert after["diagnosis"]["state"] == "NEEDS_RECONCILIATION"
     assert [x["action_id"] for x in after["diagnosis"]["unresolved_effects_prior_attempts"]] == ["write-one", "write-two"]
     assert len(watcher.history("run-42")) == 2
+
+
+def test_watcher_tracks_partial_repair_of_prior_attempt_sequence_gap(tmp_path):
+    c = Clock()
+    journal = EventJournal(tmp_path / "events.db", clock=c)
+    journal.ingest(ev(1, "worker.started"))
+    journal.ingest(ev(4, "worker.stopped"))
+    journal.ingest({**ev(1, "worker.started"), "source": "replacement",
+                    "event_id": "replacement-1", "attempt": 2})
+    watcher = StatusWatch(journal.path, tmp_path / "alerts.db", clock=c)
+    first = watcher.sample("run-42")
+    assert first["diagnosis"]["state"] == "TRACE_INCOMPLETE"
+    assert first["diagnosis"]["missing_sequences_prior_attempts"] == 2
+    journal.ingest(ev(2, "worker.heartbeat"))
+    second = watcher.sample("run-42")
+    assert second is not None
+    assert second["diagnosis"]["state"] == "TRACE_INCOMPLETE"
+    assert second["diagnosis"]["missing_sequences_prior_attempts"] == 1
+    journal.ingest(ev(3, "worker.progress"))
+    third = watcher.sample("run-42")
+    assert third["diagnosis"]["missing_sequences_prior_attempts"] == 0
+    assert third["diagnosis"]["state"] == "RECENT_TELEMETRY"
+    assert len(watcher.history("run-42")) == 3
