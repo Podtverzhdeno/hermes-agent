@@ -125,9 +125,13 @@ def test_declarations_must_be_iterable_of_names_not_string_or_mapping():
 
 
 def test_utf8_surrogates_in_nested_tool_args_never_escape_as_raw_exception():
-    reject(valid("", [{"id": "c1", "name": "search",
-                       "arguments": {"text": "\\ud800"}}]),
-           "TOOL_ARGUMENT_SCHEMA_INVALID", declared_tools={"search"})
+    # A genuine unpaired surrogate is legal to represent as an ASCII escape
+    # in JSON text but must be rejected during argument UTF-8 validation.
+    malformed = json.dumps(valid("", [
+        {"id": "c1", "name": "search",
+         "arguments": {"text": chr(0xD800)}},
+    ]))
+    reject(malformed, "TOOL_ARGUMENT_SCHEMA_INVALID", declared_tools={"search"})
 
 
 def test_nonfinite_tool_argument_is_rejected_not_authorized():
