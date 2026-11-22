@@ -115,7 +115,7 @@ def parse_event(raw: bytes) -> dict:
     try:
         obj = json.loads(raw.decode("utf-8"), object_pairs_hook=_pairs_unique,
                          parse_constant=_reject_constant)
-    except (UnicodeError, ValueError, TypeError) as exc:
+    except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
         if isinstance(exc, InvalidEvent):
             raise
         raise InvalidEvent("invalid UTF-8 or JSON") from None
@@ -138,9 +138,12 @@ def parse_event(raw: bytes) -> dict:
         raise InvalidEvent("invalid producer sequence")
     if not isinstance(obj["kind"], str) or obj["kind"] not in KINDS:
         raise InvalidEvent("unknown event kind")
-    for key in ("occurred_at_utc", "observed_at_utc"):
-        if key in obj and obj[key] is not None and not _utc(obj[key]):
-            raise InvalidEvent("invalid UTC timestamp")
+    # The occurrence timestamp is required AND non-null. A missing optional
+    # observation timestamp is allowed, but a null occurrence timestamp is not.
+    if not _utc(obj["occurred_at_utc"]):
+        raise InvalidEvent("invalid required occurrence timestamp")
+    if obj.get("observed_at_utc") is not None and not _utc(obj["observed_at_utc"]):
+        raise InvalidEvent("invalid UTC observation timestamp")
     for key, maxlen in (("source", 64), ("agent_id", 96), ("reason_code", 64),
                         ("target_revision", 160), ("effect_key", 160),
                         ("trust_level", 48)):
@@ -324,7 +327,7 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
         if kind == "verifier.completed" and task_id and event.get("target_revision") and event.get("evidence_refs"):
             verifications.add((task_id, event["target_revision"]))
         if kind == "task.completed" and task_id:
-            if event.get("state_to") is None:
+            if event.get("state_to") not in ("succeeded", "failed", "cancelled", "blocked"):
                 findings.add("COMPLETION_WITHOUT_TERMINAL_STATE", "incomplete", task_id=task_id, event_id=eid)
             if event.get("state_to") in ("failed", "cancelled", "blocked") and not event.get("reason_code"):
                 findings.add("TERMINAL_FAILURE_WITHOUT_REASON", "incomplete", task_id=task_id, event_id=eid)
