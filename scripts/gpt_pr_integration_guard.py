@@ -7,6 +7,7 @@ import datetime as dt
 import json
 import os
 import sys
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -182,6 +183,15 @@ def collect(repo: str, token: str = '') -> dict[str, Any]:
     }
 
 
+def _windows_identity(path: str) -> str:
+    """Conservative casefold/NFC heuristic for NTFS checkout alias hazards.
+
+    Not a proof of Windows path equivalence; Windows volume policies,
+    case-sensitive directories and Win32 reserved-name rules vary.
+    """
+    return unicodedata.normalize('NFC', path).casefold()
+
+
 def _is_sensitive(path: str) -> bool:
     return path.endswith(('.py', '.js', '.ts', '.tsx', '.mjs', '.toml', '.yaml', '.yml', '.json')) or path.startswith('.github/workflows/')
 
@@ -288,15 +298,45 @@ def analyze(snapshot: dict[str, Any], *, evidence_mode: str = 'unverified_input'
                   'Stacked PR target SHA differs from the current parent PR head.',
                   'Update the child, compare combined changes and rerun exact-head CI.')
 
+    # Git/GitHub path names are byte/case-sensitive. Typical Windows
+    # checkouts are case-insensitive; two *different* names within one PR can
+    # collide on disk. Never infer a successful Windows checkout from Git API.
+    for n, p in sorted(pulls.items()):
+        groups: dict[str, set[str]] = defaultdict(set)
+        for path in p['paths']:
+            groups[_windows_identity(path)].add(path)
+        for aliases in groups.values():
+            if len(aliases) > 1:
+                issue('WINDOWS_PATH_ALIAS_IN_PR', 'blocker', [n], sorted(aliases),
+                      'Distinct Git paths normalize to one approximate Windows checkout name.',
+                      'Review exact Windows NTFS checkout and rename plan in an isolated worktree.')
+
     nums = sorted(pulls)
     for i, a in enumerate(nums):
         for b in nums[i + 1:]:
             a_paths = set(pulls[a]['paths']) | set(pulls[a]['renamed_from_paths'])
             b_paths = set(pulls[b]['paths']) | set(pulls[b]['renamed_from_paths'])
             overlap = sorted(a_paths & b_paths)
+            stacked = a in ancestors(b) or b in ancestors(a)
+            # Two independent branches can avoid exact-path collisions while
+            # still clobbering case-insensitive Windows working directories.
+            aliases: dict[str, set[str]] = defaultdict(set)
+            a_index: dict[str, set[str]] = defaultdict(set)
+            b_index: dict[str, set[str]] = defaultdict(set)
+            for path in a_paths:
+                a_index[_windows_identity(path)].add(path)
+            for path in b_paths:
+                b_index[_windows_identity(path)].add(path)
+            for norm in a_index.keys() & b_index.keys():
+                if a_index[norm] != b_index[norm] or len(a_index[norm]) > 1 or len(b_index[norm]) > 1:
+                    aliases[norm].update(a_index[norm] | b_index[norm])
+            if aliases:
+                issue('WINDOWS_PATH_ALIAS_ACROSS_PRS', 'review' if stacked else 'blocker',
+                      [a, b], sorted(set().union(*aliases.values())),
+                      'Git path differences may alias on case-insensitive Windows checkouts.',
+                      'Test isolated Windows checkout and choose one canonical path casing.')
             if not overlap:
                 continue
-            stacked = a in ancestors(b) or b in ancestors(a)
             if stacked:
                 issue('STACKED_FILE_OVERLAP', 'review', [a, b], overlap,
                       'Stacked PRs edit a common file; sequencing alone does not prove safety.',
