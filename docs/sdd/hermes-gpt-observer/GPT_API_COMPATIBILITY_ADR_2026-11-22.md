@@ -101,3 +101,6 @@ A green review badge on a constituent PR does not establish combined compatibili
 - HTTP semantics and OpenTelemetry source protocol decisions remain subject to gateway owner review.
 
 **Status at authoring:** none of IDEM-01..20 has been claimed as passing on the combined API integration. The 46 passing isolated metadata-inspector tests do **not** test this API contract.
+
+
+**Contract evidence update:** 60/60 offline JSONL diagnostic tests passed separately; none of IDEM-01..20 API integration gates are thereby satisfied. The separate event auditor does not authenticate even self-declared `independent_verified` success. The API adapter must perform real scoped verifier lookup.
