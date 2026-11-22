@@ -184,7 +184,7 @@ def _safe_markdown(value):
             .replace("|", chr(92) + "|")
             .replace(chr(10), chr(92) + "n")
             .replace(chr(13), chr(92) + "r")
-            .replace("<", "&lt;").replace(">", "&gt;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
 
 
 def markdown(report):

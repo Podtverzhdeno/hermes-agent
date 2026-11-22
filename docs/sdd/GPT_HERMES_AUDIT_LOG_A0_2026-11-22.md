@@ -41,3 +41,6 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 - PR #13 and #15 both modify tools/browser_tool.py. #13 redacts CDP credentials but retains destructive cleanup for external CDP; #15 protects externally owned browser lifecycle but requires redaction from #13. A0 review comments 7078125611 and 7078125942.
 - PR #17/#23 stacked observer modifications must not be treated as independently mergeable siblings. #10 base moved to snapshots/autopilot-ledger-6c0d2e-20261122 as of observed snapshot; exact ancestry and branch SHA must be rechecked.
 - Hardened own A0 report against Markdown injection via PR path with pipe/CR/LF. Added negative test and proper multiline incident report.
+
+## Exact-SHA regression, locally authored code
+- PR #28 SHA `f85b736b4b8519d6b93b9a1f75ccf4af8f2a40ff`: both offline-contract and live-evidence failed **before functional execution** with Python SyntaxError in `_safe_markdown` (`return (` lacked closing parenthesis). Source typo was introduced in A0's own redaction/escaping hardening. Confirmed from GitHub Action job 137185428300 and 137185428459. Fix is one additional closing parenthesis and a fresh exact-head CI. No passing claim until new jobs complete. This demonstrates why independent syntax compilation/CI must precede source claims.
