@@ -561,3 +561,48 @@ async def test_http_failed_runner_reports_error_without_leakage():
             assert "SENSITIVE_RUNNER_CONTENT" not in content
             assert "agent_execution_failed" in content
     adapter._response_store.close()
+
+
+def test_response_store_alias_eviction_does_not_leave_stale_reference():
+    store = ResponseStore(db_path=":memory:", max_size=1)
+    try:
+        store.put("resp_old", {"result": "old"}, conversation_name="old-chat")
+        store.put("resp_new", {"result": "new"}, conversation_name="new-chat")
+        assert store.get("resp_old") is None
+        assert store.get_conversation("old-chat") is None
+        assert store.get_conversation("new-chat") == "resp_new"
+    finally:
+        store.close()
+
+
+def test_response_store_delete_removes_conversation_alias_atomically():
+    store = ResponseStore(db_path=":memory:")
+    try:
+        store.put("resp_a", {"data": 1}, conversation_name="chat-a")
+        store.put("resp_a", {"data": 2}, conversation_name="chat-b")
+        assert store.delete("resp_a") is True
+        assert store.get_conversation("chat-a") is None
+        assert store.get_conversation("chat-b") is None
+        assert store.delete("resp_a") is False
+    finally:
+        store.close()
+
+
+def test_response_and_alias_both_rollback_after_sql_error():
+    import sqlite3
+    store = ResponseStore(db_path=":memory:")
+    try:
+        store._conn.execute(
+            "CREATE TRIGGER deny_alias BEFORE INSERT ON conversations "
+            "BEGIN SELECT RAISE(ABORT, 'simulated alias failure'); END;"
+        )
+        store._conn.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            store.put(
+                "resp_new", {"content": "must_rollback"},
+                conversation_name="failing_alias",
+            )
+        assert store.get("resp_new") is None
+        assert store.get_conversation("failing_alias") is None
+    finally:
+        store.close()
