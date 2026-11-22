@@ -70,7 +70,8 @@ def make_approval_callback(
             for opt in options:
                 if opt.option_id == option_id:
                     return _KIND_TO_HERMES.get(opt.kind, "deny")
-            return "once"  # fallback for unknown option_id
+            logger.warning("ACP permission returned an unknown option_id; denying")
+            return "deny"  # fail closed on an unexpected or forged option
         else:
             return "deny"
 
