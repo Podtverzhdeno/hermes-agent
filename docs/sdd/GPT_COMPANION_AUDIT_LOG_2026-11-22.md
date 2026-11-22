@@ -62,6 +62,10 @@ Selected operational path: (1) fix proof and classification, (2) converge duplic
 At integration checkpoint 85db47caedb87490cee58aab70257c4bdf835ef1, PR #12 has canonical CLOCK_SKEW_DETECTED and PARTIAL_WORKER_OUTAGE, a read-only watch implementation and durable agent mandate. The stacked PR deliberately preserves those changes through a parent-tree-based merge commit. Combined code validation remains PENDING at exact merge SHA; previous CI cannot certify it.
 
 
-| H-013 | CONFIRMED → PATCHED | `assess` previously inspected only MAX(attempt); old `tool.effect_reserved` disappeared from latest summary | Re-attempt could make unresolved prior write invisible and encourage blind retry | Add prior attempt effect scan, explicit reconciliation status and 6 regression cases; no real provider proof |
+| H-013 | CONFIRMED → DELEGATED | `assess` previously inspected only MAX(attempt); old `tool.effect_reserved` disappeared from latest summary | Re-attempt could make unresolved prior write invisible and encourage blind retry | Candidate scan and six tests removed from PR #17 to avoid overlap; canonical owner PR #23 implements stricter same-source ack checks |
 
 **Evidence gate H-013:** Source patch committed in the stacked branch and regression scenarios authored. Exact-head CI not observed, live effect outcomes unverified. The prior-attempt scan is not yet optimized for long histories. This is a metadata-only diagnosis, not a write-blocking policy engine.
+
+## 7. De-duplication decision (2026-11-22)
+
+PR #23 is selected as **candidate canonical owner** of cross-attempt effects and watcher fingerprinting; it must still pass independent exact-head verification. Our PR #17 previously added a similar but less strict implementation; its code and six overlapping tests were intentionally reverted in later commits. OBS-006 remains a confirmed parent defect until PR #23 is integrated; no operator should interpret this PR as fixing that risk by itself. Related review handoff: https://github.com/Podtverzhdeno/hermes-agent/pull/23 .
