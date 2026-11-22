@@ -166,9 +166,14 @@ def parse_event(raw: bytes) -> dict:
         refs = obj["evidence_refs"]
         if not isinstance(refs, list) or len(refs) > MAX_EVIDENCE_REFS or any(not _token(x) for x in refs):
             raise InvalidEvent("invalid evidence reference list")
-    if obj["kind"].startswith("task.") or obj["kind"].startswith("verifier."):
+    if (obj["kind"].startswith("task.") or obj["kind"].startswith("verifier.")
+            or obj["kind"] in STOP_KINDS):
+        # An unbound approval denial or worker lease expiry was previously
+        # silently ignored by the task-level observer and could show exit 0.
+        # This schema is task-scoped; a global worker event needs a different
+        # explicit contract rather than fabricating a task identity.
         if not obj.get("task_id"):
-            raise InvalidEvent("task event lacks task id")
+            raise InvalidEvent("task-scoped event lacks task id")
     if obj["kind"] in EFFECT_KINDS:
         if not obj.get("task_id") or not obj.get("effect_key") or obj.get("lease_fence") is None:
             raise InvalidEvent("effect lacks task, key or fence")
