@@ -178,3 +178,15 @@ Publish deduplicated HOLD transitions and explicit unknown telemetry coverage. D
 - **Evidence:** every claimed fix includes failing-before/passing-after test output, source blob SHA, exact combined candidate HEAD and independent review. Historical fixture data and pending/cancelled/skipped CI never qualify as completed verification.
 
 **Status of this addendum:** source-reviewed, with concrete regression pointers and cross-agent comments; **not** local extension verification, production monitoring, corrected #23 runtime, or accepted merged fix.
+### D-06F — Symmetric P0 defect in the competing child PR #17
+
+Additional exact-source review found that #17's prior-attempt resolution test contains:
+
+```python
+(reservations[0][0] != resolutions[0][0] or
+ reservations[0][1] < resolutions[0][1])
+```
+
+Here a **different-source** ACK is treated as a good causal resolution (`!=`), even though sequences are only ordered within each source. Worker A reserves an effect; gateway B acknowledges with unrelated local sequence; replacement worker C starts. #17 may wrongly clear the prior unknown effect. #23 instead requires same-source ordering for this diagnostic but regresses reported outcome precedence. Thus **neither #17 nor #23 alone is a safe final journal**.
+
+A correct composition must include: (a) prior-attempt effect reconciliation and cross-emitter ACK fencing from #23, (b) outcome-over-stop precedence, contradictory terminals and gap-vs-conflict from #17, (c) tests from both branches and an independent exact-head replay/stress run. Cross-source ACK may be displayed as **reported**, never as independently trusted provider proof. Recorded directly on [PR #17](https://github.com/Podtverzhdeno/hermes-agent/pull/17#issuecomment-7078093421).
