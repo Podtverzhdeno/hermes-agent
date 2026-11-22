@@ -31,12 +31,18 @@ OBSERVED_SOURCE = read a named code revision; OBSERVED_METADATA = GitHub source/
 | E18 | Source review comments on PR #5 (id 7077970951), #6 (id 7077971277), #4 (id 7077971632) | Findings shared with concurrent agents without editing their branches | APPLIED |
 | E19 | Full generic Tests workflow on old head was cancelled by superseding updates | CANCELLED does NOT mean pass. Do not use obsolete checks as merger evidence | OBSERVED_METADATA |
 | E20 | Chrome MV3 service worker and native messaging official docs | UI worker lifetime is not guaranteed; checkpoint/handshake and source-of-truth separation required if browser extension identified | DOCUMENTED_WEB; NOT_VERIFIED_LIVE |
+| E21 | PR #3 fix/acp-approval-session-isolation-20261122, acp_adapter/server.py prompt path | Prompt's first 100 characters appear in INFO log, exception text is returned to client; overlapping same-session turns can change agent callback state unless serialized or protocol forbids them | OBSERVED_SOURCE + HYPOTHESIS for concurrency |
+| E22 | PR #3 review comment id 7078018227 | Requested metadata-only logs, sanitized errors and same-session concurrency test; ContextVar fix in executor thread appears correctly scoped | APPLIED |
 
 ## Source discrepancies requiring canonical integration
 
 PR #5 Responses endpoint uses a module-level cache and a request fingerprint limited to a list of request fields, whereas the modified Chat Completions path uses adapter-scoped cache and full-body/session fingerprint. Thus it has conflicting consistency assumptions across endpoint implementations. Code observation is sufficient to request regression tests, but not sufficient to claim a live exploit. Also the Responses handler constructs an HTTP 500 message using the original Python exception string; this is a concrete unsafe pattern. Both concerns were posted to PR #5 for its owner.
 
 PR #6 has a more comprehensive adapter-scoped cache, and the source keeps unknown outcomes in memory rather than evicting them. That is safer against replay but may exhaust capacity after many uncertain outcomes. Distinguish a deliberate safety rejection from a deadlocked worker; provide protected reconciliation and test volume/partitioning. Shared API keys versus independent authenticated tenants must determine the actual idempotency scope. PR #4 independently chooses different public HTTP conflict codes. One compatibility contract must win before merge.
+
+## ACP concurrency and privacy finding, not a live incident
+
+On the in-review ACP session-isolation PR #3, the terminal approval ContextVar is explicitly installed inside the executor thread, which is correct for thread-local context propagation. However, the prompt handler still logs a preview of raw user text and returns raw exception text to an ACP client in multiple error branches. Separately, callbacks are assigned to a shared agent instance per session before executor execution. If simultaneous prompts are permitted for the same session, a second prompt may overwrite callbacks/history before the first completes. This concurrency risk needs protocol-contract verification and an explicit regression test, not an unqualified defect claim. Review comment 7078018227 sent to PR #3 owner; no direct changes to their branch.
 
 ## Failure-to-evidence map
 
