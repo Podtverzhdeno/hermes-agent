@@ -523,10 +523,76 @@ def _write_bundle(
         _atomic_write(manifest_path, manifest_raw)
         # Catch mixed generations from concurrent writers or corrupt
         # files before the CLI reports success. Readers must verify too.
-        for name, path, content in files:
-            if (path.read_bytes() != content or
-                    hashlib.sha256(path.read_bytes()).hexdigest() != manifest['files'][name]['sha256']):
-                raise IncompleteSnapshot('Report bundle digest mismatch; not complete')
+        verify_bundle(
+            manifest_path,
+            snapshot_path=snapshot_path,
+            report_path=report_path,
+            markdown_path=markdown_path,
+        )
+
+
+def verify_bundle(
+    manifest_path: Path, *,
+    snapshot_path: Path | None,
+    report_path: Path | None,
+    markdown_path: Path | None,
+) -> dict[str, Any]:
+    """Offline receipt validation. Hash consistency is not source authentication."""
+    if manifest_path.stat().st_size > 16 * 1024:
+        raise IncompleteSnapshot('Report manifest too large')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    if (not isinstance(manifest, dict)
+            or manifest.get('schema') != 'hermes.pr.bundle.v1'
+            or manifest.get('status') != 'FILES_WRITTEN_NOT_RUNTIME_VERIFIED'
+            or not _sha40(manifest.get('snapshot_sha'))
+            or manifest.get('evidence_mode') not in
+            {'github_api', 'offline_snapshot', 'unverified_input'}):
+        raise IncompleteSnapshot('Unsupported or incomplete report manifest')
+    paths = {
+        role: path for role, path in (
+            ('snapshot', snapshot_path),
+            ('report', report_path),
+            ('markdown', markdown_path),
+        ) if path is not None
+    }
+    if (not paths or not isinstance(manifest.get('files'), dict)
+            or set(paths) != set(manifest['files'])):
+        raise IncompleteSnapshot('Bundle roles do not match manifest')
+    if len({p.resolve() for p in [manifest_path, *paths.values()]}) != len(paths) + 1:
+        raise IncompleteSnapshot('Bundle paths overlap')
+    observed: dict[str, bytes] = {}
+    for role, path in paths.items():
+        expected = manifest['files'][role]
+        if (not isinstance(expected, dict)
+                or type(expected.get('bytes')) is not int
+                or not 0 <= expected['bytes'] <= 60 * 1024 * 1024
+                or not isinstance(expected.get('sha256'), str)
+                or len(expected['sha256']) != 64
+                or any(c not in '0123456789abcdef' for c in expected['sha256'])):
+            raise IncompleteSnapshot('Invalid bundle file digest or size')
+        if path.stat().st_size != expected['bytes']:
+            raise IncompleteSnapshot('Bundle byte count mismatch')
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != expected['sha256']:
+            raise IncompleteSnapshot('Bundle digest mismatch')
+        observed[role] = data
+    if 'report' in observed:
+        report = json.loads(observed['report'].decode('utf-8'))
+        if (not isinstance(report, dict)
+                or report.get('default_head_sha') != manifest['snapshot_sha']
+                or report.get('evidence_mode') != manifest['evidence_mode']
+                or report.get('collected_at') != manifest.get('collected_at')
+                or report.get('runtime_verdict') != 'UNOBSERVED'):
+            raise IncompleteSnapshot('Report provenance mismatch')
+    if 'snapshot' in observed:
+        snapshot = json.loads(observed['snapshot'].decode('utf-8'))
+        if (not isinstance(snapshot, dict)
+                or snapshot.get('default_head_sha') != manifest['snapshot_sha']
+                or snapshot.get('collected_at') != manifest.get('collected_at')):
+            raise IncompleteSnapshot('Snapshot provenance mismatch')
+        if 'report' in observed and report.get('open_pr_count') != len(snapshot.get('pulls', [])):
+            raise IncompleteSnapshot('Report/snapshot PR counts disagree')
+    return manifest
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -537,9 +603,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument('--report-out', type=Path)
     ap.add_argument('--markdown-out', type=Path)
     ap.add_argument('--manifest-out', type=Path, help='Written last; per-file SHA-256 receipt')
+    ap.add_argument('--verify-manifest', type=Path, help='Verify prior bundle offline without GitHub access')
     ap.add_argument('--strict', action='store_true', help='Exit 2 on blockers')
     args = ap.parse_args(argv)
     try:
+        if args.verify_manifest:
+            if args.manifest_out or args.snapshot_in:
+                raise IncompleteSnapshot('Verification cannot simultaneously collect or generate')
+            manifest = verify_bundle(
+                args.verify_manifest,
+                snapshot_path=args.snapshot_out,
+                report_path=args.report_out,
+                markdown_path=args.markdown_out,
+            )
+            print('BUNDLE_HASH_VALID; source=' + str(manifest['evidence_mode'])
+                  + '; runtime=UNOBSERVED; no source authenticity/freshness claimed')
+            return 0
         snapshot = (
             json.loads(args.snapshot_in.read_text(encoding='utf-8'))
             if args.snapshot_in else collect(args.repo, os.environ.get('GITHUB_TOKEN', ''))
