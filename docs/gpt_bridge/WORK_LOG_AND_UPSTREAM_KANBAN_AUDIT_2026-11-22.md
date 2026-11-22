@@ -14,7 +14,7 @@
 | Coordination false negative | PR #14 script `CAPABILITY_PATHS` omitted PR #8 `hermes_gpt_bridge/` | Comment posted to PR #14; validate capability semantics in addition to path overlap |
 | Canonical control plane | Official upstream v0.23.3 release (GitHub API) and Hermes Kanban worker-lanes docs: task lifecycle/worker identity belongs to Kanban | Do not create competing task authority via Autopilot PR #1; audit/port upstream first |
 | Changes made | PR #16 adds parser, read-only observer, offline JSONL inspector and SDD integration gate | Branch only; no runtime activation |
-| Offline verification | 39 pytest cases passed in isolated Python environment, `compileall` passed; includes 30 producers × 50 events; duplicate JSON keys are rejected | Offline validation only; no GitHub CI or extension E2E success implied |
+| Offline verification | 40 pytest cases passed in isolated Python environment, `compileall` passed; includes 30 producers × 50 events; duplicate JSON keys and changed-payload event-ID replays are rejected | Offline validation only; no GitHub CI or extension E2E success implied |
 | CI | GitHub workflow statuses must be checked against latest PR #16 head after all writes | If pending, mark pending rather than green |
 
 ## Upstream lifecycle: explicit stop semantics to reuse, not reinvent
@@ -62,3 +62,7 @@ The current official Hermes Kanban worker-lanes documentation (https://hermes-ag
 **Risk priorities:** (1) competing task control planes and schemas; (2) unknown side effect replay; (3) explicit session continuity loss; (4) stale file writers and permission scope; (5) missing causal event gaps/observer outage; (6) provider retry fan-out. A SDD cannot itself guarantee atomicity or service liveness.
 
 **Strict quality test:** do not promote any implementation from draft until every claimed invariant is connected to executable tests, verified current source SHA, live-environment evidence where required, and an incident path that remains safe when monitoring fails.
+
+## Self-audit correction
+
+In a later strict pass, the observer's first version treated any event with the same (event_id, producer_id, sequence) as a replay without checking that the rest of the event payload was identical. A malicious or buggy emitter could thus alter a previously observed event and have it misclassified as a harmless duplicate. **Fixed** by storing a canonical validated event SHA-256 digest in the bounded replay cache and comparing the entire tuple. An independent regression test now rejects same-ID/same-sequence altered content. This increases isolated test count to **40 passing**. This does not establish source authenticity; authenticated producers and durable ledgers remain required.
