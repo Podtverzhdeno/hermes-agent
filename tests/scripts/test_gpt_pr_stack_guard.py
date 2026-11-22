@@ -174,3 +174,32 @@ def test_identical_compare_must_have_zero_bidirectional_counts():
 def test_genuine_identical_parent_head_is_an_ancestry_success_only():
     r=mod.analyze(snap(pr(1,head='parent'),pr(2,base='parent',proof=proof(1,status='identical',behind=0,ahead=0))))
     assert r['issues']==[] and r['verdict']=='NO_STACK_ISSUES_NOT_MERGE_APPROVAL'
+
+
+def test_hundred_agent_stacks_are_order_invariant_and_not_merge_approval():
+    nodes=[]
+    for i in range(1,101):
+        parent=i-1
+        attached=(i-1)%10 != 0
+        nodes.append(pr(i,base=f'b{parent}' if attached else 'main',
+                        proof=proof(parent) if attached else None))
+    first=mod.analyze(snap(*nodes))
+    reverse=mod.analyze(snap(*reversed(nodes)))
+    assert first==reverse
+    assert first['stacks_checked']==90
+    assert first['issues']==[]
+    assert first['verdict']=='NO_STACK_ISSUES_NOT_MERGE_APPROVAL'
+
+
+def test_one_parent_drift_in_hundred_agent_stacks_cannot_get_lost():
+    nodes=[]
+    for i in range(1,101):
+        attached=(i-1)%10 != 0
+        parent=i-1
+        evidence=proof(parent,behind=3,status='diverged',ahead=2) if i==52 else (
+            proof(parent) if attached else None)
+        nodes.append(pr(i,base=f'b{parent}' if attached else 'main',proof=evidence))
+    result=mod.analyze(snap(*nodes))
+    assert result['stacks_checked']==90
+    assert result['verdict']=='REVIEW_REQUIRED'
+    assert result['issues']==[{'pr':52,'parent_pr':51,'code':'PARENT_ADVANCED_REBASE_REQUIRED'}]
