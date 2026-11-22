@@ -766,6 +766,17 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
     """
     try:
         from agent.skill_utils import get_external_skills_dirs
+        from agent.skill_harness import (
+            SkillHarnessError, load_skill_harness, path_within_root,
+            validate_skill_lookup_name,
+        )
+
+        name_error = validate_skill_lookup_name(name)
+        if name_error:
+            return json.dumps(
+                {"success": False, "error": name_error},
+                ensure_ascii=False,
+            )
 
         # Build list of all skill directories to search
         all_dirs = []
@@ -789,11 +800,13 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         for search_dir in all_dirs:
             # Try direct path first (e.g., "mlops/axolotl")
             direct_path = search_dir / name
-            if direct_path.is_dir() and (direct_path / "SKILL.md").exists():
+            if not path_within_root(direct_path, search_dir):
+                continue
+            if direct_path.is_dir() and (direct_path / "SKILL.md").exists() and path_within_root(direct_path / "SKILL.md", search_dir):
                 skill_dir = direct_path
                 skill_md = direct_path / "SKILL.md"
                 break
-            elif direct_path.with_suffix(".md").exists():
+            elif direct_path.with_suffix(".md").exists() and path_within_root(direct_path.with_suffix(".md"), search_dir):
                 skill_md = direct_path.with_suffix(".md")
                 break
 
@@ -801,7 +814,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         if not skill_md:
             for search_dir in all_dirs:
                 for found_skill_md in search_dir.rglob("SKILL.md"):
-                    if found_skill_md.parent.name == name:
+                    if found_skill_md.parent.name == name and path_within_root(found_skill_md, search_dir):
                         skill_dir = found_skill_md.parent
                         skill_md = found_skill_md
                         break
@@ -812,7 +825,7 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
         if not skill_md:
             for search_dir in all_dirs:
                 for found_md in search_dir.rglob(f"{name}.md"):
-                    if found_md.name != "SKILL.md":
+                    if found_md.name != "SKILL.md" and path_within_root(found_md, search_dir):
                         skill_md = found_md
                         break
                 if skill_md:
@@ -911,6 +924,19 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
                 },
                 ensure_ascii=False,
             )
+
+        # The manifest cannot grant tools/permissions. Malformed manifests are
+        # blocked to avoid silently activating a broken procedural contract.
+        harness = None
+        if skill_dir is not None:
+            try:
+                harness = load_skill_harness(skill_dir, resolved_name)
+            except SkillHarnessError as exc:
+                return json.dumps(
+                    {"success": False, "error": f"Invalid skill harness: {exc}",
+                     "harness_status": "invalid"},
+                    ensure_ascii=False,
+                )
 
         # If a specific file path is requested, read that instead
         if file_path and skill_dir:
@@ -1173,6 +1199,8 @@ def skill_view(name: str, file_path: str = None, task_id: str = None) -> str:
             "description": frontmatter.get("description", ""),
             "tags": tags,
             "related_skills": related_skills,
+            "harness": harness,
+            "harness_status": "declared" if harness is not None else "legacy",
             "content": content,
             "path": rel_path,
             "linked_files": linked_files if linked_files else None,
