@@ -120,6 +120,34 @@ def collect(repo: str, token: str | None = None, max_prs: int = 100) -> dict[str
         page += 1
         if page > 10:
             raise IncompleteScan("PR listing exceeds supported pagination")
+    # Re-read the whole open-PR collection; GitHub list pagination is not
+    # atomic and an agent may open/move a PR while files are being collected.
+    final_index: dict[int, tuple[str, str, str, str]] = {}
+    final_page = 1
+    while True:
+        final_batch = _get_json(repo, f"pulls?state=open&per_page=100&page={final_page}", token)
+        if not isinstance(final_batch, list):
+            raise IncompleteScan("Final PR listing malformed")
+        for item in final_batch:
+            n = item["number"]
+            if n in final_index:
+                raise IncompleteScan("Duplicate PR in final listing")
+            final_index[n] = (item["head"]["sha"], item["base"]["sha"],
+                              item["head"]["ref"], item["base"]["ref"])
+        if len(final_index) > max_prs:
+            raise IncompleteScan("Final PR count exceeds configured scan limit")
+        if len(final_batch) < 100:
+            break
+        final_page += 1
+        if final_page > 10:
+            raise IncompleteScan("Final PR listing exceeds supported pagination")
+    first_index = {p["number"]: (p["head_sha"], p["base_sha"], p["head"], p["base"])
+                   for p in prs}
+    if len(first_index) != len(prs) or final_index != first_index:
+        raise IncompleteScan("Open PR set or revisions changed during scan")
+    latest_main = _get_json(repo, "branches/main", token)
+    if latest_main["commit"]["sha"] != baseline["commit"]["sha"]:
+        raise IncompleteScan("Main HEAD changed during the scan")
     return {"schema_version": 1, "repository": repo, "baseline_sha": baseline["commit"]["sha"],
             "main_protected": baseline.get("protected"), "prs": prs}
 
