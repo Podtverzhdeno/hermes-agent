@@ -112,3 +112,41 @@ def test_online_only_api_get_has_no_mutating_calls():
     with patch.object(mod,'pages',return_value=[]),patch.object(mod,'get') as get:
         data=mod.collect('owner/repo')
     assert data['pulls']==[] and get.call_count==0
+
+
+def test_dependency_cycle_cannot_appear_green():
+    # Both branches may temporarily point to one revision; ancestry alone is insufficient.
+    a=pr(1,base='b2',head='b1',proof=proof(2))
+    b=pr(2,base='b1',head='b2',proof=proof(1))
+    with pytest.raises(mod.IncompleteAudit,match='cyclic'):
+        mod.analyze(snap(a,b))
+
+
+def test_collect_rejects_invalid_pr_shape():
+    with patch.object(mod,'pages',return_value=[{'number':1,'head':None}]):
+        with pytest.raises(mod.IncompleteAudit,match='shape'):
+            mod.collect('owner/repo')
+
+
+def test_invalid_compare_shape_fails_closed():
+    a=pr(1,head='parent');b=pr(2,base='parent')
+    raw={
+        'number':1,'head':{'ref':'parent','sha':a['head_sha'],'repo':{'full_name':'owner/repo'}},
+        'base':{'ref':'main'}
+    }
+    child={
+        'number':2,'head':{'ref':'b2','sha':b['head_sha'],'repo':{'full_name':'owner/repo'}},
+        'base':{'ref':'parent'}
+    }
+    def fetch(path,token):
+        if '/compare/' in path:return []
+        if path.endswith('/pulls/1'):return raw
+        if path.endswith('/pulls/2'):return child
+        raise AssertionError(path)
+    def pages(path,token,cap=10):
+        if 'state=open' in path:return [raw,child]
+        if '/files' in path:return [{'filename':'docs/a.md'}]
+        raise AssertionError(path)
+    with patch.object(mod,'get',side_effect=fetch),patch.object(mod,'pages',side_effect=pages):
+        with pytest.raises(mod.IncompleteAudit,match='compare'):
+            mod.collect('owner/repo')
