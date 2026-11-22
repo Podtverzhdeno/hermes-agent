@@ -39,8 +39,15 @@ def get(path, token=None):
     try:
         with urllib.request.build_opener(NoRedirect()).open(req, timeout=15) as response:
             return json.load(response)
-    except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, ValueError):
-        raise IncompleteAudit('GitHub request unavailable or invalid JSON') from None
+    except urllib.error.HTTPError as exc:
+        status = exc.code if isinstance(exc.code, int) and 100 <= exc.code <= 599 else 'UNKNOWN'
+        raise IncompleteAudit(f'GITHUB_HTTP_{status}') from None
+    except urllib.error.URLError:
+        raise IncompleteAudit('GITHUB_TRANSPORT_UNAVAILABLE') from None
+    except TimeoutError:
+        raise IncompleteAudit('GITHUB_TIMEOUT') from None
+    except ValueError:
+        raise IncompleteAudit('GITHUB_BAD_JSON') from None
 
 
 def pages(path, token=None, cap=10):
@@ -168,6 +175,20 @@ def analyze(snapshot):
         'not_checked':['CI status','cross-root semantic conflicts','external side effects','deployed runtime','general non-stacked collisions']}
 
 
+def emit_report(report, destination):
+    """Emit a machine-readable diagnosis atomically, including non-green errors."""
+    body=json.dumps(report,sort_keys=True,ensure_ascii=False,indent=2)+'\n'
+    if not destination:
+        print(body,end='')
+        return
+    with tempfile.NamedTemporaryFile('w',encoding='utf-8',dir=destination.parent,delete=False,prefix='.gpt-stack-') as f:
+        filename=f.name
+        f.write(body);f.flush();os.fsync(f.fileno())
+    try: os.replace(filename,destination)
+    finally:
+        if os.path.exists(filename): os.unlink(filename)
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     exclusive=parser.add_mutually_exclusive_group(required=True)
@@ -178,19 +199,24 @@ def main(argv=None):
     try:
         source=json.loads(args.snapshot.read_text(encoding='utf-8')) if args.snapshot else collect(args.repo,os.getenv('GITHUB_TOKEN'))
         report=analyze(source)
-        body=json.dumps(report,sort_keys=True,ensure_ascii=False,indent=2)+'\n'
-        if args.output:
-            with tempfile.NamedTemporaryFile('w',encoding='utf-8',dir=args.output.parent,delete=False,prefix='.gpt-stack-') as f:
-                filename=f.name
-                f.write(body);f.flush();os.fsync(f.fileno())
-            try: os.replace(filename,args.output)
-            finally:
-                if os.path.exists(filename): os.unlink(filename)
-        else:
-            print(body,end='')
+        emit_report(report,args.output)
         return 1 if report['issues'] else 0
     except (IncompleteAudit,OSError,ValueError,TypeError,KeyError,AttributeError) as exc:
-        print('AUDIT_INCOMPLETE: '+str(exc),file=sys.stderr)
+        reason = str(exc).upper().replace(' ', '_') if isinstance(exc,IncompleteAudit) else (
+            'INPUT_OR_OUTPUT_IO_ERROR' if isinstance(exc,OSError) else 'INVALID_INPUT_DATA')
+        if not re.fullmatch(r'[A-Z0-9_]{1,96}',reason):
+            reason='AUDIT_ERROR_UNCLASSIFIED'
+        incomplete={'schema_version':1,
+            'repo':args.repo if args.repo and REPO.fullmatch(args.repo) else 'offline-or-untrusted-input',
+            'observed_at':datetime.now(timezone.utc).isoformat(),
+            'verdict':'AUDIT_INCOMPLETE','reason_code':reason,
+            'issues':[],'not_checked':['all: inventory, parent graph and external effects cannot be certified']}
+        try:
+            emit_report(incomplete,args.output)
+        except OSError:
+            print('AUDIT_INCOMPLETE: OUTPUT_IO_ERROR',file=sys.stderr)
+            return 2
+        print('AUDIT_INCOMPLETE: '+reason,file=sys.stderr)
         return 2
 
 
