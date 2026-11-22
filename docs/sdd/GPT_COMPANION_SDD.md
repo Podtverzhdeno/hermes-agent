@@ -398,3 +398,14 @@ Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolve
 **Scale caveat:** grouped SQL scan grows with prior attempt history and is safe for an offline inspector but unbenchmarked for 100-worker high-volume polling. Before deploying a continuous observer, measure query p95 and DB lock rate under 10/30/100 worker replay; consider a materialized per-stream frontier/holes table with correctness-preserving recovery if needed. Do not optimize by ignoring prior gaps.
 
 **Interoperability reference:** see [Hermes Browser Extension compatibility audit](./HERMES_BROWSER_EXTENSION_INTEROP_2026-11-22.md). The externally maintained extension v0.4.1 claims Hermes Agent >=0.22 support, while this fork's main declares v0.6.0. Until an installed runtime/version handshake is verified, local browser/ChatGPT integration remains disabled and no live monitoring is claimed.
+
+
+### ADR-032: Conflicting duplicate effect reports never discharge a write (P0, implemented in stacked audit)
+
+**Finding C-06 / source-reviewed:** the initial journal only kept the *last* reservation and *last* acknowledgement for an `action_id`. Multiple acknowledgements for the same action could be contradictory, but if the last acknowledgement matched the last reserving emitter, `reserved` became empty and the incident was reduced to generic `TRACE_INCOMPLETE`, losing the explicit unresolved external effect. A duplicated reservation from a different source could create the same ambiguity. In a many-agent workflow this obscures the need for direct read-back and encourages accidental retry.
+
+**Fix:** maintain an `effect_conflicts` set for duplicate reservations / resolutions in the same attempt; never let the last arrival silently resolve an ambiguous action. The action remains in `unresolved_effects`, and state is immediately `NEEDS_RECONCILIATION`. This is *diagnostic conservatism*, not a claim of an actual duplicate external API effect. The system must eventually distinguish delivery duplicates from true duplicate executions through authenticated provider receipts and a trusted action ledger.
+
+**Tests:** `test_duplicate_ack_order_must_not_mask_uncertain_effect` permutes three source-local and cross-source messages through all six delivery orders, `test_duplicate_reservations_remain_unresolved_even_after_ack` covers mixed reservations, `test_single_same_source_resolution_is_not_false_duplicate` prevents unnecessary alarms on a normal same-source ack. The results require exact SHA CI evidence before release.
+
+**Scale and trust:** The extra Python set is proportional only to distinct conflict actions in the selected attempt; historical attempt query cost is discussed in ADR-031. No browser/GPT content is recorded. Even a perfect telemetry record is not a trusted third-party effect confirmation.
