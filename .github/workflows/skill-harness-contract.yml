@@ -10,6 +10,8 @@ on:
       - "skills/**/SKILL.md"
       - "tests/skill_harness/**"
       - "scripts/audit_skill_harnesses.py"
+      - "scripts/evaluate_specialized_skills.py"
+      - "scripts/skill_harness_safety_lint.py"
       - "tests/agent/test_skill_harness_integration.py"
       - ".github/workflows/skill-harness-contract.yml"
   push:
@@ -53,6 +55,10 @@ jobs:
         run: python -m compileall -q agent/skill_harness.py tests/skill_harness
       - name: Audit all bundled and optional skill coverage
         run: python -m scripts.audit_skill_harnesses --format markdown
+      - name: Reject unsafe executable skill examples
+        run: python -m scripts.skill_harness_safety_lint
+      - name: Export pinned positive/negative routing fixtures
+        run: python -m scripts.evaluate_specialized_skills export --root . --output skill-cases.jsonl
       - name: Validate individual contracts (offline, stdlib only)
         env:
           OPENAI_API_KEY: ""
