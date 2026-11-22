@@ -420,3 +420,24 @@ Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolve
 **Offline regressions added:** `test_worker_stopped_does_not_erase_reported_failure_reason`, `test_worker_stopped_does_not_erase_completed_verification_gate` and `test_worker_stopped_without_run_report_stays_unconfirmed`. Exact SHA CI required before merge.
 
 **V2 contract:** task outcome and worker lifecycle should become separately structured fields (`reported_task_state`, `worker_process_state`) and not compete for a single last-terminal slot. A trusted verifier alone may promote a task to success; worker exit codes and model text are evidence pointers, not approval.
+
+
+### ADR-034: Duplicate approvals do not silently grant authority (P0, implemented in stacked audit)
+
+**Finding C-08:** within the highest attempt `approval_requests` and `approval_resolutions` were dictionaries keyed by `action_id` only. Multiple requests or multiple resolutions from distinct emitters overwrite earlier entries. The final last-writer-wins pair could remove `pending_approvals` despite an unresolved, ambiguous approval history. That is unsafe for browser actions, deployment, deletion, spending, and any step requiring a person.
+
+**Fix:** track `approval_conflicts` for repeated requests or repeated resolutions, preserve the action in `pending_approvals` and classify the contradictory trace as `TRACE_INCOMPLETE`, even if a last same-source reply appears ordered. Cross-source approval messages remain untrusted in V1; a v2 verifier may recognize an authenticated reviewer principal, durable grant ID, intended resource and scope. The journal itself **never** authorizes or executes an action.
+
+**Tests:** duplicate requests from multiple emitters, duplicate resolutions and a normal single-source pair. Distinguish telemetry conflict from authorization: *no* user-consent grant can be inferred from the new diagnostic.
+
+### ADR-035: Run-reporter identity vs worker-process identity (P0, implemented in stacked audit)
+
+**Finding C-09:** `terminal_sources` treated `run.reported_failed/completed` and `worker.stopped` as a single class. A coordinator's explicit run failure and a worker's normal stop would be incorrectly marked contradictory simply because they came from different emitters. Two distinct workers stopping could also trigger generic trace contradiction without an actual conflict in run outcome.
+
+**Fix:** source conflict applies to **run reports** only. `worker.stopped` remains independent process lifecycle evidence and may coexist with a run report from another authenticated source. Two different *run reporters* are still contradictory and must be reconciled. This fix is coupled with ADR-033, which ensures a stop does not erase a reported failure or a pending verification gate.
+
+**Tests:** cross-emitter coordinator failure + worker stop remains `REPORTED_FAILED`; two separate run reporters remain `TRACE_INCOMPLETE`; multiple worker stops without task report remain `STOPPED_UNCONFIRMED`.
+
+**Future model:** `{task_report, worker_processes[], controller_state, verified_outcome}` is preferable to flattening all terminal events into one scalar. A worker death does not prove the run failed; an LLM report does not prove the artifacts passed checks; a browser page rendering does not imply the provider committed an effect.
+
+**Verification status:** code and test cases are committed to a stacked draft PR. No automatic background monitoring, deployed Hermes upgrade, or user/browser authorization has been conducted. CI must be checked at the final exact SHA before readiness claims.
