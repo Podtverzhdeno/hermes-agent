@@ -155,6 +155,7 @@ class RunObserver:
         self.stale_seconds = float(stale_seconds)
         self.last_projection = None
         self.last_change_at = time.monotonic()
+        self.last_heartbeat_at = None
         self.stale_reported = False
         if self.stale_seconds < 1:
             raise ValueError("stale_seconds must be >= 1")
@@ -162,6 +163,17 @@ class RunObserver:
     def observe(self, raw: dict, *, now: float | None = None) -> bool:
         now = time.monotonic() if now is None else now
         value = safe_projection(raw)
+        if self.last_heartbeat_at is None:
+            self.last_heartbeat_at = now
+        elif now - self.last_heartbeat_at >= 30:
+            # Distinguish a live observer from a stalled or dead observer.
+            # This heartbeat says NOTHING about Hermes worker health.
+            self.emit(make_event(
+                "observer_heartbeat", self.run_id,
+                status=value["status"],
+                progress_age_seconds=round(max(0, now - self.last_change_at), 1),
+            ))
+            self.last_heartbeat_at = now
         if self.last_projection != value:
             prev = self.last_projection
             self.emit(make_event(
