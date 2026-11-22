@@ -148,6 +148,44 @@ class IntegrationGateTests(unittest.TestCase):
             with self.assertRaises(mod.IncompleteScan):
                 mod.collect('Podtverzhdeno/hermes-agent')
 
+    def test_live_collection_rejects_added_pr_during_scan(self):
+        listing = {'number': 4, 'head': {'sha': '4'*40, 'ref': 'branch'},
+                   'base': {'sha': 'a'*40, 'ref': 'main'}}
+        detail = {**listing, 'changed_files': 1}
+        calls = [0]
+
+        def fake_get(repo, path, token):
+            if path == 'branches/main':
+                return {'commit': {'sha': 'a'*40}, 'protected': False}
+            if path.startswith('pulls?'):
+                calls[0] += 1
+                return [listing] if calls[0] == 1 else [listing, {
+                    **listing, 'number': 5, 'head': {'sha': '5'*40, 'ref': 'new'}}]
+            if path == 'pulls/4':
+                return detail
+            if path.startswith('pulls/4/files?'):
+                return [{'filename': 'gateway/platforms/api_server.py'}]
+            if path.startswith('commits/'):
+                return {'total_count': 0, 'check_runs': []}
+            raise AssertionError(path)
+        with mock.patch.object(mod, '_get_json', side_effect=fake_get):
+            with self.assertRaisesRegex(mod.IncompleteScan, 'changed during scan'):
+                mod.collect('Podtverzhdeno/hermes-agent')
+
+    def test_live_collection_rejects_moving_main_head(self):
+        calls = [0]
+        def fake_get(repo, path, token):
+            if path == 'branches/main':
+                calls[0] += 1
+                return {'commit': {'sha': ('a' if calls[0] == 1 else 'b')*40},
+                        'protected': False}
+            if path.startswith('pulls?'):
+                return []
+            raise AssertionError(path)
+        with mock.patch.object(mod, '_get_json', side_effect=fake_get):
+            with self.assertRaisesRegex(mod.IncompleteScan, 'Main HEAD changed'):
+                mod.collect('Podtverzhdeno/hermes-agent')
+
     def test_repo_arg_cannot_override_host(self):
         with self.assertRaises(ValueError):
             mod.collect('github.com/owner/repo')
