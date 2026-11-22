@@ -290,6 +290,7 @@ class EventJournal:
         # Multiple non-identical reports for one action are *not* an ack.
         # Retain them for reconciliation irrespective of arrival order.
         effect_conflicts: set[str] = set()
+        approval_conflicts: set[str] = set()
         contradictory = False
         for e, _ in events:
             kind, action = e["kind"], e.get("action_id")
@@ -305,8 +306,14 @@ class EventJournal:
                     effect_conflicts.add(action)
                 effect_resolutions[action] = origin
             elif kind == "approval.required":
+                if action in approval_requests:
+                    contradictory = True
+                    approval_conflicts.add(action)
                 approval_requests[action] = origin
             elif kind == "approval.resolved":
+                if action in approval_resolutions:
+                    contradictory = True
+                    approval_conflicts.add(action)
                 approval_resolutions[action] = origin
         # Different emitters have no shared sequence clock. A cross-source
         # ack is a hint requiring reconciliation, not a causal write receipt.
@@ -316,7 +323,7 @@ class EventJournal:
         }
         reserved = ((set(reserved_events) - set(effect_resolutions))
                     | cross_source_effects | effect_conflicts)
-        pending_approval = set(approval_requests) - set(approval_resolutions)
+        pending_approval = (set(approval_requests) - set(approval_resolutions)) | approval_conflicts
         for action, resolution in approval_resolutions.items():
             if action in approval_requests and approval_requests[action][0] != resolution[0]:
                 pending_approval.add(action)
@@ -352,7 +359,10 @@ class EventJournal:
                            ("run.reported_completed", "run.reported_failed", "worker.stopped")]
         # Only a source-local sequence is ordered. Contradictory terminal
         # reports from multiple emitters require operator reconciliation.
-        terminal_sources = {e["source"] for e in terminal_events}
+        # Worker-process exit is independent from a run outcome report; a
+        # coordinator's run report and worker's stop are not contradictory.
+        terminal_sources = {e["source"] for e in terminal_events
+                            if e["kind"].startswith("run.reported_")}
         if len(terminal_sources) > 1:
             contradictory = True
         terminal_kinds = {e["kind"] for e in terminal_events}
