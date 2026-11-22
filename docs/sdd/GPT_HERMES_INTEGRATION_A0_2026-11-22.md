@@ -241,3 +241,7 @@ A live scan on EVERY draft PR push caused repeated full GitHub list+files+checks
 ## 18. Owner target: isolated CDP rather than intercepting normal browser
 
 Owner had earlier authorized a web-chatgpt-high-cdp direct CDP canary and selected a separate Control Center without required browser plugin or disruption of normal PC use. Source-local app unavailable today; these are earlier requirements, not live proof. Architecture must support native Runs+Kanban status, plus separate isolated Chromium/CDP lane with exclusive writer lease, sanitized event projection and explicit user grant; do not target the personal browser by default. See [ADR-A0-03](GPT_ISOLATED_CDP_CONTROL_CENTER_ADR_A0_2026-11-22.md).
+
+## 19. Ограничение множественных конфликтов
+
+Максимум 150 PR и 1000 изменяемых файлов на PR потенциально порождают свыше 11 млн пар при совпадении путей. Нельзя создавать бесконечный массив инцидентов. Read-only gate выводит не более 5000 конкретных пар, явный collisions_truncated и нижнюю границу collision_pairs_at_least; при неполном графе release заблокирован, оператор не получает ложный отчет «конфликтов нет». Для больших систем нужна инкрементальная индексная проекция от webhook, а не полный O(N²×F) репорт на каждом коммите.

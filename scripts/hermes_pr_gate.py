@@ -20,6 +20,7 @@ from pathlib import Path
 SHA = re.compile(r"^[0-9a-f]{40}$")
 REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 MAX_PRS, MAX_FILES = 150, 1000
+MAX_COLLISION_PAIRS = 5000
 
 class EvidenceError(ValueError):
     pass
@@ -181,10 +182,16 @@ def assess(snapshot):
         if parents[p["number"]] is not None:
             dependencies.append({"pr": p["number"], "depends_on": parents[p["number"]]})
         ancestry(p["number"])
+    collision_truncated = False
     for file, owners in sorted(by_file.items()):
         for a, b in itertools.combinations(sorted(owners), 2):
             if a not in ancestry(b) and b not in ancestry(a):
+                if len(collisions) >= MAX_COLLISION_PAIRS:
+                    collision_truncated = True
+                    break
                 collisions.append({"file": file, "prs": [a, b]})
+        if collision_truncated:
+            break
     semantic = []
     families = {
         "api-singleflight": {"gateway/platforms/api_server.py", "gateway/idempotency.py"},
@@ -214,7 +221,10 @@ def assess(snapshot):
         "schema_version": 1, "repository": snapshot.get("repository"),
         "observed_at": snapshot.get("observed_at"),
         "pull_requests": len(prs), "checks": sorted(checks, key=lambda c: c["pr"]),
-        "collisions": collisions, "stacked_dependencies": dependencies,
+        "collisions": collisions,
+        "collisions_truncated": collision_truncated,
+        "collision_pairs_at_least": len(collisions) + int(collision_truncated),
+        "stacked_dependencies": dependencies,
         "semantic_reviews": semantic, "merge_ready": False,
         "reason": "ADVISORY_ONLY: independent combined-SHA tests, extension runtime and security review required",
     }
@@ -240,6 +250,10 @@ def markdown(report):
             review=", ".join(_safe_markdown(x) for x in c["review_skipped"]) or "—"))
     out += ["", "## Independent file overlap"]
     out += ["- PR {} × PR {}: {}".format(*c["prs"], _safe_markdown(c["file"])) for c in report["collisions"]] or ["None observed"]
+    if report.get("collisions_truncated"):
+        out += ["", "WARNING: collision list truncated (at least " +
+                str(report["collision_pairs_at_least"]) +
+                " independent pairs). Report is INCOMPLETE; manual review mandatory."]
     out += ["", "## Stacked dependencies"]
     out += ["- PR {} depends on PR {}".format(d["pr"], d["depends_on"]) for d in report["stacked_dependencies"]] or ["None observed"]
     out += ["", "## Semantic review candidates"]

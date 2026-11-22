@@ -73,3 +73,6 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 - Retrieved prior authorized CDP canary context for model route web-chatgpt-high-cdp (Nov 14–15) and newer preference for a separate Agent Control Center without mandatory browser extension and without interfering with normal browser. Historical context is not a current health check.
 - Local_WorkSpace access recovered partially: list_workspaces exposed only the unrelated shelter Obsidian vault. No authorized Hermes project/root/runtime/log path was available, so Hermes Windows/CDP E2E remains BLOCKED. Did not write Hermes docs into the shelter game vault.
 - New ADR-A0-03 separates Hermes native run authority from an isolated opt-in CDP browser lane, consolidates typed failure cases and 30–100-worker acceptance, and keeps all execution/approval gates explicit.
+
+## Bounded collision fan-out, overflow test
+- Discovered A0 bug: 150 PRs each editing up to 1000 common files could emit 11,175,000 collision dict entries (150 choose 2 × 1000), risking memory exhaustion and self-inflicted auditor failure. Source fix limits detailed independent pairs to 5000, reports collisions_truncated true and collision_pairs_at_least (lower bound), never greenlights. Added 150-PR and 100-PR explicit regressions. This is a metadata stress test, not simultaneous real workers.

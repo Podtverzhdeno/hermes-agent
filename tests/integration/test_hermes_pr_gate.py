@@ -160,6 +160,23 @@ class GateTests(unittest.TestCase):
         self.assertEqual(m._incident_code("GitHub API unavailable: TimeoutError"), "TRANSPORT_UNAVAILABLE")
         self.assertEqual(m._incident_code("missing evidence"), "EVIDENCE_INCOMPLETE")
 
+    def test_bounded_collision_output_at_150_shared_prs(self):
+        # Large conflict fan-out must be explicitly truncated, never green.
+        tasks = [pr(i, files=["shared.py"]) for i in range(1, 151)]
+        report = m.assess(snapshot(*tasks))
+        self.assertEqual(len(report["collisions"]), m.MAX_COLLISION_PAIRS)
+        self.assertTrue(report["collisions_truncated"])
+        self.assertEqual(report["collision_pairs_at_least"],
+                         m.MAX_COLLISION_PAIRS + 1)
+        self.assertFalse(report["merge_ready"])
+        self.assertIn("WARNING: collision list truncated", m.markdown(report))
+
+    def test_untruncated_100_prs_same_path_keeps_exact_count(self):
+        tasks = [pr(i, files=["shared.py"]) for i in range(1, 101)]
+        report = m.assess(snapshot(*tasks))
+        self.assertEqual(report["collision_pairs_at_least"], 4950)
+        self.assertFalse(report["collisions_truncated"])
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))
