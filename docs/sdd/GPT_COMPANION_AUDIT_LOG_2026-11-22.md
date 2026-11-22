@@ -129,3 +129,8 @@ All of these are **reference contracts**, not evidence that the user's local ins
 **Additional metadata test:** 30 interleaved producer streams, each sequence 1–3, then source 7 jumps to 5; all other producers must not hide its internal gap. This only simulates interleaved events, not 30 simultaneously executing operating-system agents.
 
 **Outstanding release checks:** current exact-head isolated Python 3.11/3.13 jobs, full repo CI on parent+child merged SHA, parent and PR #23 ownership convergence, actual Windows extension source/manifest and trusted ingress health. No code is deployed.
+
+
+| H-020 / OBS-012 | CONFIRMED → PATCHED | First stacked implementation treated coordinator's `run.reported_failed` and another source's `worker.stopped` as conflicting terminal reports | multi-agent normal shutdown caused false TRACE_INCOMPLETE classification | cross-source reporters count only `run.reported_*` events, four tests; preserve coordination conflict for two independent report emitters |
+
+**H-020 review handoff:** PR #23 independently has similar normal-shutdown logic plus same-source post-terminal lifecycle check. Transfer the unique tests and avoid two lasting implementations after canonical merge. Our PR's narrower change does not include PR #23 effect reconciliation.
