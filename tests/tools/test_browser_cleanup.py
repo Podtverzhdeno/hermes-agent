@@ -94,3 +94,76 @@ class TestBrowserCleanup:
         assert browser_tool._session_last_activity == {}
         assert browser_tool._recording_sessions == set()
         assert browser_tool._cleanup_done is True
+
+    def test_cleanup_external_cdp_keeps_owner_browser_and_other_sessions(self):
+        """Closing one attached CDP lease must not send Browser.close or kill Edge."""
+        browser_tool = self.browser_tool
+        browser_tool._active_sessions["attached-task"] = {
+            "session_name": "cdp_12345678",
+            "bb_session_id": None,
+            "cdp_url": "ws://127.0.0.1:9223/devtools/browser/test",
+            "features": {"cdp_override": True},
+        }
+        browser_tool._active_sessions["other-task"] = {
+            "session_name": "h_other",
+            "bb_session_id": None,
+            "cdp_url": None,
+            "features": {"local": True},
+        }
+        browser_tool._session_last_activity["attached-task"] = 123.0
+        browser_tool._session_last_activity["other-task"] = 124.0
+        with (
+            patch("tools.browser_tool._maybe_stop_recording") as stop_record,
+            patch("tools.browser_tool._run_browser_command") as cli,
+            patch("tools.browser_tool.os.kill") as terminate_pid,
+            patch("tools.browser_tool.shutil.rmtree") as remove_socket,
+        ):
+            browser_tool.cleanup_browser("attached-task")
+        assert "attached-task" not in browser_tool._active_sessions
+        assert "attached-task" not in browser_tool._session_last_activity
+        assert "other-task" in browser_tool._active_sessions
+        stop_record.assert_called_once_with("attached-task")
+        cli.assert_not_called()
+        terminate_pid.assert_not_called()
+        remove_socket.assert_not_called()
+
+    def test_attached_cleanup_on_inactivity_and_exit_is_non_destructive(self):
+        """Both caller pathways use cleanup_browser; neither may kill CDP owner."""
+        browser_tool = self.browser_tool
+        browser_tool._active_sessions["attached-task"] = {
+            "session_name": "cdp_12345678",
+            "bb_session_id": None,
+            "cdp_url": "ws://127.0.0.1:9223/devtools/browser/test",
+            "features": {"cdp_override": True},
+        }
+        browser_tool._session_last_activity["attached-task"] = 1.0
+        with (
+            patch("tools.browser_tool._maybe_stop_recording"),
+            patch("tools.browser_tool._run_browser_command") as cli,
+            patch("tools.browser_tool.os.kill") as terminate_pid,
+            patch("tools.browser_tool.shutil.rmtree") as remove_socket,
+            patch("tools.browser_tool.time.time", return_value=10000.0),
+        ):
+            browser_tool._cleanup_inactive_browser_sessions()
+        assert "attached-task" not in browser_tool._active_sessions
+        cli.assert_not_called()
+        terminate_pid.assert_not_called()
+        remove_socket.assert_not_called()
+
+    def test_local_cleanup_retains_existing_close_semantics(self):
+        """Local Hermes-owned browser keeps the current graceful CLI close."""
+        browser_tool = self.browser_tool
+        browser_tool._active_sessions["local-task"] = {
+            "session_name": "h_local",
+            "bb_session_id": None,
+            "cdp_url": None,
+            "features": {"local": True},
+        }
+        with (
+            patch("tools.browser_tool._maybe_stop_recording"),
+            patch("tools.browser_tool._run_browser_command", return_value={"success": True}) as cli,
+            patch("tools.browser_tool.os.path.exists", return_value=False),
+        ):
+            browser_tool.cleanup_browser("local-task")
+        cli.assert_called_once_with("local-task", "close", [], timeout=10)
+        assert "local-task" not in browser_tool._active_sessions
