@@ -55,24 +55,26 @@ except ImportError:
 
 
 def _security_scan_skill(skill_dir: Path) -> Optional[str]:
-    """Scan a skill directory after write. Returns error string if blocked, else None."""
+    """Fail closed on denied, unresolved or failed agent-created skill scans."""
     if not _GUARD_AVAILABLE:
-        return None
+        return "Security scanner unavailable; refusing to install an unscanned skill."
     try:
         result = scan_skill(skill_dir, source="agent-created")
         allowed, reason = should_allow_install(result)
-        if allowed is False:
-            report = format_scan_report(result)
-            return f"Security scan blocked this skill ({reason}):\n{report}"
-        if allowed is None:
-            # "ask" — allow but include the warning so the user sees the findings
-            report = format_scan_report(result)
-            logger.warning("Agent-created skill has security findings: %s", reason)
-            # Don't block — return None to allow, but log the warning
+        if allowed is True:
             return None
-    except Exception as e:
-        logger.warning("Security scan failed for %s: %s", skill_dir, e, exc_info=True)
-    return None
+        report = format_scan_report(result)
+        if allowed is None:
+            return (
+                f"Security scan requires explicit user review ({reason}). "
+                "The skill was not installed; review findings and use the "
+                "user-controlled CLI installation/override path if authorized:\n"
+                f"{report}"
+            )
+        return f"Security scan blocked this skill ({reason}):\n{report}"
+    except Exception as exc:
+        logger.warning("Security scan failed for %s", skill_dir, exc_info=True)
+        return f"Security scan failed; refusing unverified skill: {type(exc).__name__}"
 
 import yaml
 
