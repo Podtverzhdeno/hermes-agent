@@ -282,3 +282,141 @@ Offline тест `test_100_sources_concurrently_ingested_and_partial_outage_is_c
 ## 15. Журнал контрольных проверок
 
 Сводка доказательств, известных рисков, устранённых дефектов и оставшихся блокеров — [`GPT_COMPANION_QA_LOG_20261122.md`](./GPT_COMPANION_QA_LOG_20261122.md). При будущих исправлениях агент обязан обновлять запись и указывать exact SHA, а не только количество тестов.
+
+---
+
+## 16. Causal safety hardening — review 2026-11-22 (stacked on PR #12)
+
+**Статус:** реализовано в изолированной ветке `audit/gpt-companion-causal-failclosed-v2-20261122-a13`; тесты добавлены, результаты CI на точном HEAD должны быть проверены отдельно. Это **не** утверждение о production-интеграции. Базовая ветка: PR #12, head на момент ветвления `586a3e5436289f9c56ad69eefb53893ed11eff67`. В main реализации GPT Companion по-прежнему нет до одобренного merge.
+
+### 14.1 Обнаруженные причинные ошибки
+
+**C-01 / P0 / confirmed by source:** `EventJournal.assess` выбирал `MAX(attempt)` и анализировал внешние эффекты только последней попытки. Сценарий: A#1 зарезервировал GitHub write, потерял ответ, A#2 начал новую попытку; диагностический ответ A#2 мог стать `RECENT_TELEMETRY` при незакрытой операции A#1. Это не обязательно означает реальный повтор записи (модуль read-only), но создаёт опасную операционную иллюзию. **Fix:** сканирование неразрешённых резервирований *предыдущих* попыток, ключ `(run_id, attempt, action_id)`, результат `unresolved_effects_prior_attempts`, приоритет `NEEDS_RECONCILIATION` над видимой активностью новой попытки. Подтверждение новой попытки **не** закрывает старую.
+
+**C-02 / P0 / confirmed by source:** `tool.effect_acknowledged` от другого `source` снимал pending effect, хотя `sequence` двух эмиттеров несопоставим. В отсутствие доверенной причинной связи нельзя доказать, что подтверждение относится к зарезервированному эффекту, даже при совпадении `action_id`. **Fix:** cross-source acknowledgement остаётся `NEEDS_RECONCILIATION`; `approval.resolved` от другого эмиттера не снимает `pending_approvals` и помечает trace неполной. Это консервативная мера V1: будущая доверенная связь будет валидироваться у Autopilot ledger, а не угадываться по metadata.
+
+**C-03 / P1 / confirmed by source:** при запоздавшей доставке двух terminal-событий одного источника `last_terminal` выбирался по sequence, но `reason_code` — по обратному *порядку получения*. Причина могла относиться к **другому** отказу. **Fix:** причина и тип терминального события берутся из одной записи с максимальным source-local sequence.
+
+**C-04 / P1 / detected concurrently in base PR #12:** системные часы могут идти назад. Обновлённый код базового PR #12 уже реализовал `clock_reversed`, `CLOCK_SKEW_DETECTED` и `CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC` (ADR-020). При интеграции обнаружено несовпадение нового названия и тестового контракта; наш дублирующий обработчик удалён, тесты приведены к базовому контракту. Возраст по-прежнему ограничен нулём, но diagnosis явно сигнализирует об аномалии времени.
+
+**Критические ограничения fixes:** диагностические ack/cross-source события остаются **неаутентифицированными**. Даже ack того же источника не равен подтверждённому receipt провайдера. `assess` не вызывает внешние инструменты. Untrusted telemetry не даёт права менять status в task ledger. Неподписанный hash-chain журнала не защищает от удаления всей базы или хвоста цепочки. Прямой вызов `assess()` не выполняет автоматическую глобальную `verify_chain()`; требование к потребителю — сначала integrity gate (как в CLI), либо будущий API возвращает explicit integrity state.
+
+### 14.2 Инварианты, обязательные для всех десятков агентов
+
+| Инвариант | Триггер сбоя | Запрещённое действие | Правильный выход |
+| --- | --- | --- | --- |
+| I-01: неизвестный эффект переживает смену attempt | process crash после reservation | blind retry, другой agent пишет повторно | read-back provider, ledger reconcile |
+| I-02: actor identity ≠ строка `source` | spoofed source / несколько вкладок | доверять approval по event metadata | authenticated emitter principal + scoped grant |
+| I-03: cross-source события не имеют локального total-order | ack из второго потока | считать `sequence=20` «после» seq другого агента | связать через доверенный `action_id` + provider receipt |
+| I-04: событие task terminal ≠ verified final outcome | GPT отвечает «готово» | закрыть DAG / merge | exact SHA + независимые CI/artifact checks |
+| I-05: поздний ack не обновляет живость worker | queued outbox replay | выдавать worker свежий lease | проверка supervisor, актуальный fence |
+| I-06: часы наблюдателя могут ошибаться | NTP rollback/suspend | сбросить таймер до нуля без алерта | CLOCK_SKEW_DETECTED + monotonic runtime probes |
+| I-07: lease/fence проверяют перед *каждым* write | lease expired / duplicate owner | cherry-pick/commit старого worker | re-authorize на current resource token |
+| I-08: неразрешённый эффект блокирует повтор во всех дочерних задачах | retry fan-out | независимый повтор операции детьми | блокировка на provider action/resource id |
+| I-09: телеметрия не должна включать содержимое переписки | browser/plugin ingress | хранить prompts/cookies/tool payloads | allowlisted metadata + redaction before ingress |
+| I-10: нет репорта без версии доказательств | CI от старого HEAD | заявить green | exact SHA+run id+commit+timestamp |
+
+### 14.3 Слои причинности / внедрение event contract v2 (не реализовано)
+
+Для интеграционного v2 proposal (не расширять v1 без миграции): `project_id,task_id,run_id,attempt,agent_instance_id,lease_id,fence,resource_key,stage,action_id,provider_request_id,provider_response_id,trace_id,span_id,parent_span_id,source_seq,emitter_principal,observed_at,received_at,evidence_ref,schema_version`. Каждое поле классифицируется по privacy/security, происхождению и доверенности. Следует отделить **наблюдаемые**, **подписанные провайдером** и **утверждённые control-plane** значения; избегать «универсального» dict, который позволяет агентовским полям переопределять системные. В v1 сохранять metadata-only schema.
+
+Допустимые переходы для *внешних эффектов* в доверенном ledger: `PROPOSED → APPROVED → RESERVED → DISPATCHED → CONFIRMED`, либо `UNKNOWN_OUTCOME → RECONCILING → {CONFIRMED,NOT_EXECUTED,REQUIRES_HUMAN}`. Переход `DISPATCHED → NOT_EXECUTED` запрещён только на основании timeout или отсутствия SSE final. Точки commit должны соответствовать **долговечным** транзакциям; `event.received` обозначает лишь фиксацию факта наблюдения.
+
+Для GPT API stream: `stream.connected`, `response.created`, `response.in_progress`, `response.completed/failed`, `stream.disconnected` не эквивалентны `tool.effect.confirmed`. При наличии provider ID сначала retrieval/reconciliation; 429/5xx политики и Retry-After относятся к **новым безопасным** calls, а не к автоматически повторяемому write.
+
+### 14.4 Единоличная зона владения при 12 конкурирующих PR
+
+**GitHub-проверка на 2026-11-22 10:39 UTC:** в форке были открыты PR #1–#12. Перекрытия из `compare main...head` подтверждают, что `gateway/platforms/api_server.py` меняют по меньшей мере PR #4/#5/#6; PR #11 является дочерним к ветке API bridge. PR #9 реализует отдельный `gpt_bridge`, PR #12 — отдельный `gpt_companion`. На этом этапе нельзя автоматически выбирать одного из них как canonical bridge.
+
+| Контракт / файл | Кандидаты | Владелец решения до merge | Merge gate |
+| --- | --- | --- | --- |
+| `gateway/platforms/api_server.py` | #4, #5, #6, #11 (наследует #4) | один назначенный API интегратор | consolidated diff + request/stream backward compatibility |
+| `autopilot/*` | #1, #10 (наследует #1) | Autopilot owner | ledger invariants and fence tests |
+| `gpt_bridge/*` | #9, API bridge PRs | GPT Bridge integrator | выбрать один contract path, проверить trace + SSE preflight |
+| `gpt_companion/*` | #12, этот stacked audit | GPT Companion owner + независимый reviewer | 100% safety regressions + wheel integration |
+| `pyproject.toml` | #1, #2, #9, #12 | packaging integrator | preserve all necessary package includes without duplicate imports |
+| `docs/sdd/*` | #5–#9, #10, #12, audit | documentation owner | сохранить ADR и incident findings, не брать чужой документ целиком |
+| `acp_adapter/*` | #3 | ACP owner | no permission/cache leakage across sessions |
+
+Интеграция должна использовать **один** manifest с immutable candidate SHA, base SHA, author, file ownership, dependencies, verification status, approved changes, conflict decisions, rollback refs. Никакой агент не изменяет чужой PR head ради «быстрого исправления» без explicit handoff. Автоматическое объединение всех 12 PR запрещено.
+
+### 14.5 Экспертная оценка следующих вложений (не эмпирический benchmark)
+
+Шкала по критериям 1–5: безопасность 35%, предотвращение неясных остановок 30%, реализуемость 15%, операционная стоимость 10%, интеграционная совместимость 10%; итог = 20× взвешенная сумма. `N/A` в метриках означает «не измерялось», а не нулевую деградацию.
+
+| Идея | Безоп. | Диагност. | Реализ. | Цена | Совм. | Оценка /100 | Решение |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Cross-attempt unknown-effect fence | 5 | 5 | 5 | 4 | 5 | 98 | P0; implemented in stacked audit |
+| Authenticated receipts + single effect ledger | 5 | 5 | 3 | 3 | 4 | 88 | P0; blocked on adapter & owner contract |
+| Causal trace graph + stage-specific stop codes | 5 | 5 | 3 | 3 | 4 | 88 | P1; design first, no silent retry |
+| Durable outbox + at-least-once dedup | 5 | 5 | 3 | 2 | 4 | 86 | P1; implement before 30-agent scale |
+| Global quotas + fair admission + circuit breakers | 4 | 4 | 4 | 3 | 4 | 78 | P1 |
+| Full browser DOM autopilot | 1 | 2 | 2 | 1 | 1 | 29 | Reject |
+
+Обязательное сравнение после реализации: p50/p95/p99 ingest latency, WAL SQLITE_BUSY rate, unknown effects per 1000 attempts, stale-fence write attempts blocked, mean time to explain stop, time to reconcile ack-loss, false-success incidents, redaction leaks (zero tolerated). Отчёт с реальными samples по нагрузкам 1/10/30/100 workers и repeatable fixtures. Нельзя делать вывод о производительности по unit tests.
+
+### 14.6 Fault injection / независимая проверка
+
+Тестовый контракт в `tests/gpt_companion/test_causal_safety_regressions.py` включает (a) prior attempt outstanding write, (b) same action id reused by newer attempt, (c) late but causally ordered ack on original attempt, (d) cross-emitter effect ack on active attempt, (e) cross-emitter effect ack on old attempt, (f) cross-emitter approval reply, (g) late terminal reason mix-up, (h) NTP wall clock rollback, (i) latest failure with clean history. **Факт наличия теста не равен прохождению теста.**
+
+Предстоят независимые сценарии: kill после отправки GitHub POST до ответа; webhook duplicate/tamper; replay старого worker после потерянного lease; backlog > local quota; полный диск; SIGKILL на SQLite COMMIT и restart; беспорядок трёх источников; bounded memory при 100k events; corrupted/tail-truncated journal; восстановление резервной копии; обновление upstream Hermes; wheel на Python 3.11; Windows supervisor/suspend; safe cancellation. Для каждого сценария обязателен observed state, expected state, evidence, pass/fail, verifier identity.
+
+**Release blocking:** пока нет signed provider receipts, работающего локального MCP, exact-SHA CI и независимого ревью, разрешены только документация и offline read-only diagnostics. Ниже стоящий monitor не вправе переводить задачу в `SUCCEEDED`, делать повторный external write, либо переключать на auto-repair.
+
+### 14.7 ADR registry
+
+- **ADR-024 Accepted (in branch):** Сохранять нерешённые эффекты предыдущих attempts в run assessment; нельзя скрывать их «здоровой» следующей попыткой.
+- **ADR-025 Accepted (in branch):** Cross-emitter ack/approval без доверенной цепи причинности не закрывает операцию или approval; консервативная reconciliation.
+- **ADR-026 Accepted (in branch):** Terminal `reason_code` привязан к самому source-local latest terminal, а не к порядку доставки.
+- **ADR-027 Superseded by base ADR-020:** проверяем защиту от rollback часов, но не создаём новую конкурирующую реализацию или имя status; отталкиваемся от `CLOCK_SKEW_DETECTED`.
+- **ADR-028 Proposed:** central integration manifest и owner-file lock для параллельных PR; merge только после cut-over/canary и exact-SHA проверки.
+- **ADR-029 Proposed:** для производственного трассирования использовать W3C Trace Context и version-pinned OpenTelemetry GenAI semconv без секретов в baggage; semantic version binding проверять в CI.
+
+**Первичные источники для решений:** [W3C Trace Context](https://www.w3.org/TR/trace-context/); [OpenTelemetry GenAI SemConv](https://opentelemetry.io/docs/specs/semconv/); [OTel baggage security](https://opentelemetry.io/docs/concepts/signals/baggage/); [SQLite WAL](https://www.sqlite.org/wal.html); [OpenAI sessions](https://developers.openai.com/api/docs/guides/agents-api/sessions); [OpenAI webhooks](https://developers.openai.com/api/docs/guides/webhooks). Их рекомендации не подменяют проверки реально установленного Hermes/ChatGPT-клиента.
+
+**Integration update (2026-11-22):** после четырёх новых коммитов PR #12 исходная ветка устарела; аудит перенесён на `d522250470796cd24db31953b055c09414ddddf4` без удаления его per-worker liveness logic. В этом разделе оценки подтверждены по source review; тесты и внешняя CI ещё требуют проверки.
+
+**Rebase for ongoing parallel work:** latest PR #12 base at this audit is `6a5ef0f4d27ce6d6d309ed20fe9335102eed9aab`; reviewed and overlaid causal fixes preserving additional base-code changes. Compare exact SHA again before merging.
+
+**Арифметический QA audit:** матрица перепроверена по указанным весам 35/30/15/10/10; исправлены пять первоначальных ошибок суммирования (89→88, 89→88, 87→86, 79→78, 28→29). Оценки остаются экспертными, не экспериментально измеренными.
+
+**Cross-agent SDD collision QA (2026-11-22):** обнаружена коллизия ADR-016..020 с новыми ADR PR #12; дополнения перенумерованы в ADR-024..029, а не переопределены. CI 53 passed/1 failed на Python 3.11/3.13 выявил конфликт имени clock state с новым тестом PR #12; исправлен код, синхронизированы контракт и regression cases. Повторное CI обязательно для нового HEAD.
+
+### ADR-030: Fingerprint of unknown effects across attempts (P0, implemented in stacked audit)
+
+Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolved_effects_prior_attempts` from the event diagnosis. If an already incidented run gains another unresolved external write from a past attempt, the state string `NEEDS_RECONCILIATION` need not change and the watcher could silently suppress that transition. Fix: include stable sorted prior-effect metadata in the fingerprint. Test `test_status_watcher_records_second_prior_attempt_effect` checks that two effect reservations with unchanged overall status produce two durable status transitions. No network, no effect dispatch. This change is stacked on PR #12 and must not be deployed without the PR #23 journal schema change.
+
+
+### ADR-031: Cross-attempt sequence holes remain visible (P0, implemented in stacked audit; offline CI pending)
+
+**Finding C-05 / source-reviewed:** `EventJournal.assess` originally tested `missing_sequences` **only for the highest numbered attempt**. If an old attempt contained `source:sequence` values 1 and 3 (with event 2 lost) and a new attempt started, the new worker could look healthy even though the old gap might conceal a reservation, failed write or terminal report. Merely incrementing `attempt` must not erase causal uncertainty.
+
+**Fix:** when selecting the latest attempt, run a grouped SQL query on all *earlier* `(attempt, source)` streams and calculate `sum(MAX(sequence)-COUNT(*))`, relying on unique `(source,run_id,attempt,sequence)` index invariant. New additive diagnostic field: `missing_sequences_prior_attempts`. If nonzero, return `TRACE_INCOMPLETE` and `FETCH_MISSING_EVENTS`, except a currently known unresolved effect retains higher-priority `NEEDS_RECONCILIATION`/read-back. An old event that arrives later may repair the gap but does not refresh the newest worker's heartbeat. Include the prior gap counter in `StatusWatch` transition fingerprint so partial gap repair is visible even when `TRACE_INCOMPLETE` remains unchanged.
+
+**Tests introduced:** `test_missing_sequence_in_earlier_attempt_does_not_disappear`, `test_prior_missing_event_has_lower_priority_than_unresolved_write`, `test_watcher_tracks_partial_repair_of_prior_attempt_sequence_gap`. They assert multi-attempt state, priority and durable status transitions after late backfill. Actual passing result requires the GitHub Actions jobs on exact head SHA; creating test code is not execution evidence.
+
+**Scale caveat:** grouped SQL scan grows with prior attempt history and is safe for an offline inspector but unbenchmarked for 100-worker high-volume polling. Before deploying a continuous observer, measure query p95 and DB lock rate under 10/30/100 worker replay; consider a materialized per-stream frontier/holes table with correctness-preserving recovery if needed. Do not optimize by ignoring prior gaps.
+
+**Interoperability reference:** see [Hermes Browser Extension compatibility audit](./HERMES_BROWSER_EXTENSION_INTEROP_2026-11-22.md). The externally maintained extension v0.4.1 claims Hermes Agent >=0.22 support, while this fork's main declares v0.6.0. Until an installed runtime/version handshake is verified, local browser/ChatGPT integration remains disabled and no live monitoring is claimed.
+
+
+### ADR-032: Conflicting duplicate effect reports never discharge a write (P0, implemented in stacked audit)
+
+**Finding C-06 / source-reviewed:** the initial journal only kept the *last* reservation and *last* acknowledgement for an `action_id`. Multiple acknowledgements for the same action could be contradictory, but if the last acknowledgement matched the last reserving emitter, `reserved` became empty and the incident was reduced to generic `TRACE_INCOMPLETE`, losing the explicit unresolved external effect. A duplicated reservation from a different source could create the same ambiguity. In a many-agent workflow this obscures the need for direct read-back and encourages accidental retry.
+
+**Fix:** maintain an `effect_conflicts` set for duplicate reservations / resolutions in the same attempt; never let the last arrival silently resolve an ambiguous action. The action remains in `unresolved_effects`, and state is immediately `NEEDS_RECONCILIATION`. This is *diagnostic conservatism*, not a claim of an actual duplicate external API effect. The system must eventually distinguish delivery duplicates from true duplicate executions through authenticated provider receipts and a trusted action ledger.
+
+**Tests:** `test_duplicate_ack_order_must_not_mask_uncertain_effect` permutes three source-local and cross-source messages through all six delivery orders, `test_duplicate_reservations_remain_unresolved_even_after_ack` covers mixed reservations, `test_single_same_source_resolution_is_not_false_duplicate` prevents unnecessary alarms on a normal same-source ack. The results require exact SHA CI evidence before release.
+
+**Scale and trust:** The extra Python set is proportional only to distinct conflict actions in the selected attempt; historical attempt query cost is discussed in ADR-031. No browser/GPT content is recorded. Even a perfect telemetry record is not a trusted third-party effect confirmation.
+
+
+### ADR-033: Worker stop is not the final task outcome (P0, implemented in stacked audit)
+
+**Finding C-07 / confirmed by source:** the diagnostic selected the highest-sequence event among `run.reported_completed`, `run.reported_failed` and `worker.stopped`. A normal `worker.stopped` after an explicit failure could overwrite the useful failure signal and `reason_code` with generic `STOPPED_UNCONFIRMED`. It could likewise hide that a purported completion still required independent artifact verification. This is especially damaging when dozens of agents hand off context and the operator asks **why** a run stopped.
+
+**Fix:** distinguish *task report* (latest source-local `run.reported_completed` or `run.reported_failed`) from *worker process lifecycle* (`worker.stopped`). Prefer explicit task report if present; otherwise preserve `STOPPED_UNCONFIRMED`. Do not turn a reported completion into verified success. Existing contradictory report checks still apply, so `failed→completed` in one attempt remains `TRACE_INCOMPLETE`, not success.
+
+**Offline regressions added:** `test_worker_stopped_does_not_erase_reported_failure_reason`, `test_worker_stopped_does_not_erase_completed_verification_gate` and `test_worker_stopped_without_run_report_stays_unconfirmed`. Exact SHA CI required before merge.
+
+**V2 contract:** task outcome and worker lifecycle should become separately structured fields (`reported_task_state`, `worker_process_state`) and not compete for a single last-terminal slot. A trusted verifier alone may promote a task to success; worker exit codes and model text are evidence pointers, not approval.

@@ -224,6 +224,17 @@ class EventJournal:
             rows = db.execute("""SELECT event_json,received_at,sequence,source
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
+            # Keep outstanding writes from every earlier attempt visible when a
+            # replacement worker starts; never infer success from attempt age.
+            prior_effect_rows = db.execute("""SELECT attempt,source,sequence,kind,event_json
+                FROM events WHERE run_id=? AND attempt<? AND kind IN
+                ('tool.effect_reserved','tool.effect_acknowledged','tool.effect_not_executed')
+                ORDER BY position""", (run_id, a)).fetchall()
+            # A missing event in an older attempt can conceal a reservation
+            # or failed stop. Advancing to a new attempt does not repair it.
+            prior_seq_counts = db.execute("""SELECT attempt,source,MAX(sequence) AS high,
+                COUNT(*) AS seen FROM events WHERE run_id=? AND attempt<?
+                GROUP BY attempt,source""", (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Server receipt timestamps can jump backward after NTP/time changes.
         # In that case time-based liveness diagnosis is unreliable.
@@ -276,6 +287,9 @@ class EventJournal:
         missing = sum(max(sequences) - len(sequences) for sequences in by_source.values())
         reserved_events, effect_resolutions = {}, {}
         approval_requests, approval_resolutions = {}, {}
+        # Multiple non-identical reports for one action are *not* an ack.
+        # Retain them for reconciliation irrespective of arrival order.
+        effect_conflicts: set[str] = set()
         contradictory = False
         for e, _ in events:
             kind, action = e["kind"], e.get("action_id")
@@ -283,17 +297,48 @@ class EventJournal:
             if kind == "tool.effect_reserved":
                 if action in reserved_events:
                     contradictory = True
+                    effect_conflicts.add(action)
                 reserved_events[action] = origin
             elif kind in ("tool.effect_acknowledged", "tool.effect_not_executed"):
                 if action in effect_resolutions:
                     contradictory = True
+                    effect_conflicts.add(action)
                 effect_resolutions[action] = origin
             elif kind == "approval.required":
                 approval_requests[action] = origin
             elif kind == "approval.resolved":
                 approval_resolutions[action] = origin
-        reserved = set(reserved_events) - set(effect_resolutions)
+        # Different emitters have no shared sequence clock. A cross-source
+        # ack is a hint requiring reconciliation, not a causal write receipt.
+        cross_source_effects = {
+            action for action, resolution in effect_resolutions.items()
+            if action in reserved_events and reserved_events[action][0] != resolution[0]
+        }
+        reserved = ((set(reserved_events) - set(effect_resolutions))
+                    | cross_source_effects | effect_conflicts)
         pending_approval = set(approval_requests) - set(approval_resolutions)
+        for action, resolution in approval_resolutions.items():
+            if action in approval_requests and approval_requests[action][0] != resolution[0]:
+                pending_approval.add(action)
+                contradictory = True
+        # The telemetry is untrusted. Only source-local causal ordering can
+        # discharge an observed reservation even provisionally; real effect
+        # completion still needs independently authenticated ledger evidence.
+        prior_reserved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        prior_resolved: dict[tuple[int, str], list[tuple[str, int]]] = {}
+        for row in prior_effect_rows:
+            event = json.loads(row["event_json"])
+            key = (row["attempt"], event["action_id"])
+            target = prior_reserved if event["kind"] == "tool.effect_reserved" else prior_resolved
+            target.setdefault(key, []).append((row["source"], row["sequence"]))
+        missing_prior = sum(int(r["high"]) - int(r["seen"]) for r in prior_seq_counts)
+        prior_unresolved = []
+        for (past_attempt, action_id), reservations in sorted(prior_reserved.items()):
+            resolutions = prior_resolved.get((past_attempt, action_id), [])
+            if (len(reservations) != 1 or len(resolutions) != 1
+                    or resolutions[0][0] != reservations[0][0]
+                    or resolutions[0][1] <= reservations[0][1]):
+                prior_unresolved.append({"attempt": past_attempt, "action_id": action_id})
         for resolution, request in ((effect_resolutions, reserved_events),
                                     (approval_resolutions, approval_requests)):
             for action, resolved_by in resolution.items():
@@ -328,17 +373,21 @@ class EventJournal:
                     and e["kind"] not in ("worker.stopped", "run.reported_completed",
                                            "run.reported_failed")):
                 contradictory = True
-        last_terminal = (max(terminal_events, key=lambda e: e["sequence"])["kind"]
-                         if terminal_events else None)
-        reason = next((e["reason_code"] for e in reversed(terminal_events)
-                       if "reason_code" in e), "UNKNOWN")
-        if reserved and live_age >= liveness_timeout:
+        # A routine worker.stopped after a run report does not supersede
+        # reported task outcome. Treat it as process lifecycle metadata;
+        # contradictory run reports still require trace reconciliation.
+        report_events = [e for e in terminal_events if e["kind"].startswith("run.reported_")]
+        terminal = max(report_events or terminal_events, key=lambda e: e["sequence"]) if terminal_events else None
+        last_terminal = terminal["kind"] if terminal else None
+        reason = terminal.get("reason_code", "UNKNOWN") if terminal else "UNKNOWN"
+        if (prior_unresolved or cross_source_effects or effect_conflicts
+                or (reserved and live_age >= liveness_timeout)):
             state, next_action = "NEEDS_RECONCILIATION", "RECONCILE_EFFECT_RECEIPT"
         elif reserved:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
         elif clock_reversed:
             state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
-        elif contradictory or missing:
+        elif contradictory or missing or missing_prior:
             state, next_action = "TRACE_INCOMPLETE", "FETCH_MISSING_EVENTS"
         elif pending_approval:
             state, next_action = "WAITING_APPROVAL", "ASK_AUTHORIZED_REVIEWER"
@@ -361,6 +410,8 @@ class EventJournal:
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
+                "missing_sequences_prior_attempts": missing_prior,
+                "unresolved_effects_prior_attempts": prior_unresolved,
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
