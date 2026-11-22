@@ -1,0 +1,285 @@
+{
+  "schema": "hermes.gpt_companion.causal_acceptance.v1",
+  "status": "proposed_shared_regression_inputs_not_production_claim",
+  "source_branches": [
+    "feat/gpt-companion-event-observer-sdd-20261122",
+    "fix/gpt-companion-terminal-causality-20261122-r01",
+    "audit/gpt-companion-causal-failclosed-v2-20261122-a13"
+  ],
+  "notes": [
+    "Each scenario gets fresh SQLite EventJournal, fixed test clock with receipt stamps in source sequence order, and no external side effects.",
+    "Expected state names are diagnostic projections, never authorization for task completion or retry.",
+    "The telemetry journal cannot authenticate effect success; these fixtures test classification only.",
+    "Test runner must reject unknown reason enums and identity fields, and bind expected outcome to code SHA."
+  ],
+  "cases": [
+    {
+      "scenario": "cross_source_prior_ack",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_prior_ack_e1",
+          "source": "workerA",
+          "run_id": "cross_source_prior_ack",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "tool.effect_reserved",
+          "action_id": "effect1"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_prior_ack_e2",
+          "source": "workerB",
+          "run_id": "cross_source_prior_ack",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "tool.effect_acknowledged",
+          "action_id": "effect1"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_prior_ack_e3",
+          "source": "workerA",
+          "run_id": "cross_source_prior_ack",
+          "attempt": 2,
+          "sequence": 2,
+          "kind": "worker.started"
+        }
+      ],
+      "expected": {
+        "state": "NEEDS_RECONCILIATION",
+        "reason": "Same action id and an unrelated source ACK cannot prove that the original external effect completed."
+      }
+    },
+    {
+      "scenario": "failure_then_cleanup",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "failure_then_cleanup_e1",
+          "source": "workerA",
+          "run_id": "failure_then_cleanup",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "failure_then_cleanup_e2",
+          "source": "workerA",
+          "run_id": "failure_then_cleanup",
+          "attempt": 1,
+          "sequence": 2,
+          "kind": "run.reported_failed",
+          "reason_code": "UPSTREAM_TIMEOUT"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "failure_then_cleanup_e3",
+          "source": "workerA",
+          "run_id": "failure_then_cleanup",
+          "attempt": 1,
+          "sequence": 3,
+          "kind": "worker.stopped"
+        }
+      ],
+      "expected": {
+        "state": "REPORTED_FAILED",
+        "reported_reason_code": "UPSTREAM_TIMEOUT",
+        "reason": "Lifecycle cleanup is not the latest task outcome; failure reason must survive."
+      }
+    },
+    {
+      "scenario": "conflicting_outcomes",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "conflicting_outcomes_e1",
+          "source": "workerA",
+          "run_id": "conflicting_outcomes",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "conflicting_outcomes_e2",
+          "source": "workerA",
+          "run_id": "conflicting_outcomes",
+          "attempt": 1,
+          "sequence": 2,
+          "kind": "run.reported_completed"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "conflicting_outcomes_e3",
+          "source": "workerA",
+          "run_id": "conflicting_outcomes",
+          "attempt": 1,
+          "sequence": 3,
+          "kind": "run.reported_failed",
+          "reason_code": "UPSTREAM_TIMEOUT"
+        }
+      ],
+      "expected": {
+        "state": "TRACE_INCOMPLETE",
+        "next_action": "RECONCILE_CONFLICTING_EVENTS",
+        "reason": "Conflicting completion and failure with no missing sequence is a contradiction, not a gap."
+      }
+    },
+    {
+      "scenario": "prior_attempt_effect_unknown",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "prior_attempt_effect_unknown_e1",
+          "source": "workerA",
+          "run_id": "prior_attempt_effect_unknown",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "tool.effect_reserved",
+          "action_id": "effect2"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "prior_attempt_effect_unknown_e2",
+          "source": "workerA",
+          "run_id": "prior_attempt_effect_unknown",
+          "attempt": 2,
+          "sequence": 2,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "prior_attempt_effect_unknown_e3",
+          "source": "workerA",
+          "run_id": "prior_attempt_effect_unknown",
+          "attempt": 2,
+          "sequence": 3,
+          "kind": "run.reported_completed"
+        }
+      ],
+      "expected": {
+        "state": "NEEDS_RECONCILIATION",
+        "reason": "A new attempt and even a completion report cannot erase an earlier unresolved write."
+      }
+    },
+    {
+      "scenario": "cross_source_current_ack",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_current_ack_e1",
+          "source": "workerA",
+          "run_id": "cross_source_current_ack",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_current_ack_e2",
+          "source": "workerA",
+          "run_id": "cross_source_current_ack",
+          "attempt": 1,
+          "sequence": 2,
+          "kind": "tool.effect_reserved",
+          "action_id": "effect3"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "cross_source_current_ack_e3",
+          "source": "workerB",
+          "run_id": "cross_source_current_ack",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "tool.effect_acknowledged",
+          "action_id": "effect3"
+        }
+      ],
+      "expected": {
+        "state": "NEEDS_RECONCILIATION",
+        "reason": "Different source ACK cannot clear current attempt reservation, even with same action id."
+      }
+    },
+    {
+      "scenario": "same_source_ack_still_unverified",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "same_source_ack_still_unverified_e1",
+          "source": "workerA",
+          "run_id": "same_source_ack_still_unverified",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "same_source_ack_still_unverified_e2",
+          "source": "workerA",
+          "run_id": "same_source_ack_still_unverified",
+          "attempt": 1,
+          "sequence": 2,
+          "kind": "tool.effect_reserved",
+          "action_id": "effect4"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "same_source_ack_still_unverified_e3",
+          "source": "workerA",
+          "run_id": "same_source_ack_still_unverified",
+          "attempt": 1,
+          "sequence": 3,
+          "kind": "tool.effect_acknowledged",
+          "action_id": "effect4"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "same_source_ack_still_unverified_e4",
+          "source": "workerA",
+          "run_id": "same_source_ack_still_unverified",
+          "attempt": 1,
+          "sequence": 4,
+          "kind": "run.reported_completed"
+        }
+      ],
+      "expected": {
+        "state": "AWAITING_VERIFICATION",
+        "forbidden_states": [
+          "SUCCEEDED",
+          "VERIFIED_COMPLETE"
+        ],
+        "reason": "Telemetry ACK + agent completion is only an observation; external effect independent proof is separate."
+      }
+    },
+    {
+      "scenario": "sequence_gap",
+      "events": [
+        {
+          "schema_version": 1,
+          "event_id": "sequence_gap_e1",
+          "source": "workerA",
+          "run_id": "sequence_gap",
+          "attempt": 1,
+          "sequence": 1,
+          "kind": "worker.started"
+        },
+        {
+          "schema_version": 1,
+          "event_id": "sequence_gap_e2",
+          "source": "workerA",
+          "run_id": "sequence_gap",
+          "attempt": 1,
+          "sequence": 3,
+          "kind": "worker.heartbeat"
+        }
+      ],
+      "expected": {
+        "state": "TRACE_INCOMPLETE",
+        "next_action": "FETCH_MISSING_EVENTS",
+        "reason": "Source-local seq=2 missing, not a normal idle state."
+      }
+    }
+  ]
+}
