@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import time
@@ -41,6 +42,21 @@ DETAIL_KEYS = frozenset({"step_id", "action_id", "target_id", "channel_id", "req
                          "reason_code", "http_status", "detach_reason", "attempt"})
 DETACH_REASONS = frozenset({"target_closed", "canceled_by_user", "unknown"})
 MAX_DB_EVENTS_PER_QUERY = 5000
+
+
+def _enable_wal(db: sqlite3.Connection, *, deadline_seconds: float = 10.0) -> None:
+    """Bounded retry of SQLite journal initialization; not an agent/effect retry."""
+    deadline = time.monotonic() + deadline_seconds
+    while True:
+        try:
+            mode = db.execute("PRAGMA journal_mode=WAL").fetchone()
+            if not mode or str(mode[0]).lower() != "wal":
+                raise EventValidationError("journal_mode_not_wal")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.025)
 
 
 class EventValidationError(ValueError):
@@ -137,8 +153,18 @@ class ObservationStore:
             db.close()
 
     def _initialize(self) -> None:
+        # SQLite's default POSIX file mode may be 0644; reject any public
+        # journal location rather than relying on the caller's umask.
+        if self.path.parent.is_symlink() or self.path.is_symlink():
+            raise PermissionError("symlinked observation journal is prohibited")
+        if os.name != "nt" and self.path.parent.stat().st_mode & 0o077:
+            raise PermissionError("observation directory is not owner-only")
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        os.close(fd)
+        if os.name != "nt" and self.path.stat().st_mode & 0o077:
+            raise PermissionError("observation file is not owner-only")
         with self._db() as db:
-            db.execute("PRAGMA journal_mode=WAL")
+            _enable_wal(db)
             db.execute("PRAGMA synchronous=FULL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS observations (
