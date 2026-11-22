@@ -66,5 +66,6 @@
   "failure_modes": [
     "If an abstract is missing or withdrawn, label it explicitly.",
     "Do not convert a preprint into a peer-reviewed claim without evidence."
-  ]
+  ],
+  "skill_git_blob": "80f5056b0d1384218fd7405bbdae8cd62531ad61"
 }

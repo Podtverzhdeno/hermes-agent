@@ -64,5 +64,6 @@
   "failure_modes": [
     "If a test is flaky, isolate or quarantine it without treating a lucky pass as proof.",
     "If the test was not observed red, disclose it rather than inventing a transcript."
-  ]
+  ],
+  "skill_git_blob": "065aee2e213c6d43b83cd6673f923a9baaf989ca"
 }

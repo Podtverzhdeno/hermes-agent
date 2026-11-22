@@ -66,5 +66,6 @@
   "failure_modes": [
     "Do not claim comparable rankings from different task templates or subsets.",
     "On OOM or interrupted runs, mark incomplete counts and resume only verified shards."
-  ]
+  ],
+  "skill_git_blob": "7c8097ee8a6688929bf6c95039a4622e7691f373"
 }

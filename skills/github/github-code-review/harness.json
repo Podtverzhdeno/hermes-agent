@@ -67,5 +67,6 @@
   "failure_modes": [
     "A diff that changed during review requires re-review.",
     "If review publication times out, check remote review IDs before retrying."
-  ]
+  ],
+  "skill_git_blob": "3781ddc21b3063dfa51d1619c48195055cdd2cce"
 }

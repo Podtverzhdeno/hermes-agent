@@ -67,5 +67,6 @@
   "failure_modes": [
     "If reproduction is impossible, label the theory unverified and avoid broad patches.",
     "If the fix changes unrelated behavior, stop and request scoped review."
-  ]
+  ],
+  "skill_git_blob": "e74cb083caeed8c374928ad51004eb8de4795041"
 }

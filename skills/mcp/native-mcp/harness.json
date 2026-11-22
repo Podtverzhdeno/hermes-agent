@@ -81,5 +81,6 @@
   "failure_modes": [
     "If server identity is unknown, do not start or auto-reconnect it.",
     "On repeated auth/transport failures, disable dispatch rather than broadening privileges."
-  ]
+  ],
+  "skill_git_blob": "687fad167c32e3822c2796aa7e7d6d2419243d18"
 }

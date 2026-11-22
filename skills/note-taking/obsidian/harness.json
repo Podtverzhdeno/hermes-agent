@@ -60,5 +60,6 @@
   "failure_modes": [
     "If MCP is disconnected, mark synchronization pending and do not claim an edit.",
     "If the note changed concurrently, stop instead of overwriting another agent."
-  ]
+  ],
+  "skill_git_blob": "08e47fb084a5ea0236e7e3883dbce46afd583d9e"
 }

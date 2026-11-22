@@ -82,5 +82,6 @@
   "failure_modes": [
     "Do not read from .env, git credential store, browser cookies or SSH private keys.",
     "If account access is wrong or denied, stop rather than broadening permissions."
-  ]
+  ],
+  "skill_git_blob": "c07b60539ae52b5583b53cae982e1f2d5f87e45a"
 }

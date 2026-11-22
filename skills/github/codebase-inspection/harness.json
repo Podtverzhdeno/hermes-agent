@@ -51,5 +51,6 @@
   "failure_modes": [
     "If pygount is absent, report a missing dependency and propose a safe install.",
     "If repo changes during scan, mark measurements as non-comparable."
-  ]
+  ],
+  "skill_git_blob": "ef992f333198521a0f0deb11413558d488004d48"
 }

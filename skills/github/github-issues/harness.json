@@ -74,5 +74,6 @@
   "failure_modes": [
     "On duplicate or conflicting issue, stop and show the existing reference.",
     "On API timeout, reconcile the issue state; do not repost blindly."
-  ]
+  ],
+  "skill_git_blob": "71e494c262a126f0215fe8f41eb752554235d3a0"
 }

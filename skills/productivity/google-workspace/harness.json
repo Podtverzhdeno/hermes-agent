@@ -60,5 +60,6 @@
   "failure_modes": [
     "On expired OAuth, request reconnect without extracting credential contents.",
     "On uncertain API response, read back before retrying writes."
-  ]
+  ],
+  "skill_git_blob": "19ae3ab0646e676508d6ca71b017b2e07810f9e4"
 }

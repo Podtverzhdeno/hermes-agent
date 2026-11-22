@@ -66,5 +66,6 @@
   "failure_modes": [
     "If a child disappears, use durable task state; do not infer success from silence.",
     "Do not retry an unknown external side effect or spawn unbounded replacements."
-  ]
+  ],
+  "skill_git_blob": "1bf92d6c38b75a7b0f1e586a0ca3144c94e9a957"
 }

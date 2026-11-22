@@ -82,5 +82,6 @@
   "failure_modes": [
     "Missing required check is blocked, never treated as success.",
     "Unknown push/merge response must be reconciled by remote read-back."
-  ]
+  ],
+  "skill_git_blob": "4c680ea390c9d674f38bef86733c3110b3ff1d0a"
 }
