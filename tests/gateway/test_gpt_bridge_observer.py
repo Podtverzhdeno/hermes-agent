@@ -215,7 +215,8 @@ def test_cli_rejects_duplicate_json_keys_without_raw_leak():
     import json
     raw = json.dumps(event)
     poisoned = raw[:-1] + ', "kind": "task.completed"}'
-    proc = subprocess.run([sys.executable, str(cli)], input=(poisoned + "\n").encode(),
+    data = (poisoned + "\n").encode("utf-8")
+    proc = subprocess.run([sys.executable, str(cli)], input=data,
                           capture_output=True, timeout=10, check=True)
     summary = json.loads(proc.stdout)
     assert summary["outcomes"]["invalid_json"] == 1
