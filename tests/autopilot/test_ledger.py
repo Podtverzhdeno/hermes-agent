@@ -477,3 +477,37 @@ def test_future_schema_is_rejected_without_writes(tmp_path):
     with sqlite3.connect(path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 999
         assert db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall() == []
+
+
+def test_conflicting_trusted_evidence_blocks_success_even_with_other_pass(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.begin_verification(task, "A1", token)
+    ledger.record_evidence(task, "tests", "pytest", "git:abc123",
+                           "passed", "run:pytest", trusted=True)
+    ledger.record_evidence(task, "tests", "independent-review", "git:abc123",
+                           "failed", "run:review", trusted=True)
+    ledger.record_evidence(task, "ci", "github", "git:abc123",
+                           "passed", "run:ci", trusted=True)
+    assert not ledger.finalize(task, "A1", token)
+    assert ledger.get(task)["status"] == "verifying"
+    events = ledger.history(task)
+    assert events[-1]["kind"] == "verification_incomplete"
+    import json
+    assert "tests" in json.loads(events[-1]["detail"])["failed"]
+
+
+def test_terminal_evidence_cannot_be_rewritten_after_success(ctx):
+    ledger, _ = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.begin_verification(task, "A1", token)
+    for name in ("tests", "ci"):
+        ledger.record_evidence(task, name, "trusted", "git:abc123",
+                               "passed", "artifact:" + name, trusted=True)
+    assert ledger.finalize(task, "A1", token)
+    with pytest.raises(LedgerConflict, match="immutable"):
+        ledger.record_evidence(task, "tests", "trusted", "git:abc123",
+                               "failed", "artifact:tamper", trusted=True)
+    assert ledger.get(task)["status"] == "succeeded"
