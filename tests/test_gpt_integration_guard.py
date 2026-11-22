@@ -71,11 +71,12 @@ class IntegrationGateTests(unittest.TestCase):
 
     def test_exact_sha_completed_check(self):
         p = pr(1, 'a')
-        p['checks'] = [{'name': 'test', 'status': 'completed', 'conclusion': 'success',
-                        'head_sha': p['head_sha']}]
+        p['checks'] = [{'name': n, 'status': 'completed', 'conclusion': 'success',
+                        'head_sha': p['head_sha']}
+                       for n in ('test', 'Scan PR for supply chain risks')]
         self.assertEqual(mod.evaluate(snapshot(p))['status'], 'REVIEW')
         p['checks'][0]['head_sha'] = 'b'*40
-        self.assertIn('CI_NOT_GREEN_AT_EXACT_HEAD',
+        self.assertIn('CI_EVIDENCE_SHA_MISMATCH',
                       [x['code'] for x in mod.evaluate(snapshot(p))['issues']])
 
     def test_no_code_overlap_docs_only(self):
@@ -84,6 +85,34 @@ class IntegrationGateTests(unittest.TestCase):
         r = mod.evaluate(snapshot(left, right))
         overlaps = [x for x in r['issues'] if x['code'] == 'PARALLEL_PATH_OVERLAP']
         self.assertEqual(overlaps[0]['severity'], 'medium')
+
+    def test_ci_skipped_optional_publish_does_not_erase_required_green(self):
+        p = pr(1, 'a')
+        p['checks'] = [
+            {'name': n, 'status': 'completed', 'conclusion': 'success',
+             'head_sha': p['head_sha']}
+            for n in ('test', 'Scan PR for supply chain risks')]
+        p['checks'].append({'name': 'build-and-push', 'status': 'completed',
+                            'conclusion': 'skipped', 'head_sha': p['head_sha']})
+        self.assertEqual(mod.evaluate(snapshot(p))['status'], 'REVIEW')
+
+    def test_ci_unrelated_green_check_cannot_replace_required_tests(self):
+        p = pr(1, 'a')
+        p['checks'] = [{'name': 'lint', 'status': 'completed', 'conclusion': 'success',
+                        'head_sha': p['head_sha']}]
+        codes = [x['code'] for x in mod.evaluate(snapshot(p))['issues']]
+        self.assertIn('REQUIRED_CI_MISSING', codes)
+
+    def test_ci_unexpected_skipped_check_is_not_silent_success(self):
+        p = pr(1, 'a')
+        p['checks'] = [
+            {'name': n, 'status': 'completed', 'conclusion': 'success',
+             'head_sha': p['head_sha']}
+            for n in ('test', 'Scan PR for supply chain risks')]
+        p['checks'].append({'name': 'security', 'status': 'completed',
+                            'conclusion': 'skipped', 'head_sha': p['head_sha']})
+        self.assertIn('CI_NOT_GREEN_AT_EXACT_HEAD',
+                      [x['code'] for x in mod.evaluate(snapshot(p))['issues']])
 
     def test_unprotected_main_flagged(self):
         r = mod.evaluate(snapshot(protected=False))
