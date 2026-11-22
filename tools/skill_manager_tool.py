@@ -40,6 +40,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from hermes_constants import get_hermes_home
+from agent.skill_harness import path_within_root
 from typing import Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -209,6 +210,8 @@ def _find_skill(name: str) -> Optional[Dict[str, Any]]:
     if not SKILLS_DIR.exists():
         return None
     for skill_md in SKILLS_DIR.rglob("SKILL.md"):
+        if not path_within_root(skill_md, SKILLS_DIR):
+            continue
         if skill_md.parent.name == name:
             return {"path": skill_md.parent}
     return None
@@ -306,6 +309,8 @@ def _create_skill(name: str, content: str, category: str = None) -> Dict[str, An
 
     # Create the skill directory
     skill_dir = _resolve_skill_dir(name, category)
+    if not path_within_root(skill_dir, SKILLS_DIR):
+        return {"success": False, "error": "Skill directory escapes configured skills root."}
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     # Write SKILL.md atomically
@@ -395,6 +400,8 @@ def _patch_skill(
         if err:
             return {"success": False, "error": err}
         target = skill_dir / file_path
+        if not path_within_root(target, skill_dir):
+            return {"success": False, "error": "Supporting file escapes skill directory."}
     else:
         # Patching SKILL.md
         target = skill_dir / "SKILL.md"
@@ -501,6 +508,8 @@ def _write_file(name: str, file_path: str, file_content: str) -> Dict[str, Any]:
         return {"success": False, "error": f"Skill '{name}' not found. Create it first with action='create'."}
 
     target = existing["path"] / file_path
+    if not path_within_root(target, existing["path"]):
+        return {"success": False, "error": "Supporting file escapes skill directory."}
     target.parent.mkdir(parents=True, exist_ok=True)
     # Back up for rollback
     original_content = target.read_text(encoding="utf-8") if target.exists() else None
@@ -534,6 +543,8 @@ def _remove_file(name: str, file_path: str) -> Dict[str, Any]:
     skill_dir = existing["path"]
 
     target = skill_dir / file_path
+    if not path_within_root(target, skill_dir):
+        return {"success": False, "error": "Supporting file escapes skill directory."}
     if not target.exists():
         # List what's actually there for the model to see
         available = []
