@@ -34,4 +34,4 @@ jobs:
           python -m py_compile gateway/gpt_bridge_event_audit.py
           python -m py_compile tests/gateway/test_gpt_bridge_event_audit.py
       - name: Focused native SSE causal contract regressions
-        run: python -m pytest -q tests/gateway/test_gpt_bridge_event_audit.py --tb=short
+        run: python -m pytest -o addopts="" -q tests/gateway/test_gpt_bridge_event_audit.py --tb=short
