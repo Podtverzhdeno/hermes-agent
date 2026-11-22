@@ -50,8 +50,18 @@ def _severity(path: str) -> str:
 
 def check_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Compute exact-file collisions and per-head CI evidence freshness."""
-    if not isinstance(snapshot, dict) or set(snapshot) != {"base_sha", "pull_requests"}:
-        raise InvalidSnapshot("expected base_sha and pull_requests")
+    allowed_snapshot_keys = {"base_sha", "pull_requests", "required_checks"}
+    if (not isinstance(snapshot, dict) or not {"base_sha", "pull_requests"} <= set(snapshot)
+            or set(snapshot) - allowed_snapshot_keys):
+        raise InvalidSnapshot("expected base_sha, pull_requests and optional required_checks")
+    required_checks = snapshot.get("required_checks", [])
+    if (not isinstance(required_checks, list) or len(required_checks) > 50
+            or len(set(x for x in required_checks if isinstance(x, str))) != len(required_checks)):
+        raise InvalidSnapshot("invalid required_checks policy")
+    for name in required_checks:
+        if not isinstance(name, str) or not (1 <= len(name) <= 80) or any(
+                term in name.lower() for term in ("token", "secret", "authorization")):
+            raise InvalidSnapshot("invalid required check name")
     _check_sha(snapshot["base_sha"])
     prs = snapshot["pull_requests"]
     if not isinstance(prs, list) or len(prs) > MAX_PRS:
@@ -81,6 +91,7 @@ def check_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(checks, list) or len(checks) > 100:
             raise InvalidSnapshot("invalid check list")
         check_statuses = []
+        check_status_by_name = defaultdict(list)
         for c in checks:
             if not isinstance(c, dict) or set(c) != {"name", "head_sha", "status", "conclusion"}:
                 raise InvalidSnapshot("invalid check")
@@ -95,17 +106,32 @@ def check_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "action_required", "startup_failure", "stale",
             }):
                 raise InvalidSnapshot("invalid conclusion")
-            check_statuses.append("fresh_pass" if (
+            state = "fresh_pass" if (
                 c["head_sha"] == pr["head_sha"] and c["status"] == "completed"
                 and c["conclusion"] == "success"
-            ) else "not_a_fresh_pass")
+            ) else "not_a_fresh_pass"
+            check_statuses.append(state)
+            check_status_by_name[c["name"]].append(state)
         for filename in files:
             path_owners[filename].append(n)
+        missing_required = sorted(name for name in required_checks if name not in check_status_by_name)
+        required_ok = bool(required_checks) and not missing_required and all(
+            all(status == "fresh_pass" for status in check_status_by_name[name])
+            for name in required_checks
+        )
+        # A partial GitHub checks export must NEVER label the complete suite green.
+        # required_checks is operator-supplied metadata, not a trusted branch policy.
+        all_observed_green = bool(check_statuses) and all(
+            status == "fresh_pass" for status in check_statuses
+        )
         normalized[n] = {
             "head_sha": pr["head_sha"],
             "draft": pr["draft"],
             "stale_base": pr["base_sha"] != snapshot["base_sha"],
-            "checks_ok": bool(check_statuses) and all(x == "fresh_pass" for x in check_statuses),
+            "checks_ok": required_ok and all_observed_green,
+            "observed_checks_all_success": all_observed_green,
+            "required_checks_missing": missing_required,
+            "required_checks_policy_provided": bool(required_checks),
             "checks_total": len(checks),
             "check_passes": check_statuses.count("fresh_pass"),
             "file_count": len(files),
@@ -168,6 +194,8 @@ def check_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "authority": "read_only_merge_diagnostic",
         "base_sha": snapshot["base_sha"],
         "pr_count": len(prs),
+        "required_checks_policy": "operator_supplied_unverified",
+        "required_checks_count": len(required_checks),
         "overlap_edges": [list(edge) for edge in sorted(edges)],
         "collisions": collisions,
         "pull_requests": {str(n): normalized[n] for n in sorted(normalized)},

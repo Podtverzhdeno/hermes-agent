@@ -25,7 +25,8 @@ class TestPRCollision(unittest.TestCase):
     def test_distinct_files_do_not_mean_automatic_merge(self):
         head = "f" * 40
         checks = [{"name": "test", "head_sha": head, "status": "completed", "conclusion": "success"}]
-        report = check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["a.py"], head=head, checks=checks, draft=False)]})
+        report = check_snapshot({"base_sha": BASE, "pull_requests": [pr(1, ["a.py"], head=head, checks=checks, draft=False)], "required_checks": ["test"]})
+        self.assertTrue(report["pull_requests"]["1"]["checks_ok"])
         self.assertEqual(report["pull_requests"]["1"]["merge_gate"], "manual_review_still_required")
         self.assertFalse(report["automerge_allowed"])
 
@@ -82,6 +83,41 @@ class TestPRCollision(unittest.TestCase):
         rows = [pr(1, ["docs/alpha.md"]), pr(2, ["docs/beta.md"])]
         report = check_snapshot({"base_sha": BASE, "pull_requests": rows})
         self.assertEqual(report["collisions"], [])
+
+
+    def test_supply_scan_alone_cannot_make_suite_green(self):
+        head = "f" * 40
+        checks = [{"name": "Scan PR for supply chain risks", "head_sha": head,
+                   "status": "completed", "conclusion": "success"}]
+        report = check_snapshot({"base_sha": BASE,
+                                 "pull_requests": [pr(1, ["x.py"], head=head, checks=checks, draft=False)]})
+        self.assertTrue(report["pull_requests"]["1"]["observed_checks_all_success"])
+        self.assertFalse(report["pull_requests"]["1"]["checks_ok"])
+        self.assertEqual(report["pull_requests"]["1"]["merge_gate"], "blocked_checks_or_draft")
+
+    def test_required_job_missing_refuses_green_even_if_scan_passes(self):
+        head = "1" * 40
+        checks = [{"name": "Scan PR for supply chain risks", "head_sha": head,
+                   "status": "completed", "conclusion": "success"}]
+        report = check_snapshot({"base_sha": BASE,
+                                 "pull_requests": [pr(1, ["x.py"], head=head, checks=checks, draft=False)],
+                                 "required_checks": ["test"]})
+        self.assertEqual(report["pull_requests"]["1"]["required_checks_missing"], ["test"])
+        self.assertFalse(report["pull_requests"]["1"]["checks_ok"])
+
+    def test_duplicate_same_name_job_failure_invalidates_green(self):
+        head = "1" * 40
+        checks = [{"name": "test", "head_sha": head, "status": "completed", "conclusion": "success"},
+                  {"name": "test", "head_sha": head, "status": "completed", "conclusion": "failure"}]
+        report = check_snapshot({"base_sha": BASE,
+                                 "pull_requests": [pr(1, ["x.py"], head=head, checks=checks, draft=False)],
+                                 "required_checks": ["test"]})
+        self.assertFalse(report["pull_requests"]["1"]["checks_ok"])
+
+    def test_bad_required_policy_fails_closed(self):
+        for invalid in [["test", "test"], [7], "test", ["authorization secret"]]:
+            with self.assertRaises(InvalidSnapshot):
+                check_snapshot({"base_sha": BASE, "pull_requests": [], "required_checks": invalid})
 
     def test_100_agents_overlapping_10_files(self):
         rows = [pr(n, [f"gateway/file_{n%10}.py"]) for n in range(1, 101)]
