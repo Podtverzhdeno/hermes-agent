@@ -69,3 +69,11 @@ A task is not complete because a model says so. Mark unobserved causes as unknow
 - Re-ran local isolated tests: **46/46 PASS**, Python compileall PASS and setuptools `find_packages` includes `gpt_extension`. Three added synthetic multi-agent tests exercised 3,200 separate classifications on 32 parallel read-only threads and 20 state/effect combinations. These are **NOT** 32 live GPT/ChatGPT workers.
 - Four browser integration regression tests reside in `tests/tools/test_browser_cdp_redacted_logs.py`; they need GitHub full-repo CI / real installed dependencies, not counted among 46 isolated tests.
 - Main remains untouched; PR #13 is draft and may not be merged until **exact current HEAD** CI and independent review. Local Workspace MCP still `Session terminated`; no live extension, local host or Obsidian sync verified.
+
+
+### Browser subprocess privacy audit — high-risk residual boundary
+- Reviewed `tools/browser_tool.py:_run_browser_command` and found additional raw CDP exposure in subprocess stderr, non-JSON stdout, command-prefix logs, exception text and structured failed responses.
+- Hardened CDP-specific subprocess error logging and failure returns without changing successful JSON or normal non-CDP diagnostics. Source paths and code reviewed after commit; **eight** browser-log regression tests now exist, but complete full-repo CI is still required.
+- Found residual leak surface: the CLI still receives the **full CDP bearer URL in OS argv**. Logging redaction is partial mitigation, not credential isolation. Documented in SDD section 18 and added version-gated validation of `AGENT_BROWSER_CDP` / `AGENT_BROWSER_PIN_TAB` for a later secure invocation.
+- Version compatibility nuance: Hermes source explicitly avoids `--session` + `--cdp` for observed agent-browser ≥0.13 semantics, while newer vendor documentation supports session tab pinning. Do not switch CLI flags without a per-version E2E test matrix.
+- No live browser process was started or affected by these changes; user-local state remains unobservable.
