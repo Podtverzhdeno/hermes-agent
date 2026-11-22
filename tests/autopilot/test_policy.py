@@ -199,3 +199,35 @@ def test_merge_digest_binds_pr_number_and_exact_head():
     a = intent("github.pr.merge", {"pull_number": 1, "expected_head_sha": "a" * 40})
     b = intent("github.pr.merge", {"pull_number": 1, "expected_head_sha": "b" * 40})
     assert policy.evaluate(a).digest != policy.evaluate(b).digest
+
+
+def test_policy_rejects_cyclic_model_supplied_arguments():
+    circular = []
+    circular.append(circular)
+    with pytest.raises(ValueError, match="cyclic"):
+        intent("github.pr.create", {"data": circular})
+
+
+def test_policy_rejects_excessively_nested_action_arguments():
+    value = {"leaf": "x"}
+    for _ in range(40):
+        value = [value]
+    with pytest.raises(ValueError, match="nesting depth"):
+        intent(arguments={"nested": value})
+
+
+def test_policy_rejects_wide_structure_bomb_before_encoding():
+    with pytest.raises(ValueError, match="too many nodes"):
+        intent(arguments={"nodes": [0] * 10050})
+
+
+def test_policy_rejects_unbounded_integer():
+    with pytest.raises(ValueError, match="integer too large"):
+        intent(arguments={"value": 1 << 513})
+
+
+def test_shared_subtree_without_cycle_is_accepted():
+    subtree = ["hello", "world"]
+    spec = intent(arguments={"first": subtree, "second": subtree})
+    assert spec.arguments["first"] == spec.arguments["second"]
+    assert spec.digest.startswith("sha256:")
