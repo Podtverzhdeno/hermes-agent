@@ -95,6 +95,24 @@ class TestBrowserCleanup:
         assert browser_tool._recording_sessions == set()
         assert browser_tool._cleanup_done is True
 
+    def test_browser_close_reports_external_cdp_session_detached_not_process_closed(self):
+        import json
+
+        browser_tool = self.browser_tool
+        browser_tool._active_sessions["attached-task"] = {
+            "session_name": "cdp_12345678",
+            "bb_session_id": None,
+            "cdp_url": "ws://127.0.0.1:9223/devtools/browser/test",
+            "features": {"cdp_override": True},
+        }
+        with patch("tools.browser_tool.cleanup_browser") as cleanup:
+            response = json.loads(browser_tool.browser_close("attached-task"))
+        cleanup.assert_called_once_with("attached-task")
+        assert response == {
+            "success": True, "closed": True,
+            "browser_process_closed": False, "external_cdp_detached": True,
+        }
+
     def test_cleanup_external_cdp_keeps_owner_browser_and_other_sessions(self):
         """Closing one attached CDP lease must not send Browser.close or kill Edge."""
         browser_tool = self.browser_tool
