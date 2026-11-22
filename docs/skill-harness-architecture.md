@@ -395,3 +395,25 @@ and explicit migration controls.
 Coverage: 34 individual contracts, 83 legacy Skills. The eval fixtures
 are now 34 positives, 34 contrastive negatives and 15 adversarial = 83
 hand-authored cases, NOT measured LLM task results.
+
+### Sensitive messaging and location review — 2026-11-22
+
+AgentMail, Find My and iMessage now each have distinct advisory execution
+contracts and revised SKILL.md. AgentMail's old example pasted a literal
+provider API key into YAML and auto-launched an unpinned npx MCP server;
+the new guide requires managed credentials, reviewed package provenance
+and read-only verification before any account/inbox creation or mail send.
+
+Find My's prior workflow took indefinite screenshots of sensitive
+locations in a predictable /tmp directory; it now requires per-item
+authorization, private temporary capture, limited lifetime, last-seen
+timestamps, deletion and no implicit continuous monitoring.
+
+iMessage distinguishes Apple account and exact recipient identity,
+iMessage vs potentially charged SMS, redacted chat history, send approval
+and uncertain-delivery reconciliation. Background `imsg watch` examples
+are disabled unless separately authorized.
+
+Coverage: 37 individual harness contracts / 117 Skills; 80 legacy.
+Static fixture count: 37 positive + 37 negative + 18 adversarial = 92.
+No live model routing or provider-write tests have been executed.

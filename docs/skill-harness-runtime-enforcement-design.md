@@ -244,10 +244,11 @@ can prove local logic but never prove an external account's real state.
 classification, redacted audit receipts and zero-authority dry-run
 decisions. Compare with existing session behavior and collect bypass cases.
 
-**Phase B — protected twelve:** enable per-call enforcement first for
-twelve newly hardened high-impact Skills (Github Issues, mcporter,
+**Phase B — protected fifteen:** enable per-call enforcement first for
+fifteen newly hardened high-impact Skills (Github Issues, mcporter,
 OCR/Documents, FastMCP, Notion, Hugging Face Hub, Xitter, inference.sh,
-Parallel, 1Password, Himalaya and Webhook Subscriptions). Require manual review for ambiguous effects, no broad "allow all"
+Parallel, 1Password, Himalaya, Webhook Subscriptions, AgentMail,
+Find My and iMessage). Require manual review for ambiguous effects, no broad "allow all"
 fallback.
 
 **Phase C — remaining pilot 22:** add compatible effect adapters; verify
@@ -307,3 +308,21 @@ Likewise `optional-skills/security/1password/SKILL.md` cannot by itself
 prevent `op read` from printing secrets. OS/process isolation and host
 tool-result redaction are required; suppressing a sample in Markdown
 is procedure improvement rather than enforced confidentiality.
+
+## 12. Private communication and location boundary
+
+The bundled AgentMail Skill previously proposed storing its API key in
+plaintext MCP config while running unpinned `npx -y`; this is not a safe
+automatic bootstrap. The revised Skill separates account setup, package
+install, inbox creation and actual SMTP-like send authority. The host still
+must enforce token injection, recipient scope and retry idempotency.
+
+Find My uses screenshot/vision automation and can expose third-party
+locations; local screenshot creation is a privacy-impacting side effect.
+Bounded use, strict file scope, no unintended network upload and
+explicit monitoring expiration must be enforced beyond the guide.
+
+iMessage may send SMS when requested iMessage is unavailable. Provider
+service selection, recipient canonicalization, message content and
+attachment identity must be part of the approval receipt; otherwise
+an 'approved send' can target the wrong transport or person.

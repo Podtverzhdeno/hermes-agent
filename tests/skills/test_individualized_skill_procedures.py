@@ -65,3 +65,31 @@ def test_webhook_routes_need_loopback_signature_replay_and_external_scope():
     assert "replay" in s.lower() and "untrusted" in s.lower()
     assert "do not enable it automatically" in s.lower()
     assert "read back" in s.lower()
+
+
+def test_agentmail_requires_managed_credentials_and_no_auto_sends():
+    s = read_skill("optional-skills/email/agentmail")
+    assert "version: 1.1.0" in s and "harness.yaml" in s
+    assert "Do not paste a real API key" in s
+    assert "npx -y" in s and "separate consented action" in s
+    assert "read-only" in s and "explicit authorization" in s.lower()
+    assert 'AGENTMAIL_API_KEY: "am_your_key_here"' not in s
+    assert 'Create an AgentMail inbox called test-agent' not in s
+
+def test_findmy_one_shot_only_and_private_capture():
+    s = read_skill("skills/apple/findmy")
+    assert "version: 1.1.0" in s and "harness.yaml" in s
+    assert "mktemp -d" in s and "chmod 700" in s
+    assert "last-seen" in s.lower()
+    assert "Continuous tracking — disabled by default" in s
+    assert "while true; do" not in s
+    assert 'screencapture -w -o /tmp/findmy' not in s
+    assert "Delete" in s or "delete" in s
+
+def test_imessage_send_has_verified_recipient_and_no_auto_watch():
+    s = read_skill("skills/apple/imessage")
+    assert "version: 1.1.0" in s and "harness.yaml" in s
+    assert "untrusted" in s.lower() and "recipient" in s.lower()
+    assert "SMS" in s and "explicit" in s.lower()
+    assert "uncertain" in s
+    assert not any(line.lstrip().startswith("imsg watch ") for line in s.splitlines())
