@@ -3,7 +3,7 @@ schema_version: 1
 skill: subagent-driven-development
 activation:
   when: ["A multi-part implementation has independently testable work packages","Parallel expert reviews can improve quality without shared-write conflicts"]
-  not_when: undefined
+  not_when: ["Make a trivial single-file correction","Run conflicting parallel writes to the same file"]
 capabilities:
   tools: ["delegate_task","todo","read_file","terminal"]
   side_effects: local_write
