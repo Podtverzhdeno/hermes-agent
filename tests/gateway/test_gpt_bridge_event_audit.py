@@ -369,3 +369,30 @@ def test_invalid_sse_frame_id_rejected_without_echo():
     with pytest.raises(InvalidTelemetry) as observed:
         parse_sse_frames(bad)
     assert secret not in str(observed.value)
+
+
+def test_status_only_reports_missing_event_history():
+    out = explain_sse("", RID, {"run_id": RID, "status": "completed",
+                                "updated_at": 1795344001.0})
+    assert out["observed_events"] == 0
+    assert out["supplied_status"] == "completed"
+    assert out["missing_events"]
+    assert out["stop_reason"] == "EVIDENCE_INCOMPLETE"
+    assert "STATUS_ONLY_NO_EVENT_HISTORY" in out["evidence"]
+
+
+def test_cli_accepts_status_only_without_network(tmp_path, capsys):
+    from gateway.gpt_bridge_event_audit import main
+    status_file = tmp_path / "status.json"
+    status_file.write_text(json.dumps({"run_id": RID, "status": "failed"}))
+    assert main(["--run-id", RID, "--status-file", str(status_file)]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["supplied_status"] == "failed"
+    assert output["stop_reason"] == "EVIDENCE_INCOMPLETE"
+
+
+def test_cli_rejects_no_evidence_sources(capsys):
+    from gateway.gpt_bridge_event_audit import main
+    assert main(["--run-id", RID]) == 2
+    out = json.loads(capsys.readouterr().out)
+    assert out["error"] == "INVALID_AUDIT_INPUT"
