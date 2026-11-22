@@ -22,6 +22,40 @@
 
 A single source must own each lifecycle state; adapters may report observations but not independently advance task state. A read-only dashboard is a projection of task authority, not another queue.
 
+## 1a. Preferred supported native Hermes Runs API (verified in modern upstream only)
+
+**Source of truth:** official Hermes revision `da8e7d71abe4ac165760cd813c0c18c53e697b90`, its `website/docs/user-guide/features/api-server.md` and `gateway/platforms/api_server_runs.py`. This is a stronger documented extension surface than a reverse-engineered browser tab. It does **not** prove the owner's April fork or installed GPT extension implements it.
+
+### Capability first; never guess from a URL
+
+- Authenticated `GET /v1/capabilities` advertises `run_submission`, `run_status`, `run_events_sse`, `run_stop` and conditional `run_approval`, `run_unknown_resolution`, `session_key_header`. This should be read before presenting controls; absent support is `CAPABILITY_MISMATCH`, not model failure.
+- Use `POST /v1/runs` only for explicitly authorized new Hermes work. The 202 response contains a canonical `run_id`. For pure monitoring existing work, **do not POST**: use `GET /v1/runs/{id}` and `GET /v1/runs/{id}/events` with the correct authenticated owner scope. Polling status and SSE observation have different retention and freshness semantics.
+- The Runs API's `Idempotency-Key` is bounded to **24 hours after last status update** and scoped to authenticated profile/credential. Exact replay returns the original `run_id` (202, `Idempotency-Replayed: true`), changed payload returns 409. Unkeyed POST always creates a fresh run. Expired replay evidence is not a lifetime exactly-once guarantee. Legacy OpenAI-compatible Chat Completions may instead use 5-minute in-memory dedupe (no keyed streaming in legacy); **never** transfer guarantees between modes.
+- Runs events include tool and subagent lifecycle, error status, output delta and terminal reason. The SSE parser must ignore `: keepalive` comments every 10 seconds. Unconsumed event buffers expire after approximately **five minutes**; `replay.truncated` means a missing historical segment even if status polling still sees live work. A green status poll does not backfill lost tool or effect history.
+- During normal shutdown, status may carry `shutdown_requested_at` while still `running` and transitions to `interrupted`; after canonical session-owner restart, status may instead be `unknown` and later session work is held. These are **different** incident causes. `POST /v1/runs/{id}/stop` returns `stopping` while executor work has not exited — NEVER report the stop as complete at this point.
+- Canonical `unknown` recovery uses authenticated `POST /v1/runs/{id}/resolve-unknown` with **exact** `admission_id` and `execution_generation`, and returns an idempotent resolution receipt or 409 stale. It acknowledges that the lost worker will not finish and unblocks subsequent work; **it does not prove an external side effect did not occur**. Human/authority confirmation and effect reconciliation precede resolution. No adapter may silently invoke it from a browser reconnect.
+- Canonical pending approvals expose `request_id`/`prompt_id` and `execution_generation`; stale/foreign replies return 409. A 200 `/steer` means steer was queued, not consumed; check `pending_steer` in final status if no later tool boundary. Unsupported gateway client request capabilities can fail approvals; `client.capabilities` with `server_requests: true` is mandatory for WebSocket clients that answer server→client requests, not assumed from UI rendering.
+- Explicit API session IDs are constrained by their owning surface. API clients cannot write CLI/TUI/Desktop/ACP-owned conversations through Runs; 409 `permission_denied` before admission. To observe or act on such a session, use scoped authenticated shared-gateway WebSocket per advertised permissions. Do not create a shadow session to bypass ownership.
+- Endpoints are authenticated with a per-profile bearer credential, optional strict CORS origin allowlist, and namespace/profile-specific permissions. A token is a secret, never an event field. Model-provided reasoning summaries may be exposed when enabled, but those are **not** internal hidden reasoning. Do not persist them in operational trace logs.
+
+**Architecture choice:** The GPT extension should first detect a compatible native Runs API, then subscribe/poll using a read-only observer. If unavailable on the installed version, the UI must show *unsupported/version mismatch*, not manufacture success from DOM snippets. The browser extension can offer consented transport, user UX and source identifiers, while Hermes itself owns run state. A bridge observing Hermes Runs is **not** a bridge that can inspect the ChatGPT application's private hidden work.
+
+### Runs API negative test matrix
+
+| Condition | Expected evidence | Forbidden |
+|---|---|---|
+| Old server `/v1/capabilities` lacks Runs | Feature unavailable/explicit mismatch | Call guessed private route or report “worker dead” |
+| Keyed exact retry across server restart within valid retention | Identical `run_id` and replay flag | New run or duplicate tool |
+| Same key changed payload | 409, no new run | Silent substitute key |
+| SSE disconnected beyond retention | `replay.truncated`/gap + independent current status poll | Reconstruct invented missing events |
+| `: keepalive` comment | Keeps transport alive, **not** proof of run progress | Reset worker-progress watchdog |
+| `stop` response `stopping` | Pending cooperative shutdown | Mark work terminal or force-kill external browser |
+| Canonical `unknown` + stale admission generation | 409, blocked until exact authorized reconciliation | Resume queued follower or re-run unknown head |
+| Tool error and later assistant response | Error remains as tool evidence; verify output separately | Treat all tool effects as completed successfully |
+| Child delegation still running after parent turn | Source-backed child ID and session persisted delivery rules | Claim parent SSE always carries all child tool steps |
+| Wrong session owner/profile | 403/409 denial and scope evidence | Create parallel writer in another surface |
+| Upstream exposes reasoning summary | Only provider-supplied allowed output | Claim private hidden CoT extracted |
+
 ## 2. Identifiers — keep attempt, operation, and artifact separate
 
 The **client-provided request ID** and response contract (`request_id` echo and `content`, `tool_calls` fields) are the minimum compatibility condition only where that client protocol has been explicitly negotiated. This is NOT an assertion that OpenAI's public API uses the same envelope. Do not silently rename an unsupported `request_id` to `run_id`.
