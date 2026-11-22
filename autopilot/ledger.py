@@ -7,8 +7,8 @@ its outcome. After a crash, an unacknowledged effect needs reconciliation.
 
 from __future__ import annotations
 
-import hashlib
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -23,6 +23,8 @@ FAILURE_CODES = frozenset({
     "TIMEOUT", "RATE_LIMITED", "PROVIDER_UNAVAILABLE", "CONNECTOR_UNAVAILABLE",
     "LEASE_EXPIRED", "BUDGET_EXCEEDED", "POLICY_DENIED", "SCHEMA_INVALID",
     "TEST_FAILED", "CONFLICT", "AUTH_EXPIRED", "UNKNOWN_EXTERNAL_EFFECT",
+    "MODEL_CONTEXT_LIMIT", "DEADLINE_EXCEEDED", "WORKSPACE_CONFLICT",
+    "STALE_VERIFICATION", "MCP_UNAVAILABLE", "MODEL_OUTPUT_INVALID",
 })
 TERMINAL = ("succeeded", "failed", "cancelled", "blocked")
 
@@ -51,8 +53,12 @@ class AutopilotLedger:
     def __init__(self, path: str | Path, clock: Callable[[], float] = time.time):
         self.path = Path(path)
         self.clock = clock
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_symlink():
+            raise ValueError("ledger path cannot be a symlink")
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._initialize()
+        if os.name == "posix":
+            self.path.chmod(0o600)
 
     @contextmanager
     def _db(self, write: bool = False):
@@ -62,6 +68,9 @@ class AutopilotLedger:
             db.execute("PRAGMA busy_timeout=10000")
             db.execute("PRAGMA foreign_keys=ON")
             if write:
+                # synchronous is connection-local; setting it during schema
+                # initialization alone does not protect future writes.
+                db.execute("PRAGMA synchronous=FULL")
                 db.execute("BEGIN IMMEDIATE")
             yield db
             if write:
@@ -516,12 +525,11 @@ class AutopilotLedger:
             return True
 
     def fail(self, task_id: str, worker: str, fence: int, reason: str, retryable: bool):
-        # Failure messages can contain credentials or prompt contents. Keep only
-        # a bounded approved code and an opaque correlation fingerprint.
+        # Failure messages can contain credentials or prompt contents.
+        # Persist only an allowlisted code; never a raw message or its hash.
         if not isinstance(reason, str):
             raise ValueError("reason must be a string")
         code = reason.strip() if reason.strip() in FAILURE_CODES else "UNCLASSIFIED_FAILURE"
-        fingerprint = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
         with self._db(write=True) as db:
             task = self._assert_worker(db, task_id, worker, fence)
             unresolved = db.execute(
@@ -539,7 +547,7 @@ class AutopilotLedger:
                 WHERE id=?
             """, (status, available_at, self.clock(), int(retryable), task_id))
             self._event(db, task_id, "failed_attempt",
-                        {"reason_code": code, "fingerprint": fingerprint, "next": status})
+                        {"reason_code": code, "next": status})
 
     def cancel(self, task_id: str):
         """Cancellation is cooperative for leased workers; no silent rollback."""
