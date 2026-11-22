@@ -27,7 +27,7 @@
 | Путь | Над. | Без. | Набл. | Совм. | Экспл. | Итог / 100 | Решение |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Официальные provider API + Hermes observer hooks + централизованный журнал | 5 | 5 | 5 | 4 | 4 | **96** | Основной путь |
-| Официальный browser companion + opt-in сигналы, без DOM как источника статуса | 3 | 3 | 3 | 4 | 3 | **62** | Вспомогательный слой |
+| Сторонний browser companion + opt-in сигналы, без DOM как источника статуса | 3 | 3 | 3 | 4 | 3 | **62** | Вспомогательный слой |
 | Автоматизация ChatGPT DOM как control plane | 2 | 1 | 2 | 2 | 1 | **32** | Отклонить |
 | Скрипты управления вкладками без стойкого task ledger | 1 | 1 | 2 | 3 | 2 | **30** | Отклонить |
 
@@ -163,7 +163,7 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 ## 8. План изменений по этапам
 
-**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, scheduled observer и обещаний непрерывного мониторинга.
+**P0 — в этом изменении:** отдельный модуль `gpt_companion/journal.py`, безопасный разовый CLI `python -m gpt_companion`, тесты и package discovery `pyproject.toml` + offline unit tests; строгий allowlist, WAL, durable event ingest, дедуп, per-source seq gaps, conservative diagnosis, hash integrity check. Нет live-адаптера, tool calls, webhook endpoint, scheduled observer и обещаний непрерывного мониторинга. Состояния журнала не равны статусам task ledger.
 
 **P1 — после интеграции Autopilot:** version-pinned Hermes observer hook adapter, `local outbox → authenticated inbox`; schema negotiation, source authorization, heartbeat/progress probes, reconciliation poller для OpenAI Responses webhooks и GitHub; shadow mode только чтение и реальные fault-injection тесты. Перед кодом выяснить, какая Hermes версия запускается реально, какие hook имена поддерживает, где хранится gateway и какая auth схема.
 
@@ -200,7 +200,9 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 
 ## 11. Проверки текущего прототипа
 
-На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **26 passed**, Python 3.11+ совместимый синтаксис; проверки: replay, conflict, sequence gap, reordering, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
+Разовый разбор событий — `python -m gpt_companion --db path/events.sqlite3 --run-id run-42 --jsonl path/events.jsonl`; исходный JSONL должен приходить только из разрешённого локального экспорта. CLI не является фоновым сервисом. Дополнительные ограничения и пример — в `gpt_companion/README.md`.
+
+На локальной изолированной копии нового модуля выполнено `PYTHONPATH=. pytest -q tests/gpt_companion/test_journal.py`: **35 passed** (локальный Python 3.13.5; минимальная поддерживаемая Hermes-версия Python 3.11 требует отдельной проверки в CI); проверки: replay, conflict, sequence gap, reordering, delayed backfill cannot refresh liveness, heartbeat-only stagnation, invalid clock, unknown effect, approval, false completion, heartbeat vs progress, per-attempt isolation, reason code, strict redaction, chain mutation, 32 competing writers, conflicting terminal sources, CLI fail-closed import and redacted errors. Это **unit tests**, не реальный live integration smoke и не полный regression suite репозитория. При переносе в GitHub перепроверить content/hash файлов и CI PR.
 
 ## 12. Основные первоисточники и смежные реализации
 
@@ -222,3 +224,15 @@ Envelope V1 (без промптов, текстов сообщений, пер�
 - Кто операционный владелец secrets, local outbox, retention и kill switch? Должен быть назначен до P1.
 - В ветке Autopilot coordinator ещё нет adapter dispatcher/real watchdog и host auth; интеграция с неслитой веткой откладывается до её ревью.
 - Локальный Obsidian не изменён: нужна отдельная явная синхронизация SDD после восстановления MCP, нельзя сообщать, что запись выполнена.
+
+### ADR-013: Late backfill не является свежим heartbeat (P0, implemented)
+
+При передаче старого события `sequence=2` после `sequence=3` сам факт получения данных сегодня не означает, что worker ещё жив. Наивная диагностика по `MAX(received_at)` превращала такой replay в ложную доступность. Реализован source-local frontier (максимальный `sequence`, виденный **на момент получения**): backfill сохраняется для целостности, но не освежает таймеры; для worker без прогресса baseline — первое наблюдение, а не последняя попытка heartbeat. Тесты: `test_delayed_backfill_does_not_fake_worker_liveness`, `test_heartbeat_only_worker_eventually_has_no_progress`. Ограничение: frontier основан на входящей ненадёжной телеметрии, без доверенной аутентификации worker и независимой lease-проверки это **только гипотеза**, а не proof of liveness.
+
+### ADR-014: CLI должна входить в устанавливаемый wheel (P0, implemented)
+
+Изначально `scripts/gpt_event_inspect.py` запускался только из checkout: каталог `scripts` не входит в `pyproject.toml` setuptools discovery. Чтобы не выдавать пример локального запуска за установленную функциональность, CLI вынесена в `gpt_companion/inspect.py` и `gpt_companion/__main__.py` (устанавливаемая команда `python -m gpt_companion`). `scripts/gpt_event_inspect.py` оставлен тонким wrapper для обратной совместимости checkout. Покрыто unit/subprocess тестами; полная сборка wheel на base fork остаётся отдельной CI-проверкой.
+
+### ADR-015: Повреждённая БД — не `NOT_OBSERVED` и не сбой модели (P0, implemented)
+
+Ошибки `sqlite3.DatabaseError` в CLI теперь преобразуются в `JOURNAL_INTEGRITY_FAILED` (exit code 3) без вывода payload или сырых traceback; такой инцидент нельзя смешивать с отвалившимся GPT. БД нельзя «исправлять» автоматическим пересозданием поверх повреждённого файла: сначала сохранить форензик-копию, восстановить последнюю backup + outbox replay, подтвердить `verify_chain`.
