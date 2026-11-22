@@ -246,10 +246,25 @@ class _Findings:
         self.items: list[dict] = []
         self.counts: dict[str, int] = defaultdict(int)
 
+    @staticmethod
+    def sort_key(item: dict) -> tuple[int, str, str, str]:
+        # Deterministic, high-severity-first retention. Do not allow a storm of
+        # missing low-risk sequence numbers to hide a late unsafe external effect.
+        rank = {"critical": 0, "invalid": 1, "incomplete": 2}
+        return (rank.get(item["severity"], 3), item["code"],
+                item.get("task_id", ""), item.get("event_id", ""))
+
     def add(self, code: str, severity: str, **kwargs: object) -> None:
         self.counts[code] += 1
+        item = _finding(code, severity, **kwargs)
         if len(self.items) < MAX_FINDINGS:
-            self.items.append(_finding(code, severity, **kwargs))
+            self.items.append(item)
+        else:
+            # MAX_FINDINGS is deliberately small. Keep bounded memory while
+            # making truncation-independent visible examples deterministic.
+            worst = max(range(len(self.items)), key=lambda i: self.sort_key(self.items[i]))
+            if self.sort_key(item) < self.sort_key(self.items[worst]):
+                self.items[worst] = item
 
 
 def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> dict:
@@ -300,7 +315,7 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
     children: dict[str, list[str]] = defaultdict(list)
     in_degree = {eid: 0 for eid in by_id}
     effects: dict[tuple[str, str, int], dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
-    claims: dict[tuple[str, int], set[str]] = defaultdict(set)
+    claims: dict[tuple[str, int], set[tuple[str, str | None]]] = defaultdict(set)
     verifications: set[tuple[str, str]] = set()
     successes: list[dict] = []
     terminals: dict[tuple[str, str | None], set[str]] = defaultdict(set)
@@ -324,7 +339,10 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
         task_id = event.get("task_id")
         fence = event.get("lease_fence")
         if kind == "task.claimed" and task_id and fence is not None:
-            claims[(task_id, fence)].add(event.get("agent_id") or event["producer_id"])
+            # agent_id may be a shared logical role (e.g. "A1") reused by many
+            # process incarnations. Fence ownership must not collapse all
+            # same-named agents into one identity.
+            claims[(task_id, fence)].add((event["producer_id"], event.get("agent_id")))
         if kind == "verifier.completed" and task_id and event.get("target_revision") and event.get("evidence_refs"):
             verifications.add((task_id, event["target_revision"]))
         if kind == "task.completed" and task_id:
@@ -471,7 +489,7 @@ def audit_stream(source: BinaryIO, *, max_events: int = DEFAULT_MAX_EVENTS) -> d
         "finding_counts": dict(sorted(codes.items())),
         "stop_observations": stop_observations,
         "stop_observations_suppressed": max(0, len(stopped) - MAX_FINDINGS),
-        "findings": sorted(findings.items, key=lambda f: (f["code"], f.get("task_id", ""), f.get("event_id", ""))),
+        "findings": sorted(findings.items, key=findings.sort_key),
     }
 
 
