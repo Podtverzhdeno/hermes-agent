@@ -19,6 +19,7 @@ Requires:
 
 import asyncio
 import json
+import hmac
 import logging
 import os
 import sqlite3
@@ -40,6 +41,27 @@ from gateway.platforms.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _api_event(event: str, request_id: str, **details: Any) -> None:
+    """Structured, payload-free operational telemetry (no prompts or credentials).
+
+    Emit best-effort diagnostics; logging must not mask client disconnects or
+    change the primary execution outcome even with mocked/invalid requests.
+    """
+    if not isinstance(request_id, str) or not (
+        len(request_id) == 36 and request_id.startswith("hrq_")
+    ):
+        request_id = "unattributed"
+    logger.info(
+        "hermes_api_event %s",
+        json.dumps(
+            {"schema": "hermes.api.event.v1", "event": event,
+             "request_id": request_id, **details},
+            sort_keys=True, separators=(",", ":"),
+        ),
+    )
+
 
 # Default settings
 DEFAULT_HOST = "127.0.0.1"
@@ -108,29 +130,53 @@ class ResponseStore:
         self._conn.commit()
         return json.loads(row[0])
 
-    def put(self, response_id: str, data: Dict[str, Any]) -> None:
-        """Store a response, evicting the oldest if at capacity."""
-        import time
-        self._conn.execute(
-            "INSERT OR REPLACE INTO responses (response_id, data, accessed_at) VALUES (?, ?, ?)",
-            (response_id, json.dumps(data, default=str), time.time()),
-        )
-        # Evict oldest entries beyond max_size
-        count = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
-        if count > self._max_size:
+    def put(
+        self,
+        response_id: str,
+        data: Dict[str, Any],
+        *,
+        conversation_name: Optional[str] = None,
+    ) -> None:
+        """Atomically persist a response, optional conversation alias, and eviction.
+
+        Previously the response and alias were committed separately: a crash
+        between the two left a committed response but a stale conversation.
+        The context manager rolls back ALL local store changes on SQL failure.
+        This does not serialize reads or concurrent agent runs by conversation.
+        """
+        with self._conn:
             self._conn.execute(
-                "DELETE FROM responses WHERE response_id IN "
-                "(SELECT response_id FROM responses ORDER BY accessed_at ASC LIMIT ?)",
-                (count - self._max_size,),
+                "INSERT OR REPLACE INTO responses (response_id, data, accessed_at) VALUES (?, ?, ?)",
+                (response_id, json.dumps(data, default=str), time.time()),
             )
-        self._conn.commit()
+            count = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+            if count > self._max_size:
+                self._conn.execute(
+                    "DELETE FROM responses WHERE response_id IN "
+                    "(SELECT response_id FROM responses ORDER BY accessed_at ASC LIMIT ?)",
+                    (count - self._max_size,),
+                )
+            if conversation_name:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO conversations (name, response_id) VALUES (?, ?)",
+                    (conversation_name, response_id),
+                )
+            # Expiry or deletion must never leave an alias pointing to a
+            # non-existent parent response.
+            self._conn.execute(
+                "DELETE FROM conversations WHERE response_id NOT IN "
+                "(SELECT response_id FROM responses)"
+            )
 
     def delete(self, response_id: str) -> bool:
-        """Remove a response from the store. Returns True if found and deleted."""
-        cursor = self._conn.execute(
-            "DELETE FROM responses WHERE response_id = ?", (response_id,)
-        )
-        self._conn.commit()
+        """Delete a response and its conversation references in one transaction."""
+        with self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM responses WHERE response_id = ?", (response_id,)
+            )
+            self._conn.execute(
+                "DELETE FROM conversations WHERE response_id = ?", (response_id,)
+            )
         return cursor.rowcount > 0
 
     def get_conversation(self, name: str) -> Optional[str]:
@@ -166,11 +212,47 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Session-Id",
+    "Access-Control-Expose-Headers": "X-Hermes-Request-Id, X-Hermes-Session-Id, X-Hermes-Agent-Outcome",
 }
 
 
 if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def request_trace_middleware(request, handler):
+        """Correlate request outcomes without logging secrets or prompt text."""
+        request_id = "hrq_" + uuid.uuid4().hex
+        request["hermes_request_id"] = request_id
+        started = time.monotonic()
+        # Route template avoids uncontrolled URL path segments in logs.
+        _api_event(
+            "request_accepted", request_id, method=request.method,
+            idempotency_present=bool(request.headers.get("Idempotency-Key")),
+        )
+        try:
+            response = await handler(request)
+        except asyncio.CancelledError:
+            _api_event("request_cancelled", request_id)
+            raise
+        except Exception as exc:
+            _api_event(
+                "request_exception", request_id,
+                error_class=type(exc).__name__,
+            )
+            # Python exception messages may contain private prompt data, URLs
+            # or API tokens. Preserve the class and trace identity only.
+            logger.error(
+                "Unhandled API request exception request_id=%s error_class=%s",
+                request_id, type(exc).__name__,
+            )
+            raise
+        response.headers.setdefault("X-Hermes-Request-Id", request_id)
+        _api_event(
+            "request_finished", request_id, status=response.status,
+            duration_ms=round((time.monotonic() - started) * 1000, 1),
+        )
+        return response
+
     @web.middleware
     async def cors_middleware(request, handler):
         """Add CORS headers for explicitly allowed origins; handle OPTIONS preflight."""
@@ -192,6 +274,7 @@ if AIOHTTP_AVAILABLE:
             response.headers.update(cors_headers)
         return response
 else:
+    request_trace_middleware = None  # type: ignore[assignment]
     cors_middleware = None  # type: ignore[assignment]
 
 
@@ -241,42 +324,138 @@ else:
     security_headers_middleware = None  # type: ignore[assignment]
 
 
+class IdempotencyConflictError(ValueError):
+    """The same key was supplied for different request content."""
+
+
+class IdempotencyCapacityError(RuntimeError):
+    """The bounded cache cannot safely accept another keyed request."""
+
+
+class IdempotencyUncertainOutcome(RuntimeError):
+    """A prior execution failed; its external effects may have committed."""
+
+
 class _IdempotencyCache:
-    """In-memory idempotency cache with TTL and basic LRU semantics."""
+    """Process-local single-flight idempotency; no guarantee after restart.
+
+    Never evict running or uncertain-outcome entries: that would duplicate
+    external effects after a lost ACK or process-local failure.
+    Values represent full API responses, including stable response/session IDs.
+    A host restart still loses this memory-only safety barrier.
+    """
+
     def __init__(self, max_items: int = 1000, ttl_seconds: int = 300):
         from collections import OrderedDict
         self._store = OrderedDict()
         self._ttl = ttl_seconds
         self._max = max_items
 
-    def _purge(self):
-        import time as _t
-        now = _t.time()
-        expired = [k for k, v in self._store.items() if now - v["ts"] > self._ttl]
-        for k in expired:
-            self._store.pop(k, None)
-        while len(self._store) > self._max:
-            self._store.popitem(last=False)
+    def _purge(self) -> None:
+        now = time.monotonic()
+        for key, item in list(self._store.items()):
+            if (
+                item["task"].done() and
+                item["state"] == "succeeded" and
+                now - item["ts"] >= self._ttl
+            ):
+                self._store.pop(key, None)
 
-    async def get_or_set(self, key: str, fingerprint: str, compute_coro):
-        self._purge()
+    def _on_done(self, key: str, task: "asyncio.Task") -> None:
         item = self._store.get(key)
-        if item and item["fp"] == fingerprint:
-            return item["resp"]
-        resp = await compute_coro()
-        import time as _t
-        self._store[key] = {"resp": resp, "fp": fingerprint, "ts": _t.time()}
+        if item is None or item["task"] is not task:
+            return
+        if task.cancelled() or task.exception() is not None:
+            item["state"] = "outcome_unknown"
+            _api_event(
+                "idempotency_outcome_unknown", item["request_id"],
+                entry_id=item["entry_id"], endpoint=item["endpoint"],
+                reason_code="unverified_effect_status",
+            )
+        else:
+            item["state"] = "succeeded"
+        item["ts"] = time.monotonic()
+
+    async def get_or_set(
+        self, key: str, fingerprint: str, compute_coro,
+        *, request_id: str = "unattributed",
+    ):
         self._purge()
-        return resp
-
-
-_idem_cache = _IdempotencyCache()
+        endpoint = key.split(":", 1)[0]
+        item = self._store.get(key)
+        if item is not None:
+            if item["fp"] != fingerprint:
+                _api_event(
+                    "idempotency_conflict", request_id,
+                    entry_id=item["entry_id"], endpoint=endpoint,
+                )
+                raise IdempotencyConflictError("Key reused with different input")
+            self._store.move_to_end(key)
+            if item["task"].done() and (
+                item["task"].cancelled() or item["task"].exception() is not None
+            ):
+                _api_event(
+                    "idempotency_reconciliation_required", request_id,
+                    entry_id=item["entry_id"], endpoint=endpoint,
+                )
+                raise IdempotencyUncertainOutcome(
+                    "Previous execution outcome requires reconciliation"
+                )
+            _api_event(
+                "idempotency_replay" if item["task"].done()
+                else "idempotency_join",
+                request_id, entry_id=item["entry_id"],
+                endpoint=endpoint,
+            )
+            return await asyncio.shield(item["task"])
+        if len(self._store) >= self._max:
+            _api_event(
+                "idempotency_capacity", request_id, endpoint=endpoint,
+            )
+            raise IdempotencyCapacityError("All idempotency slots occupied")
+        task = asyncio.create_task(compute_coro())
+        entry_id = "hid_" + uuid.uuid4().hex[:20]
+        self._store[key] = {
+            "task": task, "fp": fingerprint, "ts": time.monotonic(),
+            "state": "running", "entry_id": entry_id,
+            "request_id": request_id, "endpoint": endpoint,
+        }
+        task.add_done_callback(lambda finished: self._on_done(key, finished))
+        _api_event(
+            "idempotency_new", request_id,
+            entry_id=entry_id, endpoint=endpoint,
+        )
+        return await asyncio.shield(task)
 
 
 def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
     from hashlib import sha256
     subset = {k: body.get(k) for k in keys}
-    return sha256(repr(subset).encode("utf-8")).hexdigest()
+    canonical = json.dumps(
+        subset, sort_keys=True, ensure_ascii=False, separators=(",", ":"),
+    )
+    return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _agent_run_outcome(result: Dict[str, Any]) -> str:
+    """Normalize explicit Hermes runner result flags into observable outcomes.
+
+    Missing flags preserve compatibility with older or mocked agents. A partial
+    result or interrupted run must NOT be presented as finish_reason=stop.
+    """
+    if not isinstance(result, dict):
+        return "failed"
+    if result.get("failed") or (result.get("error") and not result.get("final_response")):
+        return "failed"
+    if result.get("interrupted"):
+        return "interrupted"
+    if result.get("completed") is False:
+        return "incomplete"
+    return "succeeded"
+
+
+class AgentReportedFailure(RuntimeError):
+    """The runner returned a failure status without raising an exception."""
 
 
 class APIServerAdapter(BasePlatformAdapter):
@@ -301,6 +480,7 @@ class APIServerAdapter(BasePlatformAdapter):
         self._site: Optional["web.TCPSite"] = None
         self._response_store = ResponseStore()
         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+        self._idem_cache = _IdempotencyCache()
 
     @staticmethod
     def _parse_cors_origins(value: Any) -> tuple[str, ...]:
@@ -364,7 +544,7 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
-            if token == self._api_key:
+            if hmac.compare_digest(token, self._api_key):
                 return None  # Auth OK
 
         return web.json_response(
@@ -459,6 +639,12 @@ class APIServerAdapter(BasePlatformAdapter):
         except (json.JSONDecodeError, Exception):
             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
 
+        if not isinstance(body, dict):
+            return web.json_response(
+                _openai_error("Request JSON body must be an object", code="invalid_body"),
+                status=400,
+            )
+
         messages = body.get("messages")
         if not messages or not isinstance(messages, list):
             return web.json_response(
@@ -467,6 +653,14 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         stream = body.get("stream", False)
+        if stream and request.headers.get("Idempotency-Key"):
+            return web.json_response(
+                _openai_error(
+                    "Idempotency-Key is not supported for streaming requests.",
+                    code="unsupported_idempotency_mode",
+                ),
+                status=400,
+            )
 
         # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
         system_prompt = None
@@ -560,63 +754,103 @@ class APIServerAdapter(BasePlatformAdapter):
                 agent_task, agent_ref, session_id=session_id,
             )
 
-        # Non-streaming: run the agent (with optional Idempotency-Key)
+        # Cache the complete reply, not only generated text.
         async def _compute_completion():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
-
-        idempotency_key = request.headers.get("Idempotency-Key")
-        if idempotency_key:
-            fp = _make_request_fingerprint(body, keys=["model", "messages", "tools", "tool_choice", "stream"])
-            try:
-                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_completion)
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
-        else:
-            try:
-                result, usage = await _compute_completion()
-            except Exception as e:
-                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
-                )
-
-        final_response = result.get("final_response", "")
-        if not final_response:
-            final_response = result.get("error", "(No response generated)")
-
-        response_data = {
-            "id": completion_id,
-            "object": "chat.completion",
-            "created": created,
-            "model": model_name,
-            "choices": [
-                {
+            outcome = _agent_run_outcome(result)
+            if outcome == "failed":
+                raise AgentReportedFailure("Hermes runner reported failure")
+            final_response = result.get("final_response", "") or result.get(
+                "error", "(No response generated)"
+            )
+            payload = {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": created,
+                "model": model_name,
+                "choices": [{
                     "index": 0,
-                    "message": {
-                        "role": "assistant",
-                        "content": final_response,
-                    },
-                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": final_response},
+                    "finish_reason": (
+                        "stop" if outcome == "succeeded" else
+                        "cancelled" if outcome == "interrupted" else "length"
+                    ),
+                }],
+                "usage": {
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+            }
+            if outcome != "succeeded":
+                payload["hermes"] = {
+                    "stop_reason": "agent_interrupted"
+                    if outcome == "interrupted" else "agent_incomplete",
                 }
-            ],
-            "usage": {
-                "prompt_tokens": usage.get("input_tokens", 0),
-                "completion_tokens": usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
+            return {
+                "payload": payload, "session_id": session_id,
+                "agent_outcome": outcome,
+            }
 
-        return web.json_response(response_data, headers={"X-Hermes-Session-Id": session_id})
+        idem_key = request.headers.get("Idempotency-Key")
+        if idem_key and len(idem_key) > 256:
+            return web.json_response(
+                _openai_error("Idempotency-Key too long", code="invalid_idempotency_key"),
+                status=400,
+            )
+        try:
+            if idem_key:
+                fp = _make_request_fingerprint(
+                    {"body": body, "session_id": provided_session_id},
+                    ["body", "session_id"],
+                )
+                completed = await self._idem_cache.get_or_set(
+                    "chat:" + idem_key, fp, _compute_completion,
+                    request_id=request.get("hermes_request_id", "unattributed"),
+                )
+            else:
+                completed = await _compute_completion()
+        except IdempotencyConflictError:
+            logger.warning("hermes_api_idempotency outcome=conflict endpoint=chat")
+            return web.json_response(
+                _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
+                status=409,
+            )
+        except IdempotencyUncertainOutcome:
+            logger.warning("hermes_api_idempotency outcome=unknown endpoint=chat")
+            return web.json_response(
+                _openai_error(
+                    "Previous execution may have committed effects; reconcile before retry",
+                    code="execution_outcome_unknown",
+                ), status=409,
+            )
+        except IdempotencyCapacityError:
+            logger.warning("hermes_api_idempotency outcome=capacity endpoint=chat")
+            return web.json_response(
+                _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
+                status=503, headers={"Retry-After": "5"},
+            )
+        except Exception as exc:
+            logger.error(
+                "Agent execution failed in chat completion; error_class=%s",
+                type(exc).__name__,
+            )
+            return web.json_response(
+                _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
+                status=500,
+            )
+        return web.json_response(
+            completed["payload"],
+            headers={
+                "X-Hermes-Session-Id": completed["session_id"],
+                "X-Hermes-Agent-Outcome": completed["agent_outcome"],
+            },
+        )
 
     async def _write_sse_chat_completion(
         self, request: "web.Request", completion_id: str, model: str,
@@ -639,6 +873,8 @@ class APIServerAdapter(BasePlatformAdapter):
             sse_headers.update(cors)
         if session_id:
             sse_headers["X-Hermes-Session-Id"] = session_id
+        if request.get("hermes_request_id"):
+            sse_headers["X-Hermes-Request-Id"] = request["hermes_request_id"]
         response = web.StreamResponse(status=200, headers=sse_headers)
         await response.prepare(request)
 
@@ -690,20 +926,66 @@ class APIServerAdapter(BasePlatformAdapter):
             try:
                 result, agent_usage = await agent_task
                 usage = agent_usage or usage
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error(
+                    "SSE agent failed request_id=%s completion_id=%s error_class=%s",
+                    request.get("hermes_request_id", "-"), completion_id,
+                    type(exc).__name__,
+                )
+                _api_event(
+                    "agent_failed", request.get("hermes_request_id", "-"),
+                    phase="stream", reason_code="agent_execution_failed",
+                )
+                # Do not send finish_reason=stop after an agent exception.
+                await response.write((
+                    "data: " + json.dumps(_openai_error(
+                        "Agent execution failed; inspect server logs.",
+                        err_type="server_error", code="agent_execution_failed",
+                    )) + "\n\n"
+                ).encode())
+                await response.write(b"data: [DONE]\n\n")
+                return response
+
+            outcome = _agent_run_outcome(result)
+            if outcome != "succeeded":
+                reason = {
+                    "failed": "agent_reported_failed",
+                    "interrupted": "agent_interrupted",
+                    "incomplete": "agent_incomplete",
+                }[outcome]
+                _api_event(
+                    "agent_not_completed", request.get("hermes_request_id", "-"),
+                    phase="stream", reason_code=reason,
+                )
+                if outcome == "failed":
+                    await response.write((
+                        "data: " + json.dumps(_openai_error(
+                            "Hermes agent did not complete; inspect server logs.",
+                            err_type="server_error", code=reason,
+                        )) + "\n\n"
+                    ).encode())
+                    await response.write(b"data: [DONE]\n\n")
+                    return response
 
             # Finish chunk
             finish_chunk = {
                 "id": completion_id, "object": "chat.completion.chunk",
                 "created": created, "model": model,
-                "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                "choices": [{"index": 0, "delta": {}, "finish_reason": (
+                    "stop" if outcome == "succeeded" else
+                    "cancelled" if outcome == "interrupted" else "length"
+                )}],
                 "usage": {
                     "prompt_tokens": usage.get("input_tokens", 0),
                     "completion_tokens": usage.get("output_tokens", 0),
                     "total_tokens": usage.get("total_tokens", 0),
                 },
             }
+            if outcome != "succeeded":
+                finish_chunk["hermes"] = {
+                    "stop_reason": "agent_interrupted"
+                    if outcome == "interrupted" else "agent_incomplete",
+                }
             await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
             await response.write(b"data: [DONE]\n\n")
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
@@ -723,6 +1005,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 except (asyncio.CancelledError, Exception):
                     pass
             logger.info("SSE client disconnected; interrupted agent task %s", completion_id)
+            _api_event(
+                "client_disconnected", request.get("hermes_request_id", "-"),
+                phase="stream", reason_code="client_disconnect",
+            )
 
         return response
 
@@ -738,6 +1024,12 @@ class APIServerAdapter(BasePlatformAdapter):
         except (json.JSONDecodeError, Exception):
             return web.json_response(
                 {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        if not isinstance(body, dict):
+            return web.json_response(
+                _openai_error("Request JSON body must be an object", code="invalid_body"),
                 status=400,
             )
 
@@ -809,88 +1101,107 @@ class APIServerAdapter(BasePlatformAdapter):
         if body.get("truncation") == "auto" and len(conversation_history) > 100:
             conversation_history = conversation_history[-100:]
 
-        # Run the agent (with Idempotency-Key support)
         session_id = str(uuid.uuid4())
 
         async def _compute_response():
-            return await self._run_agent(
+            result, usage = await self._run_agent(
                 user_message=user_message,
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
                 session_id=session_id,
             )
-
-        idempotency_key = request.headers.get("Idempotency-Key")
-        if idempotency_key:
-            fp = _make_request_fingerprint(
-                body,
-                keys=["input", "instructions", "previous_response_id", "conversation", "model", "tools"],
+            outcome = _agent_run_outcome(result)
+            if outcome == "failed":
+                raise AgentReportedFailure("Hermes runner reported failure")
+            final_response = result.get("final_response", "") or result.get(
+                "error", "(No response generated)"
             )
-            try:
-                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_response)
-            except Exception as e:
-                logger.error("Error running agent for responses: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
+            response_id = f"resp_{uuid.uuid4().hex[:28]}"
+            full_history = list(conversation_history)
+            full_history.append({"role": "user", "content": user_message})
+            agent_messages = result.get("messages", [])
+            if agent_messages:
+                full_history.extend(agent_messages)
+            else:
+                full_history.append({"role": "assistant", "content": final_response})
+            response_data = {
+                "id": response_id,
+                "object": "response",
+                "status": (
+                    "completed" if outcome == "succeeded" else
+                    "cancelled" if outcome == "interrupted" else "incomplete"
+                ),
+                "created_at": int(time.time()),
+                "model": body.get("model", "hermes-agent"),
+                "output": self._extract_output_items(result),
+                "usage": {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+            }
+            if outcome == "interrupted":
+                response_data["hermes"] = {"stop_reason": "agent_interrupted"}
+            elif outcome == "incomplete":
+                response_data["incomplete_details"] = {
+                    "reason": "agent_incomplete",
+                }
+            if store:
+                self._response_store.put(
+                    response_id,
+                    {
+                        "response": response_data,
+                        "conversation_history": full_history,
+                        "instructions": instructions,
+                    },
+                    conversation_name=conversation,
                 )
-        else:
-            try:
-                result, usage = await _compute_response()
-            except Exception as e:
-                logger.error("Error running agent for responses: %s", e, exc_info=True)
-                return web.json_response(
-                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
-                    status=500,
+            return response_data
+
+        idem_key = request.headers.get("Idempotency-Key")
+        if idem_key and len(idem_key) > 256:
+            return web.json_response(
+                _openai_error("Idempotency-Key too long", code="invalid_idempotency_key"),
+                status=400,
+            )
+        try:
+            if idem_key:
+                fp = _make_request_fingerprint({"body": body}, ["body"])
+                response_data = await self._idem_cache.get_or_set(
+                    "responses:" + idem_key, fp, _compute_response,
+                    request_id=request.get("hermes_request_id", "unattributed"),
                 )
-
-        final_response = result.get("final_response", "")
-        if not final_response:
-            final_response = result.get("error", "(No response generated)")
-
-        response_id = f"resp_{uuid.uuid4().hex[:28]}"
-        created_at = int(time.time())
-
-        # Build the full conversation history for storage
-        # (includes tool calls from the agent run)
-        full_history = list(conversation_history)
-        full_history.append({"role": "user", "content": user_message})
-        # Add agent's internal messages if available
-        agent_messages = result.get("messages", [])
-        if agent_messages:
-            full_history.extend(agent_messages)
-        else:
-            full_history.append({"role": "assistant", "content": final_response})
-
-        # Build output items (includes tool calls + final message)
-        output_items = self._extract_output_items(result)
-
-        response_data = {
-            "id": response_id,
-            "object": "response",
-            "status": "completed",
-            "created_at": created_at,
-            "model": body.get("model", "hermes-agent"),
-            "output": output_items,
-            "usage": {
-                "input_tokens": usage.get("input_tokens", 0),
-                "output_tokens": usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
-
-        # Store the complete response object for future chaining / GET retrieval
-        if store:
-            self._response_store.put(response_id, {
-                "response": response_data,
-                "conversation_history": full_history,
-                "instructions": instructions,
-            })
-            # Update conversation mapping so the next request with the same
-            # conversation name automatically chains to this response
-            if conversation:
-                self._response_store.set_conversation(conversation, response_id)
-
+            else:
+                response_data = await _compute_response()
+        except IdempotencyConflictError:
+            logger.warning("hermes_api_idempotency outcome=conflict endpoint=responses")
+            return web.json_response(
+                _openai_error("Idempotency-Key reused with different input", code="idempotency_conflict"),
+                status=409,
+            )
+        except IdempotencyUncertainOutcome:
+            logger.warning("hermes_api_idempotency outcome=unknown endpoint=responses")
+            return web.json_response(
+                _openai_error(
+                    "Previous execution may have committed effects; reconcile before retry",
+                    code="execution_outcome_unknown",
+                ), status=409,
+            )
+        except IdempotencyCapacityError:
+            logger.warning("hermes_api_idempotency outcome=capacity endpoint=responses")
+            return web.json_response(
+                _openai_error("Idempotency capacity reached", err_type="server_error", code="idempotency_capacity"),
+                status=503, headers={"Retry-After": "5"},
+            )
+        except Exception as exc:
+            logger.error(
+                "Agent execution failed in Responses API; error_class=%s",
+                type(exc).__name__,
+            )
+            return web.json_response(
+                _openai_error("Agent execution failed; inspect server logs", err_type="server_error", code="agent_execution_failed"),
+                status=500,
+            )
         return web.json_response(response_data)
 
     # ------------------------------------------------------------------
@@ -1273,8 +1584,12 @@ class APIServerAdapter(BasePlatformAdapter):
             logger.warning("[%s] aiohttp not installed", self.name)
             return False
 
+        if self._host not in ("127.0.0.1", "localhost", "::1") and not self._api_key:
+            logger.error("[%s] Refusing unauthenticated non-loopback API bind", self.name)
+            return False
+
         try:
-            mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
+            mws = [mw for mw in (request_trace_middleware, cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
             self._app = web.Application(middlewares=mws)
             self._app["api_server_adapter"] = self
             self._app.router.add_get("/health", self._handle_health)

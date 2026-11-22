@@ -1,0 +1,38 @@
+name: GPT Gateway Regression
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "gateway/platforms/api_server.py"
+      - "tests/gateway/test_api_server.py"
+      - "tests/gateway/test_api_server_idempotency.py"
+      - "tests/gateway/test_sse_agent_cancel.py"
+      - ".github/workflows/gpt-gateway-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted-api-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Python 3.11
+        run: uv python install 3.11
+      - name: Install test dependencies
+        run: |
+          uv venv .venv --python 3.11
+          . .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+      - name: Run affected gateway tests
+        env:
+          OPENAI_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          . .venv/bin/activate
+          python -m pytest -q tests/gateway/test_api_server.py tests/gateway/test_api_server_idempotency.py tests/gateway/test_sse_agent_cancel.py --tb=short
