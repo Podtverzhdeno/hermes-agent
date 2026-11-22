@@ -103,6 +103,23 @@ class GateTests(unittest.TestCase):
         self.assertNotIn(chr(10) + "# fake status", rendered)
         self.assertIn("payload", rendered)
 
+    def test_100_independent_pr_inventory(self):
+        # PR metadata fixture, not 100 real simultaneously running agents.
+        tasks = [pr(i, files=["owned/task_%03d.py" % i]) for i in range(1, 101)]
+        report = m.assess(snapshot(*tasks))
+        self.assertEqual(report["pull_requests"], 100)
+        self.assertEqual(len(report["checks"]), 100)
+        self.assertEqual(report["collisions"], [])
+        self.assertFalse(report["merge_ready"])
+
+    def test_100_prs_one_shared_path_yield_4950_pairs(self):
+        tasks = [pr(i, files=["gateway/platforms/api_server.py"]) for i in range(1, 101)]
+        report = m.assess(snapshot(*tasks))
+        self.assertEqual(len(report["collisions"]), 4950)
+        self.assertEqual(report["collisions"][0]["prs"], [1, 2])
+        self.assertEqual(report["collisions"][-1]["prs"], [99, 100])
+        self.assertFalse(report["merge_ready"])
+
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))
         self.assertIn("Merge authorization: **NO**",m.markdown(result))

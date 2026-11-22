@@ -221,3 +221,7 @@ Additional scalability decisions:
 3. Preserve explicit degraded/error evidence with typed reason SNAPSHOT_RACE, RATE_LIMIT_OR_PERMISSION, TRANSPORT_UNAVAILABLE, PAGINATION_INCOMPLETE; no false green.
 4. Rendering untrusted filenames/titles as Markdown requires escaping separators, line breaks and HTML; report content remains evidence/data, not instructions.
 5. Release only from an integration commit with independent tests. This A0 branch stays read-only and cannot be treated as an authoritative runtime monitor.
+
+## 14. Отбор дублирующих реализаций, проверенные upstream контракты
+
+См. [A0 dossier](GPT_PR_CANDIDATE_SELECTION_A0_2026-11-22.md). Документ сопоставляет восемь PR-аудиторов, native Hermes Kanban, Chrome Native Messaging и GitHub API rate-limit при 30 параллельных PR. Статус: DRAFT, не release acceptance.

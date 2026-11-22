@@ -44,3 +44,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Exact-SHA regression, locally authored code
 - PR #28 SHA `f85b736b4b8519d6b93b9a1f75ccf4af8f2a40ff`: both offline-contract and live-evidence failed **before functional execution** with Python SyntaxError in `_safe_markdown` (`return (` lacked closing parenthesis). Source typo was introduced in A0's own redaction/escaping hardening. Confirmed from GitHub Action job 137185428300 and 137185428459. Fix is one additional closing parenthesis and a fresh exact-head CI. No passing claim until new jobs complete. This demonstrates why independent syntax compilation/CI must precede source claims.
+
+## Source-pinned arbitration and 100-PR metadata fixtures
+- Added the A0 selection dossier: 8 competing PR audit tools (#14, #18, #22, #24, #26, #27, #28, #29), native upstream Kanban, Chrome native host and GitHub API rate limits. No implementation choice or merge has been authorized.
+- Added two metadata-only unit cases for 100 independent PRs (zero collisions) and 100 PRs writing one same path (4,950 expected independent pairs). This does not simulate real worker orchestration or establish 24-hour reliability; await exact-SHA offline CI.
