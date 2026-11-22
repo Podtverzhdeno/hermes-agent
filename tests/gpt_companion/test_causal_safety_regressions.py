@@ -275,3 +275,19 @@ def test_local_journal_rejects_symlink_path_on_posix(tmp_path):
     with pytest.raises(OSError):
         EventJournal(alias)
     assert target.read_bytes() == b"do not follow symlink"
+
+
+def test_local_journal_rejects_hardlinked_path_without_chmod(tmp_path):
+    import os
+    import stat
+    if os.name != "posix":
+        return
+    target = tmp_path / "legitimate-file"
+    target.write_bytes(b"protected bytes")
+    target.chmod(0o640)
+    alias = tmp_path / "alias.db"
+    os.link(target, alias)
+    with pytest.raises(OSError):
+        EventJournal(alias)
+    assert target.read_bytes() == b"protected bytes"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
