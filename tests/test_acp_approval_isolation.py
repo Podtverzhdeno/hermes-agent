@@ -9,7 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools import terminal_tool
+import importlib
+
+# tools.__init__ exports a callable named terminal_tool, not the submodule.
+terminal_tool = importlib.import_module("tools.terminal_tool")
 
 
 def test_parallel_scopes_never_route_permissions_to_another_session(monkeypatch):
