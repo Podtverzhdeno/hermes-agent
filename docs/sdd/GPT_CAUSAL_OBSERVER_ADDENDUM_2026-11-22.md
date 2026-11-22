@@ -24,7 +24,7 @@ For an external write, \`prepare -> effect reserved -> remote call -> verified r
 
 Upstream issue https://github.com/NousResearch/hermes-agent/issues/100971 documents active heartbeats during a stuck tool loop. Track four dimensions independently: \`transport_connected\`, \`worker_recent_heartbeat\`, \`verified_progress\`, \`authoritative_task_succeeded\`. A model's "done" message, a heartbeat or a ChatGPT spinner disappearing cannot complete a task.
 
-Detect repeated *same* operation fingerprint within a producer/attempt/fence since the last independently verified revision-specific artifact. Classify as **NO_VERIFIED_PROGRESS / suspect**, not a proven hang. A legitimate workflow may repeat the same operation. No restart or cancellation solely from this heuristic.
+Detect repeated *same* operation fingerprint within one producer/task/attempt/fence/revision since the last independent matching verifier event. An unrelated task's verification or an earlier successful batch must never suppress a later loop. This bug was discovered and fixed during the second independent review. Four new adversarial tests cover cross-task, cross-attempt, wrong-revision and post-verifier repeated-intent cases. Classify as **NO_VERIFIED_PROGRESS / suspect**, not a proven hang. A legitimate workflow may repeat the same operation. No restart or cancellation solely from this heuristic.
 
 ## ADR-03: append-only causal event envelope (ACCEPT, prototype)
 
@@ -32,7 +32,7 @@ An event records \`schema_version=1\`, canonical \`event_id\`, \`producer_id\`, 
 
 **Trust comes from an independently authenticated adapter**, never a model-supplied event flag. Correlation IDs are not authorization; SHA256 hashes alone are not evidence of correctness. Use one producer incarnation ID per process boot; its sequence is global across runs. Event ordering across producers is partial, not chronological. Durable event ingest must be atomic, deduplicating by \`event_id\` and \`(producer_id, source_event_seq)\`. Conflicting redelivery is an error, never an overwrite or trust upgrade. SQLite WAL is a **single-host** prototype, not a distributed consensus service or shared-network filesystem database.
 
-The isolated candidate implementation + 25 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. \`authoritative_task_state\` remains null by design.
+The isolated candidate implementation + 29 offline tests are in the companion audit archive. It is not connected to the live extension, production Hermes or GitHub CI. \`authoritative_task_state\` remains null by design.
 
 ## ADR-04: deterministic reason precedence and recovery
 
@@ -82,7 +82,7 @@ Weights: expected impact 35%, security 25%, upstream compatibility 20%, testabil
 
 ## QA gates and fault matrix
 
-Offline prototype checks: duplicate concurrent events (30 threads + two SQLite connections), sequence redelivery conflict and trust-upgrade rejection, reordered events/gap healing, producer reboot, cross-run sequence correctness, heartbeat-active repeated-intent loop, fake verifier and fake task completion, missing/mismatched external-effect ack and fence, strict metadata rejection, 50 producers x 20 events (1,000 events). **Isolated Python 3.13.5: 25/25 tests PASS**; no claim of integration, continuous monitoring or production reliability.
+Offline prototype checks: duplicate concurrent events (30 threads + two SQLite connections), sequence redelivery conflict and trust-upgrade rejection, reordered events/gap healing, producer reboot, cross-run sequence correctness, heartbeat-active repeated-intent loop, fake verifier and fake task completion, missing/mismatched external-effect ack and fence, strict metadata rejection, 50 producers x 20 events (1,000 events). **Isolated Python 3.13.5: 29/29 tests PASS**; no claim of integration, continuous monitoring or production reliability.
 
 Unverified and REQUIRED for promotion: Python 3.11/3.12 package imports in actual Hermes; true authenticated adapter; server crash/disk-full failure gate; 100 simultaneous request/retry load, 429 storm, old CI SHA mismatch, suspended MV3 service worker, browser navigation after click, lost Native Messaging ack, wrong ChatGPT conversation, local Obsidian optimistic-hash collision, 24–72-hour synthetic soak, reboot/backup restoration and user Stop. No secrets or sensitive browser data may appear in telemetry.
 
