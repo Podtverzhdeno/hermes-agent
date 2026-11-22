@@ -7,7 +7,9 @@ its outcome. After a crash, an unacknowledged effect needs reconciliation.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
 import time
 import uuid
@@ -17,6 +19,12 @@ from typing import Callable, Iterable, Optional
 
 
 ACTIVE = ("running", "verifying")
+# Only structured failure codes are recorded; never persist raw exception text.
+FAILURE_CODES = frozenset({
+    "TIMEOUT", "RATE_LIMITED", "PROVIDER_UNAVAILABLE", "CONNECTOR_UNAVAILABLE",
+    "LEASE_EXPIRED", "BUDGET_EXCEEDED", "POLICY_DENIED", "SCHEMA_INVALID",
+    "TEST_FAILED", "CONFLICT", "AUTH_EXPIRED", "UNKNOWN_EXTERNAL_EFFECT",
+})
 TERMINAL = ("succeeded", "failed", "cancelled", "blocked")
 
 
@@ -87,6 +95,7 @@ class AutopilotLedger:
                     fence INTEGER NOT NULL DEFAULT 0,
                     lease_until REAL,
                     cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    retry_allowed INTEGER NOT NULL DEFAULT 1,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -130,6 +139,10 @@ class AutopilotLedger:
                     created_at REAL NOT NULL
                 );
             """)
+            # In-place migration for databases created by the initial kernel.
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(tasks)")}
+            if "retry_allowed" not in columns:
+                db.execute("ALTER TABLE tasks ADD COLUMN retry_allowed INTEGER NOT NULL DEFAULT 1")
 
     def _event(self, db, task_id: str, kind: str, detail: dict):
         db.execute(
@@ -200,6 +213,23 @@ class AutopilotLedger:
             return task_id
 
     def _recover_expired(self, db, now: float):
+        # An absent worker should not leave expired approvals waiting forever.
+        expired_approvals = db.execute("""
+            SELECT a.task_id, a.action_key FROM approvals AS a
+            JOIN tasks AS t ON t.id=a.task_id
+            WHERE t.status='waiting_approval' AND a.state='pending'
+              AND a.expires_at <= ?
+        """, (now,)).fetchall()
+        for item in expired_approvals:
+            db.execute("""
+                UPDATE approvals SET state='expired'
+                WHERE task_id=? AND action_key=? AND state='pending'
+            """, (item["task_id"], item["action_key"]))
+            db.execute("""
+                UPDATE tasks SET status='blocked',updated_at=? WHERE id=?
+            """, (now, item["task_id"]))
+            self._event(db, item["task_id"], "approval_expired",
+                        {"action_key": item["action_key"]})
         expired = db.execute(
             "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until < ?",
             (now,),
@@ -342,16 +372,25 @@ class AutopilotLedger:
             if not a or a["state"] != "approved" or a["digest"] != digest or a["expires_at"] <= now:
                 raise ApprovalRequired("explicit matching unexpired approval required")
             old = db.execute(
-                "SELECT digest FROM actions WHERE task_id=? AND action_key=?",
+                "SELECT digest,status FROM actions WHERE task_id=? AND action_key=?",
                 (task_id, action_key),
             ).fetchone()
             if old:
-                raise LedgerConflict("action already reserved; reconcile, never blindly retry")
-            db.execute("""
-                INSERT INTO actions(task_id,action_key,digest,status,created_at,updated_at)
-                VALUES(?,?,?,'reserved',?,?)
-            """, (task_id, action_key, digest, now, now))
-            self._event(db, task_id, "effect_reserved", {"action_key": action_key})
+                # A separately proven 'not_executed' outcome can be retried;
+                # ambiguous or acknowledged outcomes can never be replayed.
+                if old["status"] != "not_executed" or old["digest"] != digest:
+                    raise LedgerConflict("effect already reserved/completed; reconcile before retry")
+                db.execute("""
+                    UPDATE actions SET status='reserved',result_ref=NULL,updated_at=?
+                    WHERE task_id=? AND action_key=?
+                """, (now, task_id, action_key))
+                self._event(db, task_id, "effect_rereserved", {"action_key": action_key})
+            else:
+                db.execute("""
+                    INSERT INTO actions(task_id,action_key,digest,status,created_at,updated_at)
+                    VALUES(?,?,?,'reserved',?,?)
+                """, (task_id, action_key, digest, now, now))
+                self._event(db, task_id, "effect_reserved", {"action_key": action_key})
 
     def acknowledge_effect(
         self, task_id: str, worker: str, fence: int,
@@ -395,7 +434,8 @@ class AutopilotLedger:
             ).fetchone()
             if remaining is None:
                 target = "cancelled" if task["cancel_requested"] else (
-                    "retry_wait" if task["attempts"] < task["max_attempts"] else "failed"
+                    "retry_wait" if task["retry_allowed"] and
+                    task["attempts"] < task["max_attempts"] else "failed"
                 )
                 db.execute("""
                     UPDATE tasks SET status=?, available_at=?, updated_at=? WHERE id=?
@@ -413,16 +453,20 @@ class AutopilotLedger:
         ):
             raise ValueError("invalid evidence")
         with self._db(write=True) as db:
-            self._task(db, task_id)
-            db.execute("""
+            task = self._task(db, task_id)
+            if task["status"] in TERMINAL:
+                raise LedgerConflict("cannot change evidence for a terminal task")
+            result = db.execute("""
                 INSERT INTO evidence
                 (task_id,kind,source,revision,conclusion,artifact_ref,trusted,observed_at)
                 VALUES (?,?,?,?,?,?,?,?)
                 ON CONFLICT(task_id,kind,source,revision)
                 DO UPDATE SET conclusion=excluded.conclusion, artifact_ref=excluded.artifact_ref,
                     trusted=excluded.trusted, observed_at=excluded.observed_at
+                WHERE evidence.trusted=0 OR excluded.trusted=1
             """, (task_id, kind, source, revision, conclusion, artifact_ref, int(trusted), self.clock()))
-            self._event(db, task_id, "evidence_recorded",
+            self._event(db, task_id,
+                        "evidence_recorded" if result.rowcount else "evidence_ignored_untrusted",
                         {"kind": kind, "source": source, "trusted": trusted, "revision": revision})
 
     def begin_verification(self, task_id: str, worker: str, fence: int):
@@ -453,9 +497,17 @@ class AutopilotLedger:
                         AND conclusion='passed' AND trusted=1
                 """, (task_id, task["revision"]))
             }
-            if not set(required).issubset(passed):
+            failed = {
+                x["kind"] for x in db.execute("""
+                    SELECT kind FROM evidence WHERE task_id=? AND revision=?
+                        AND conclusion='failed' AND trusted=1
+                """, (task_id, task["revision"]))
+            }
+            missing = sorted(set(required) - passed)
+            conflicts = sorted(set(required) & failed)
+            if missing or conflicts:
                 self._event(db, task_id, "verification_incomplete",
-                            {"missing": sorted(set(required) - passed)})
+                            {"missing": missing, "trusted_failures": conflicts})
                 return False
             db.execute("""
                 UPDATE tasks SET status='succeeded', owner=NULL,lease_until=NULL,
@@ -465,6 +517,12 @@ class AutopilotLedger:
             return True
 
     def fail(self, task_id: str, worker: str, fence: int, reason: str, retryable: bool):
+        # Failure messages can contain credentials or prompt contents. Keep only
+        # a bounded approved code and an opaque correlation fingerprint.
+        if not isinstance(reason, str):
+            raise ValueError("reason must be a string")
+        code = reason.strip() if reason.strip() in FAILURE_CODES else "UNCLASSIFIED_FAILURE"
+        fingerprint = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
         with self._db(write=True) as db:
             task = self._assert_worker(db, task_id, worker, fence)
             unresolved = db.execute(
@@ -472,14 +530,17 @@ class AutopilotLedger:
                 (task_id,),
             ).fetchone()
             status = ("needs_reconciliation" if unresolved else
-                      "retry_wait" if retryable and task["attempts"] < task["max_attempts"]
-                      else "failed")
+                      "cancelled" if task["cancel_requested"] else
+                      "retry_wait" if retryable and task["retry_allowed"]
+                      and task["attempts"] < task["max_attempts"] else "failed")
             available_at = self.clock() + min(3600, 2 ** min(task["attempts"], 10))
             db.execute("""
                 UPDATE tasks SET status=?,owner=NULL,lease_until=NULL,available_at=?,
-                    updated_at=? WHERE id=?
-            """, (status, available_at, self.clock(), task_id))
-            self._event(db, task_id, "failed_attempt", {"reason": reason[:500], "next": status})
+                    updated_at=?,retry_allowed=CASE WHEN ? THEN retry_allowed ELSE 0 END
+                WHERE id=?
+            """, (status, available_at, self.clock(), int(retryable), task_id))
+            self._event(db, task_id, "failed_attempt",
+                        {"reason_code": code, "fingerprint": fingerprint, "next": status})
 
     def cancel(self, task_id: str):
         """Cancellation is cooperative for leased workers; no silent rollback."""
