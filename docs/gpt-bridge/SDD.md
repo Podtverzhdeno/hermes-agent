@@ -207,3 +207,14 @@ Every SDD change proposes: problem evidence and affected revision; competing cau
 10. OpenTelemetry tool calls — https://github.com/open-telemetry/semantic-conventions-genai/blob/main/docs/gen-ai/execute-tool.md
 11. W3C Trace Context — https://www.w3.org/TR/trace-context/
 12. Google SRE monitoring — https://sre.google/sre-book/monitoring-distributed-systems/
+
+
+## 13. Critical audit correction: uncertain external effects cross lease epochs
+
+Follow-up code review caught and fixed an unsafe projection: considering only the latest worker fence hid effects left uncertain by the previous worker. **That would produce a misleading active status after worker replacement.** Diagnostic code now scans task-global effect uncertainties across all fencing epochs, while current worker liveness, tab/transport and pending approvals remain scoped to the newest epoch.
+
+A reconciliation from an obsolete fence that arrives *after* a newer fence was observed does not erase the unresolved effect. A new-fence reconciliation can clear it in the advisory view, though this remains **reported-only** until authenticated, independently verified receipts exist. Stable action IDs MUST be globally unique within a task; old fence activity may not authorize any new external effect. Four new cross-fence regression tests cover lost effect, valid new-epoch reconciliation, stale old-epoch reconciliation and obsolete approval, plus two subprocess crash-before/after-commit tests. Focused local suite: **45 passed**, not a full-repo or live-browser test.
+
+## 14. Measured local contention, distinct from acceptance targets
+
+One reproducible, non-production synthetic probe on the assistant's Linux container used 100 parallel simulated agent threads, each appending 10 durable events to a single SQLite WAL observer (1,000 events total). Result: **2.045 s** wall time, **489 events/s**, **append p50 0.78 ms, p95 731.64 ms, p99 1,340.38 ms** including lock contention and connection overhead; full hash chain verified, file size **589,824 bytes**. This is a single sample, not a statistically validated service SLO or a Windows/Edge benchmark. Long-tail waits under simultaneous writers justify measuring queue depth and tool latency before scaling, not abandoning WAL prematurely. Real profile, disk latency, storage quotas and 100-agent E2E still need testing.
