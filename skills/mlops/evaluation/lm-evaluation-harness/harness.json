@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "skill": "evaluating-llms-harness",
+  "purpose": "Benchmark models with reproducible datasets and explicit uncertainty.",
+  "risk": "local_write",
+  "routing": {
+    "trigger": [
+      "Benchmark these language models on GSM8K and MMLU",
+      "Evaluate my fine-tuned model with lm-eval",
+      "Compare runs of model accuracy across snapshots"
+    ],
+    "do_not_trigger": [
+      "Judge writing style without running a benchmark",
+      "Review a GitHub PR",
+      "Deploy an LLM to production"
+    ]
+  },
+  "preflight": [
+    "Pin model, tokenizer, dataset revision and evaluator versions.",
+    "Verify dataset license, prompt templates and deterministic decoding settings.",
+    "Record hardware, sample counts and resource budgets."
+  ],
+  "workflow": [
+    "Run a small dry-run then the agreed benchmark subset.",
+    "Capture raw per-task counts and task configuration.",
+    "Compare uncertainty, seeds and contamination limitations.",
+    "Store machine-readable results and exact provenance."
+  ],
+  "actions": [
+    {
+      "operation": "eval.plan",
+      "risk": "read_only",
+      "approval": "none",
+      "requires_evidence": [
+        "benchmark-config"
+      ]
+    },
+    {
+      "operation": "eval.run",
+      "risk": "local_write",
+      "approval": "scoped",
+      "requires_evidence": [
+        "benchmark-config",
+        "benchmark-results",
+        "provenance"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "benchmark-config",
+      "source": "artifact",
+      "how_to_verify": "Record dataset/task hashes, model and decoding parameters."
+    },
+    {
+      "id": "benchmark-results",
+      "source": "artifact",
+      "how_to_verify": "Retain raw numeric results and sample counts, not narrative alone."
+    },
+    {
+      "id": "provenance",
+      "source": "file_hash",
+      "how_to_verify": "Pin evaluator, model and dataset versions and result artifact hash."
+    }
+  ],
+  "failure_modes": [
+    "Do not claim comparable rankings from different task templates or subsets.",
+    "On OOM or interrupted runs, mark incomplete counts and resume only verified shards."
+  ]
+}
