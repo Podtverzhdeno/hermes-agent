@@ -1,0 +1,45 @@
+name: GPT Read-only Audit Contract Tests
+
+on:
+  pull_request:
+    paths:
+      - "gateway/gpt_bridge_event_audit.py"
+      - "tests/gateway/test_gpt_bridge_event_audit.py"
+      - "docs/sdd/HERMES_GPT_*"
+      - ".github/workflows/gpt-readonly-audit.yml"
+  push:
+    branches:
+      - "feat/gpt-readonly-run-audit-20261122"
+    paths:
+      - "gateway/gpt_bridge_event_audit.py"
+      - "tests/gateway/test_gpt_bridge_event_audit.py"
+      - "docs/sdd/HERMES_GPT_*"
+      - ".github/workflows/gpt-readonly-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpt-audit-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout pinned head
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install minimal test dependency
+        run: python -m pip install --disable-pip-version-check "pytest==8.4.2"
+      - name: Assert compile and sandbox-safe imports
+        run: |
+          python -m py_compile gateway/gpt_bridge_event_audit.py
+          python -m py_compile tests/gateway/test_gpt_bridge_event_audit.py
+      - name: Focused native SSE causal contract regressions
+        run: python -m pytest -q tests/gateway/test_gpt_bridge_event_audit.py --tb=short
