@@ -175,7 +175,8 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Session-Id",
+    "Access-Control-Expose-Headers": "X-Hermes-Run-Id, X-Hermes-Session-Id",
 }
 
 
@@ -488,7 +489,8 @@ class APIServerAdapter(BasePlatformAdapter):
                     self._session_db = SessionDB()
                 history = self._session_db.get_messages_as_conversation(session_id)
             except Exception as e:
-                logger.warning("Failed to load session history for %s: %s", session_id, e)
+                # Do not leak caller-controlled session IDs or sensitive exception text.
+                logger.warning("Failed to load session history (exception class: %s)", type(e).__name__)
                 history = []
         else:
             session_id = str(uuid.uuid4())
@@ -551,6 +553,10 @@ class APIServerAdapter(BasePlatformAdapter):
                 ephemeral_system_prompt=system_prompt,
                 session_id=session_id,
             )
+            # An internal agent failure is not a successful response. It must
+            # not be placed in the idempotency success cache.
+            if result.get("error") and not result.get("final_response"):
+                raise RuntimeError("Hermes agent returned an execution error")
             # Cache/replay the original session and completion identifiers.
             return result, usage, session_id, completion_id, created
 
