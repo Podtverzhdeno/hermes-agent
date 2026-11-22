@@ -88,6 +88,8 @@ A native API/SDK adapter can provide documented streaming, usage, provider respo
 - The orchestrator consumes only strictly validated, authenticated structured transport events. It never reads page text to infer agent success, and cannot issue its own approval.
 - Test at least 1/5/10/30 active agents using fake CDP sessions (no real accounts required), then a single owner-authorized canary with known safe no-op prompt. Record loss, duplication, false completion, p95 queue wait, task-recovery ratio and real consented prompt receipts.
 
+**Isolated CDP contract implementation (current PR #10):** `autopilot/cdp_contract.py` adds a fail-closed **pure offline validator** for the already agreed `request_id/content/tool_calls` reply. `tests/autopilot/test_cdp_contract.py` defines correlation, duplicate key/call rejection, UTF-8 and payload caps, declared tool names and bounded argument depth tests. It deliberately cannot connect CDP, read browser tabs, grant tool permissions, execute a proposed tool, or establish a live result. The nested tool-call encoding is a **proposed negotiation shape** (normalized or OpenAI-style); test against the real extension before any runtime deployment.
+
 **Implementation boundary now:** this repository's inspected main tree does not contain the owner's Web Companion browser extension sources; local workspace tunnel is unreachable. Therefore **no claim is made that the CDP extension or port 18763 was modified or monitored live**. This SDD documents the accepted contract and a future version-pinned adapter, not a fabricated integration.
 
 
