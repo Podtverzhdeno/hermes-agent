@@ -43,6 +43,15 @@ CAUSE_ACTIONS = {
     "BROWSER_TAB_CLOSED": "CHECK_ADAPTER_SESSION_NOT_TASK_RESULT",
     "CI_FAILED": "INSPECT_CHECKS_AT_EXACT_SHA",
     "LEASE_EXPIRED": "CHECK_FENCING_AND_WORKER_OWNER",
+    "INCOMPATIBLE_HERMES_VERSION": "STOP_INTEGRATION_AND_NEGOTIATE_VERSION",
+    "HOOK_UNAVAILABLE": "CHECK_RUNTIME_CAPABILITIES_AND_VERSION",
+    "PLUGIN_DISABLED": "CHECK_SCOPED_PLUGIN_CONFIG_AND_CONSENT",
+    "MCP_SESSION_TERMINATED": "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX",
+    "TRANSPORT_DISCONNECTED": "RECONNECT_TRANSPORT_AND_REPLAY_OUTBOX",
+    "CORS_REJECTED": "CHECK_ALLOWED_EXTENSION_ORIGIN",
+    "BROWSER_DETACHED": "CHECK_OPT_IN_TAB_ATTACHMENT",
+    "OUTBOX_BACKPRESSURE": "PAUSE_PRODUCER_AND_CHECK_STORAGE_LIMIT",
+    "SOURCE_UNAUTHENTICATED": "REJECT_EVENT_AND_CHECK_INGRESS_AUTH",
     "UNKNOWN": "CLASSIFY_FAILURE_MANUALLY",
 }
 
@@ -212,21 +221,37 @@ class EventJournal:
         # Track the source-local highest sequence at receipt time, without
         # assuming any causal order across different sources.
         source_frontier: dict[str, int] = {}
-        frontier_receipts: list[float] = []
+        frontier_receipts: list[tuple[str, float, str]] = []
         progress_receipts: list[float] = []
+        worker_sources = {e["source"] for e, _ in events if e["kind"].startswith("worker.")}
         for row, (event, received_at) in zip(rows, events):
             src, sequence = row["source"], row["sequence"]
             if sequence <= source_frontier.get(src, 0):
                 continue
             source_frontier[src] = sequence
-            frontier_receipts.append(received_at)
-            if event["kind"] not in ("worker.heartbeat", "run.accepted"):
+            frontier_receipts.append((src, received_at, event["kind"]))
+            if (event["kind"] not in ("worker.heartbeat", "run.accepted")
+                    and (not worker_sources or src in worker_sources)):
                 progress_receipts.append(received_at)
+        # Gateway/observer traffic does not keep a known worker alive. If this
+        # attempt has worker.* signals, measure worker-only source frontiers.
+        # For runs without any worker signal, retain the conservative generic
+        # event freshness as a hint, never a lease/health verification.
+        worker_last_seen: dict[str, float] = {}
+        for src, stamp, _ in frontier_receipts:
+            if src in worker_sources:
+                worker_last_seen[src] = stamp
+        live_receipts = (list(worker_last_seen.values()) if worker_last_seen else
+                         [stamp for _, stamp, _ in frontier_receipts])
+        last_seen = max(live_receipts)
+        stale_worker_sources = sorted(
+            src for src, stamp in worker_last_seen.items()
+            if moment - stamp >= liveness_timeout
+        )
         # With no progress events, the FIRST observed arrival is the baseline,
-        # rather than the last heartbeat; an endless heartbeat-only worker
-        # must eventually be classified as alive without progress.
-        last_seen = max(frontier_receipts)
-        last_progress = max(progress_receipts) if progress_receipts else min(frontier_receipts)
+        # not the last heartbeat: endless heartbeat-only workers still stall.
+        last_progress = (max(progress_receipts) if progress_receipts else
+                         min(stamp for _, stamp, _ in frontier_receipts))
         live_age = max(0.0, moment - last_seen)
         progress_age = max(0.0, moment - last_progress)
         keys = {(r["source"], r["sequence"]) for r in rows}
@@ -288,6 +313,10 @@ class EventJournal:
             state, next_action = "AWAITING_VERIFICATION", "VERIFY_ARTIFACTS_AT_EXACT_REVISION"
         elif last_terminal == "worker.stopped":
             state, next_action = "STOPPED_UNCONFIRMED", "RECONCILE_WORKER_STOP"
+        elif stale_worker_sources and len(stale_worker_sources) < len(worker_sources):
+            state, next_action = "PARTIAL_WORKER_OUTAGE", "CHECK_EACH_WORKER_AND_LEASE"
+        elif stale_worker_sources:
+            state, next_action = "WORKER_UNRESPONSIVE", "CHECK_WORKER_AND_LEASE"
         elif live_age >= liveness_timeout:
             state, next_action = "WORKER_UNRESPONSIVE", "CHECK_WORKER_AND_LEASE"
         elif progress_age >= progress_timeout:
@@ -300,4 +329,6 @@ class EventJournal:
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
                 "progress_age_seconds": round(progress_age, 3),
+                "worker_sources_count": len(worker_sources),
+                "stale_worker_sources": stale_worker_sources,
                 "note": "Untrusted telemetry; only an independent verifier may certify success."}
