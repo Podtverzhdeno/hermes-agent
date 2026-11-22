@@ -13,6 +13,8 @@ Use a **durable, typed, privacy-minimizing observation plane** joined to (but no
 
 No original ChatGPT/Chrome extension source was found in the inspected fork main tree. Local Workspace MCP was unavailable during this audit (session terminated). Consequently neither an active browser monitor nor a live GPT agent was observed or repaired in this PR.
 
+**Cross-repository source discovery (later in this audit):** the concrete WebGPT/ChatGPT extension lives in the **separate** repository [Podtverzhdeno/Tunnel](https://github.com/Podtverzhdeno/Tunnel), paths Hermes-WebGPT and chat-launch-smoke-desktop-test/web-extension. Its main manifest is version 0.6.6, while existing local-release documents reference 0.9.7; the actually loaded Windows source/extension hash was not accessible. A separate [Tunnel draft PR #13](https://github.com/Podtverzhdeno/Tunnel/pull/13) now contains read-only causal triage over the existing Relay queue and a source-specific OpenSpec SDD. **This observer remains an independent prototype; the two repos have not been integrated or activated.**
+
 **Non-goals:** manipulating ChatGPT DOM/transcripts as the primary task API, bypassing authentication/CAPTCHA/platform permissions, auto-approving high-impact actions, secrets in logs, globally writable tunnels, unlimited retries, claims of 24/7 operation without an always-on host.
 
 ## 1. Architectural planes and trust boundaries
