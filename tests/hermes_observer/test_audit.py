@@ -30,6 +30,34 @@ def audit(*items):
 
 
 class MetadataContractTests(unittest.TestCase):
+    def test_empty_snapshot_is_incomplete_not_success(self):
+        result = audit_stream(io.BytesIO(b""))
+        self.assertEqual(result["status"], "incomplete_observation")
+        self.assertEqual(result["exit_code"], 3)
+        self.assertIn("EMPTY_SNAPSHOT", result["finding_counts"])
+
+    def test_conflicting_terminal_states_in_one_attempt(self):
+        attempt = "33333333-3333-4333-8333-333333333333"
+        a = ev(seq=1, kind="task.completed", attempt_id=attempt, state_to="failed", reason_code="UNKNOWN")
+        b = ev(seq=2, kind="task.completed", attempt_id=attempt, state_to="succeeded")
+        result = audit(a, b)
+        self.assertEqual(result["status"], "integrity_anomaly")
+        self.assertIn("CONFLICTING_ATTEMPT_TERMINAL_STATES", result["finding_counts"])
+
+    def test_different_attempts_can_have_distinct_terminal_outcomes(self):
+        a = ev(seq=1, kind="task.completed", state_to="failed", reason_code="UNKNOWN",
+               attempt_id="33333333-3333-4333-8333-333333333333")
+        b = ev(seq=2, kind="task.completed", state_to="succeeded",
+               attempt_id="44444444-4444-4444-8444-444444444444")
+        result = audit(a, b)
+        self.assertNotIn("CONFLICTING_ATTEMPT_TERMINAL_STATES", result["finding_counts"])
+
+    def test_missing_attempt_identity_marks_conflicting_terminals_uncertain(self):
+        a = ev(seq=1, kind="task.completed", state_to="failed", reason_code="UNKNOWN")
+        b = ev(seq=2, kind="task.completed", state_to="succeeded")
+        result = audit(a, b)
+        self.assertIn("TERMINAL_CONFLICT_WITHOUT_ATTEMPT_ID", result["finding_counts"])
+
     def test_clean_single_event_is_not_authoritative_health(self):
         result = audit(ev())
         self.assertEqual(result["exit_code"], 0)
