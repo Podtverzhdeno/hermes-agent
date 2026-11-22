@@ -73,7 +73,7 @@ def validate_event(data: Mapping[str, Any]) -> dict[str, Any]:
     for key in ("attempt", "sequence"):
         if type(data[key]) is not int or not 1 <= data[key] <= 1_000_000_000:
             raise JournalConflict(f"invalid {key}")
-    if data["kind"] not in EVENT_KINDS or type(data["kind"]) is not str:
+    if type(data["kind"]) is not str or data["kind"] not in EVENT_KINDS:
         raise JournalConflict("unknown kind")
     if data["kind"].startswith("tool.effect_") and "action_id" not in data:
         raise JournalConflict("effect events need action_id")
@@ -197,6 +197,8 @@ class EventJournal:
         if not (5 <= liveness_timeout <= progress_timeout <= 86400):
             raise ValueError("invalid timeouts")
         moment = float(self.clock() if now is None else now)
+        if not (0 <= moment < 1e14):
+            raise ValueError("invalid observation clock")
         with self._db() as db:
             a = db.execute("SELECT MAX(attempt) AS n FROM events WHERE run_id=?", (run_id,)).fetchone()["n"]
             if a is None:
@@ -205,9 +207,26 @@ class EventJournal:
                 FROM events WHERE run_id=? AND attempt=? ORDER BY position""",
                 (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
-        last_seen = max(t for _, t in events)
-        last_progress = max((t for e, t in events if e["kind"] not in
-                             ("worker.heartbeat", "run.accepted")), default=last_seen)
+        # Delivery can be reordered. A backfilled event with an older sequence
+        # must NOT refresh liveness/progress and conceal an abandoned worker.
+        # Track the source-local highest sequence at receipt time, without
+        # assuming any causal order across different sources.
+        source_frontier: dict[str, int] = {}
+        frontier_receipts: list[float] = []
+        progress_receipts: list[float] = []
+        for row, (event, received_at) in zip(rows, events):
+            src, sequence = row["source"], row["sequence"]
+            if sequence <= source_frontier.get(src, 0):
+                continue
+            source_frontier[src] = sequence
+            frontier_receipts.append(received_at)
+            if event["kind"] not in ("worker.heartbeat", "run.accepted"):
+                progress_receipts.append(received_at)
+        # With no progress events, the FIRST observed arrival is the baseline,
+        # rather than the last heartbeat; an endless heartbeat-only worker
+        # must eventually be classified as alive without progress.
+        last_seen = max(frontier_receipts)
+        last_progress = max(progress_receipts) if progress_receipts else min(frontier_receipts)
         live_age = max(0.0, moment - last_seen)
         progress_age = max(0.0, moment - last_progress)
         keys = {(r["source"], r["sequence"]) for r in rows}
