@@ -274,3 +274,33 @@ def test_unscoped_multi_approval_response_remains_ambiguous():
     assert out["pending_approvals"] == 2
     assert "APPROVAL_RESOLUTION_UNCORRELATED" in out["evidence"]
     assert out["next_action"] == "FETCH_STATUS_AND_REPLAY_EVENTS"
+
+
+def test_token_shaped_reason_is_not_mistaken_for_safe_code():
+    credential = "sk-proj-SUPERSECRETINCIDENTTOKEN"
+    wire = sse(event("run.queued", 0),
+               event("run.failed", 1, reason_code=credential))
+    out = explain_sse(wire, RID,
+        {"run_id": RID, "status": "failed", "turn_exit_reason": credential,
+         "updated_at": 1795344001.0})
+    assert credential not in json.dumps(out)
+    assert out["stop_reason"] == "UNCLASSIFIED"
+
+
+def test_token_shaped_unknown_event_is_redacted_but_schema_drift_flagged():
+    credential = "sk-proj-EXPORTEDASUNKNOWNEVENT"
+    out = explain_sse(sse(event("run.queued", 0), event(credential, 1)), RID)
+    assert credential not in json.dumps(out)
+    assert out["last_event"] == "event.unrecognized"
+    assert out["missing_events"] is True
+    assert "UNRECOGNIZED_EVENT" in out["evidence"]
+
+
+def test_arbitrary_status_is_not_echoed_or_treated_as_terminal():
+    credential = "ghp_SUPERSENSITIVEACCESSCODE"
+    out = explain_sse(sse(event("run.queued", 0)), RID,
+                      {"run_id": RID, "status": credential,
+                       "updated_at": 1795344001.0})
+    assert credential not in json.dumps(out)
+    assert out["supplied_status"] == "unknown_status"
+    assert "UNRECOGNIZED_STATUS" in out["evidence"]
