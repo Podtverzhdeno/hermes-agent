@@ -230,6 +230,11 @@ class EventJournal:
                 FROM events WHERE run_id=? AND attempt<? AND kind IN
                 ('tool.effect_reserved','tool.effect_acknowledged','tool.effect_not_executed')
                 ORDER BY position""", (run_id, a)).fetchall()
+            # A missing event in an older attempt can conceal a reservation
+            # or failed stop. Advancing to a new attempt does not repair it.
+            prior_seq_counts = db.execute("""SELECT attempt,source,MAX(sequence) AS high,
+                COUNT(*) AS seen FROM events WHERE run_id=? AND attempt<?
+                GROUP BY attempt,source""", (run_id, a)).fetchall()
         events = [(json.loads(r["event_json"]), r["received_at"]) for r in rows]
         # Server receipt timestamps can jump backward after NTP/time changes.
         # In that case time-based liveness diagnosis is unreliable.
@@ -320,6 +325,7 @@ class EventJournal:
             key = (row["attempt"], event["action_id"])
             target = prior_reserved if event["kind"] == "tool.effect_reserved" else prior_resolved
             target.setdefault(key, []).append((row["source"], row["sequence"]))
+        missing_prior = sum(int(r["high"]) - int(r["seen"]) for r in prior_seq_counts)
         prior_unresolved = []
         for (past_attempt, action_id), reservations in sorted(prior_reserved.items()):
             resolutions = prior_resolved.get((past_attempt, action_id), [])
@@ -372,7 +378,7 @@ class EventJournal:
             state, next_action = "EFFECT_IN_FLIGHT", "MONITOR_NO_BLIND_RETRY"
         elif clock_reversed:
             state, next_action = "CLOCK_SKEW_DETECTED", "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
-        elif contradictory or missing:
+        elif contradictory or missing or missing_prior:
             state, next_action = "TRACE_INCOMPLETE", "FETCH_MISSING_EVENTS"
         elif pending_approval:
             state, next_action = "WAITING_APPROVAL", "ASK_AUTHORIZED_REVIEWER"
@@ -395,6 +401,7 @@ class EventJournal:
         return {"run_id": run_id, "attempt": a, "state": state,
                 "next_action": next_action, "unresolved_effects": sorted(reserved),
                 "pending_approvals": sorted(pending_approval), "missing_sequences": missing,
+                "missing_sequences_prior_attempts": missing_prior,
                 "unresolved_effects_prior_attempts": prior_unresolved,
                 "reported_reason_code": reason if last_terminal == "run.reported_failed" else None,
                 "live_age_seconds": round(live_age, 3),
