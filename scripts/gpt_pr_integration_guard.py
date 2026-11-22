@@ -311,6 +311,10 @@ def analyze(snapshot: dict[str, Any]) -> dict[str, Any]:
         'counts': {'blocker': sum(f['severity'] == 'blocker' for f in findings),
                    'review': sum(f['severity'] == 'review' for f in findings)},
         'findings': findings,
+        'collection_status': 'COMPLETE_METADATA_SNAPSHOT',
+        'integration_verdict': 'HOLD_FOR_REVIEW' if any(f['severity'] == 'blocker' for f in findings) else 'REVIEW_ONLY',
+        'runtime_verdict': 'UNOBSERVED',
+        'ci_verdict': 'UNVERIFIED',
         'confidence': 'GitHub metadata only; no runtime/CI/permission or provider success inferred',
     }
 
@@ -319,6 +323,7 @@ def markdown(report: dict[str, Any]) -> str:
     lines = [
         '# Hermes GPT PR integration watch',
         f"Open PRs: {report['open_pr_count']}; blockers: {report['counts']['blocker']}; reviews: {report['counts']['review']}.",
+        f"**Integration decision: {report['integration_verdict']}** (GitHub metadata only; CI {report['ci_verdict']}; runtime {report['runtime_verdict']}).",
         f"Base HEAD: `{report['default_head_sha']}`.",
         '**Read-only metadata analysis; not a runtime monitor or test-success assertion.**',
     ]
