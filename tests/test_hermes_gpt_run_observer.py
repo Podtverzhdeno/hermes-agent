@@ -180,3 +180,13 @@ def test_observer_heartbeat_is_not_worker_progress():
     assert heartbeat[0]["status"] == "running"
     assert heartbeat[0]["progress_age_seconds"] == 31.0
     assert not any(e["kind"] == "progress_stale_suspected" for e in events)
+
+
+def test_authenticated_observer_does_not_follow_redirects_or_proxies():
+    from scripts.hermes_gpt_run_observer import _RejectRedirects, _SAFE_HTTP_OPENER
+    from urllib.request import ProxyHandler
+    assert _RejectRedirects().redirect_request(
+        None, None, 302, "Found", {}, "https://untrusted.example",
+    ) is None
+    proxies = [x for x in _SAFE_HTTP_OPENER.handlers if isinstance(x, ProxyHandler)]
+    assert len(proxies) == 1 and proxies[0].proxies == {}
