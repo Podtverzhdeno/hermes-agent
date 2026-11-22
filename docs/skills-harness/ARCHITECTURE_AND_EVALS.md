@@ -143,6 +143,32 @@ workflows have all passed. For each skill, at least two positive and two
 negative routing examples are machine-linted. Their current counts are
 structural fixtures, **not measured model precision or recall**.
 
+## Extended individual contracts (second high-risk wave)
+
+| Skill | Operation-specific gates | Highest risk | Key failure |
+|---|---|---|---|
+| github-auth | inspect / configure / escalate | critical | plaintext credentials and unbounded scope |
+| github-repo-management | inspect / clone / create / admin | critical | unauthorized settings, release or secret mutation |
+| codex | review / implementation | critical | bypassed sandbox or runaway child executor |
+| claude-code | review / implementation | critical | bypassed permissions and unverified output |
+| code-review | inspect | read_only | accepting incomplete diff as clean |
+| writing-plans | draft / save | local_write | plan claimed as implemented |
+| requesting-code-review | prepare / record | local_write | fabricated independent signoff |
+| fastmcp | design / build / launch | critical | unreviewed server and tool exposure |
+| chroma | query / index | local_write | embedding/schema mismatch and duplicates |
+| faiss | inspect / index | local_write | wrong dimensions and recall overstatement |
+| dspy | plan / optimize | external_write | unintended external data upload and benchmark leakage |
+| powerpoint | inspect / edit | local_write | unrendered or broken slide layout |
+| nano-pdf | inspect / edit | critical | wrong-page retries and document exfiltration |
+| blender-mcp | inspect / edit / launch | critical | untrusted code/scene deletion and unauthenticated port |
+| ocr-and-documents | extract local / remote OCR | critical | private upload and unverifiable page coverage |
+
+The **27** profiled Skills span two waves; there may be many more
+bundled/optional Skills. Unprofiled does not mean safe or verified.
+Each harness is a distinct file, not a copy-paste universal prompt.
+The selection fixtures are structural: a real model has not yet
+been tested for activation accuracy on the new casebook.
+
 ## Two independent evaluation planes
 
 ### A. Deterministic, offline tests (implemented)
@@ -156,6 +182,13 @@ structural fixtures, **not measured model precision or recall**.
 - No secrets/network/model calls in the isolated CI contract workflow.
 - Inventory of ALL bundled/optional source skills with UNKNOWN status for
   unprofiled skills, without pretending a regex hint is a security verdict.
+- 27 individually tailored contracts with at least 162 positive/negative
+  routing examples and operation-specific evidence/approval scopes.
+- A deterministic JSONL casebook generator and observation scorer providing
+  confusion matrices, Wilson 95% intervals and paired reported-outcome deltas;
+  it does NOT authenticate reported evidence or run a live model.
+- A security lint against forbidden executable snippets in sensitive GitHub,
+  Codex/Claude, Blender, PDF and codebase inspection Skills.
 
 Commands from repository root:
 
@@ -163,6 +196,8 @@ Commands from repository root:
 python -m unittest discover -s tests/skill_harness -p test_*.py -v
 python -m scripts.audit_skill_harnesses --format markdown
 python -m pytest tests/agent/test_skill_harness_integration.py -q -o addopts=
+python -m scripts.skill_harness_safety_lint
+python -m scripts.evaluate_specialized_skills export --root . --output /tmp/skill-cases.jsonl
 ~~~
 
 The CI contract matrix targets Linux Python 3.11/3.12/3.13 and Windows 3.12.
@@ -246,7 +281,7 @@ when attributing causality.
 ## Release gates
 
 G0 inventory: exact existing Skills and environment recorded; no secrets
-copied into git. **Static source inventory implemented.**
+copied into git. **Static source inventory implemented; profile coverage is 27, not 100%.**
 
 G1 strict schemas: every candidate harness validated and versioned;
 invalid opt-in contracts fail closed. **Implemented, CI pending.**
@@ -254,12 +289,14 @@ invalid opt-in contracts fail closed. **Implemented, CI pending.**
 G2 integrations: actual skill_view, slash and preloaded-skill path preserve
 new guidance; backwards-compatible unprofiled Skills. **Tests added.**
 
-G3 security: no raw local GitHub credential scraping; no silent global
-pip install; all remote writes verified or blocked. **Docs improved,
-runtime broker not implemented.**
+G3 security: GitHub credentials moved to scoped host-managed login,
+dangerous default coding-agent permission bypass flags removed, unpinned
+Blender addon launch prohibited, wrong-page PDF retries prevented. A
+static executable-snippet lint guards high-risk regressions. **Skill
+instructions improved; runtime broker enforcement NOT implemented.**
 
 G4 behavioral evals: with/without skill for positives, negatives, adjacent
-triggers, failures and hostile source text. **Not yet executed.**
+triggers, failures and hostile source text. **Casebook and offline scoring are implemented; live model replays have NOT been executed.**
 
 G5 trusted broker: typed action, authorization, resource scope, budgets,
 exact-effect readback and cancellation. **Not implemented.**
