@@ -175,6 +175,66 @@ class CollisionAuditTests(unittest.TestCase):
             with self.assertRaisesRegex(module.AuditError, "Branch moved"):
                 module.collect("example/hermes")
 
+
+    def test_thirty_agents_touching_one_api_file_are_all_flagged(self):
+        items = [("agent-%02d" % i, ["gateway/platforms/api_server.py"])
+                 for i in range(30)]
+        result = module.audit(inventory(items))
+        self.assertEqual(result["entries_checked"], 30)
+        self.assertEqual(result["exact_collisions"], 435)
+        self.assertEqual(result["verdict"], "HOLD")
+        self.assertTrue(all(f["severity"] == "P0"
+                            for f in result["findings"]))
+
+    def test_hundred_disjoint_agent_paths_are_not_false_collisions(self):
+        items = [("agent-%03d" % i, ["isolated/worktree-%03d/file.py" % i])
+                 for i in range(100)]
+        result = module.audit(inventory(items))
+        self.assertEqual(result["entries_checked"], 100)
+        self.assertEqual(result["exact_collisions"], 0)
+        self.assertEqual(result["capability_reviews"], 0)
+        self.assertEqual(result["verdict"],
+                         "NO_COLLISION_FOUND_NOT_MERGE_APPROVAL")
+
+    def test_pr_listing_at_limit_fails_closed(self):
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?state=open" in url:
+                return [{"number": 2, "base": {"ref": "main"},
+                         "head": {"sha": T, "ref": "feature",
+                                  "repo": {"full_name": "example/hermes"}}}]
+            if "/pulls/2/files" in url:
+                return [{"filename": "src/f%d.py" % i}
+                        for i in range(3000)]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "3000-file"):
+                module.collect("example/hermes", prs_only=True)
+
+    def test_branch_comparison_truncation_fails_closed(self):
+        def fake_get(url, token):
+            if "/branches/main" in url:
+                return {"commit": {"sha": S}}
+            if "/compare/" in url:
+                return {"status": "ahead", "ahead_by": 1,
+                        "files": [{"filename": "src/%d.py" % i}
+                                  for i in range(300)]}
+            raise AssertionError(url)
+        def fake_pages(url, token, limit):
+            if "/pulls?" in url:
+                return []
+            if url.endswith("/branches"):
+                return [{"name": "feature", "commit": {"sha": T}}]
+            raise AssertionError(url)
+        with patch.object(module, "_get", fake_get), patch.object(
+                module, "_pages", fake_pages):
+            with self.assertRaisesRegex(module.AuditError, "truncated"):
+                module.collect("example/hermes")
+
     def test_live_collection_failure_never_prints_green(self):
         def bad_get(url, token):
             raise module.AuditError("GitHub down")
