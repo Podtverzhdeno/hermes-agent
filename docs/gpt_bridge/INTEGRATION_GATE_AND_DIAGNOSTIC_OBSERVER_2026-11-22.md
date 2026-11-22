@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-22. **Status:** P0 read-only observer implemented and tested offline; **not deployed, not connected to ChatGPT or a native extension**.
 **Fork baseline:** Podtverzhdeno/hermes-agent main @ 7e9100901819ee44c16b4ddcb79a6bcb7909f591.
-**Adjacent SDD:** draft PR #7 (docs/gpt_bridge/SDD.md) is a design proposal, not on main; draft PR #1 owns the future durable Autopilot task/effect ledger.
+**Adjacent SDD:** draft PR #7 (docs/gpt_bridge/SDD.md) is a design proposal, not on main; draft PR #1 provides a *candidate* durable Autopilot ledger, but it is **not approved as a second task dispatcher**. Current upstream Hermes has an existing durable Kanban system and worker lanes. Integration must preserve exactly one authoritative task lifecycle; reuse future Autopilot components only for missing effects/receipts after a code-level parity audit.
 **Evidence legend:** OBSERVED = code/metadata inspected at a specific revision; TESTED-OFFLINE = isolated deterministic checks; PROPOSED = unimplemented; BLOCKED = source unavailable.
 
 ## 1. Competing API drafts must not be stacked blindly
@@ -15,7 +15,7 @@ At review time seven open draft PRs exist. PR #4, #5, #6 each independently modi
 | #5 atomic diagnostics | Inflight duplicate joins pending task; completed LRU may evict unexpired key | Reuse after eviction or restart cannot promise exactly-once |
 | #6 GPT observability | Bounded single-flight, SSE failure path; **later revision now quarantines failed keyed operations as unknown and classifies reported agent failure** | Explicit session-load exception still becomes empty history; no durable cross-process effect fence |
 | #7 GPT SDD | Single ledger + read-only extension/causal event designs | Not implemented, actual local extension uninspected |
-| #1 Autopilot | Proposed durable task/effect ledger and tests | Not production execution/lease enforcement |
+| #1 Autopilot | Proposed durable task/effect ledger and tests | **Must not compete with upstream Kanban**; isolate effect/approval/evidence semantics after upstream parity review |
 | #3 ACP safety | Scoped permission callback changes | Independent executor race and security tests required |
 
 **CODE FINDING API-01 (HISTORICAL, fixed in newer PR #6 revision):** Earlier _IdempotencyCache._on_done removed a failed key, permitting a duplicate attempt after a possibly committed external effect. **Rechecked** gateway/platforms/api_server.py blob 2baea1ec40d381440b4df7d77794b16469bbe5b6: failed keyed operations now retain state outcome_unknown and retries raise IdempotencyUncertainOutcome. Good local fix; still not durable after process restart and does not reconcile external effects. Independent crash/restart tests remain necessary.
@@ -30,9 +30,21 @@ At review time seven open draft PRs exist. PR #4, #5, #6 each independently modi
 
 ## 1a. Recheck after simultaneous agent activity (important correction)
 
-The repository changed during this review: draft PRs #8–#15 appeared after the original seven were inspected. Drafts #8 (hermes_gpt_bridge), #9 (gpt_bridge/observability), #12 (gpt_companion/journal), and this PR #16 (gateway/gpt_bridge_observer) **each implement a different event schema and observer strategy**. These must not all be activated as authoritative event sources; event IDs, sequence partitioning and status vocabulary would diverge. PR #14 introduced a coordination gate, and #15 changes CDP browser cleanup. Convene **one integration/schema owner** and issue a canonical contract (producer incarnation, version, event ID, per-source seq, task/run/attempt/fence, effect receipt and trust provenance) plus migration adapters. Prefer merging only components that satisfy a shared contract and independent CI/fault tests. This PR intentionally remains draft and serves as a strict parser/fault-test candidate, not a replacement for PR #12's persistent journal or PR #1's authoritative ledger.
+The repository changed during this review: draft PRs #8–#15 appeared after the original seven were inspected. Drafts #8 (hermes_gpt_bridge), #9 (gpt_bridge/observability), #12 (gpt_companion/journal), and this PR #16 (gateway/gpt_bridge_observer) **each implement a different event schema and observer strategy**. These must not all be activated as authoritative event sources; event IDs, sequence partitioning and status vocabulary would diverge. PR #14 introduced a coordination gate, and #15 changes CDP browser cleanup. Convene **one integration/schema owner** and issue a canonical contract (producer incarnation, version, event ID, per-source seq, task/run/attempt/fence, effect receipt and trust provenance) plus migration adapters. Prefer merging only components that satisfy a shared contract and independent CI/fault tests. This PR intentionally remains draft and serves as a strict parser/fault-test candidate, not a replacement for PR #12's persistent journal or upstream Kanban. PR #1 is a candidate for subordinate durable-effect primitives only.
 
 Correction of evidence precedence: earlier findings about PR #6 are **revision-specific**, not permanently true. Rechecks must cite latest blob/commit and distinguish repaired behavior from remaining unverified crash windows.
+
+
+### Architecture correction from independent upstream verification
+
+The official Hermes documentation describes a durable Kanban multi-agent board and worker lanes, with the board DB as the shared task authority. The latest GitHub release API returned **v0.23.3** (published 2026-11-20 UTC). The owner's fork main still points to a much older April commit, and these upstream capabilities are not present there. **Integration order is now:** upgrade/parity diff and classify collisions against upstream Kanban → agree canonical lifecycle and event contract → implement only missing effect reservations, approval/fences and observer adapters → verify before enabling automatic repair. Do not infer that the current fork already has the Kanban kernel, and do not merge stale fork fixes without a porting review.
+
+Sources:
+- https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban
+- https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban-worker-lanes
+- https://api.github.com/repos/NousResearch/hermes-agent/releases/latest
+
+**New source-audit issue for PR #14:** Its coordination script's CAPABILITY_PATHS gpt-observer tuple detects gpt_bridge/, gpt_extension/, gpt_companion/ and gateway/gpt_bridge*, but does **not** detect hermes_gpt_bridge/ introduced in PR #8. The naming difference can under-report semantic overlap. The coordination gate must normalize capability IDs, not just path prefixes; a file collision audit alone also misses incompatible shared event schemas.
 
 ## 2. Implemented P0 observer: deliberately non-authoritative
 
@@ -58,7 +70,7 @@ From the repository root, run:
 
 ## 3. Production invariants and crash boundaries
 
-1. One source of truth: future Autopilot controls task state, durable effects, approvals, budgets, ownership and fences. Browser panel and logs only display observations.
+1. One source of truth: **upstream Hermes Kanban**, once ported and verified at a pinned SHA, owns task/worker state, dispatch and work lanes. Draft Autopilot PR #1 must *not* become a second top-level task queue. Add durable effects, scoped approval, budgets and fencing as integrated Kanban extensions or explicitly subordinate modules. Browser panel and logs only display observations.
 2. A task state transition and its event outbox entry must commit in one DB transaction. Unique event ID and per-producer sequence protect against replay; producer identity must be authenticated.
 3. Tool gateway must validate approval scope, active lease fence, expected revision and effect key **immediately before every external write**.
 4. Reserve each external effect durably before calling the provider. Crash after the provider write and before the ACK results in NEEDS_RECONCILIATION, not FAILED and not an automatic new write.
@@ -96,7 +108,7 @@ Weighted axes: impact 30%, root-cause visibility 25%, multi-agent safety 25%, ea
 
 | Initiative | I | V | S | E | R | Score /5 | Decision |
 |---|---:|---:|---:|---:|---:|---:|---|
-| Transactional outbox + persisted effect outcomes | 5 | 5 | 5 | 2 | 5 | 4.70 | P1, ledger owner PR #1 |
+| Transactional outbox + persisted effect outcomes | 5 | 5 | 5 | 2 | 5 | 4.70 | P1, integrate with Kanban; PR #1 only a candidate source |
 | Read-only protocol and causal gap diagnostics | 4 | 5 | 4 | 5 | 4 | 4.35 | P0 tested offline here |
 | Fenced effects + provider receipt reconciliation | 5 | 5 | 5 | 2 | 5 | 4.70 | P1 after durable reservation |
 | Exact SHA + independent CI/evidence verifier | 5 | 5 | 5 | 4 | 5 | 4.90 | P1 integration gate |
@@ -115,7 +127,7 @@ Every incident log record must contain: incident ID; project/task/run/attempt ID
 ## 7. Rollout sequence and stop criteria
 
 P0: offline schema/sequence validator, no new transport or write authority.
-P1: authenticated ledger subscription, cursor replay, safe source audit, redacted operator timeline.
+P1: upgrade and validate upstream Kanban lifecycle first; authenticated canonical ledger subscription, cursor replay, safe source audit, redacted operator timeline. No second competing dispatcher.
 P2: only after access to the real Windows extension, inspect MV3/native-host manifest, pairing and lifecycle; test suspension/restart.
 P3: one sandbox worker with durable effect reservations, fencing and crash testing before any tool write automation.
 P4: 30-worker contention, rate limit, file collision, host reboot, multihour synthetic soak and measured SLO denominators.
