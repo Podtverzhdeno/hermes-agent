@@ -403,3 +403,11 @@ Read authenticated Kanban task_events (transition order + causation), task_runs 
 ### ADR-GPT-021
 
 **ACCEPT** an upstream-native Kanban + Runs API diagnostic adapter in the future, without a duplicate scheduling authority. **ACCEPT** fail-closed ambiguity and verified PID/heartbeat/claim fencing before a reclaim. **REJECT** using a Chrome extension heartbeat to adjudicate a worker's health, auto-unblocking an approval or manually editing Kanban SQLite as an ordinary worker.
+
+## 18. Existing Windows GPT extension: historical path and verification route
+
+The known prior local setup is under Windows user home / Tunnel, with an unpacked extension candidate at chat-launch-smoke-desktop-test/web-extension and its companion bridge candidate at chat-launch-smoke-desktop-test/web-companion/start_bridge.py. Historically the local bridge expected port 18763, separate from Local Workspace MCP observer 8765 and scoped editor 8766. An **earlier November 11** stack inspection found bridge down, extension version v0.6.6 stale and downstream diagnostic chains stalled. An earlier CDP canary succeeded on one lane. **All are historical, not current runtime observations.** Current Local_WorkSpace access exposes only the unrelated shelter vault, so this branch cannot inspect/patch the installed extension and must not claim to have done so.
+
+Added the dedicated read-only runbook docs/gpt_bridge/WINDOWS_EXTENSION_DIAGNOSTICS_READONLY_2026-11-22.md with Windows PowerShell 5.1 port/path inventory, evidence-first transport/approval/unknown/SSE/Kanban/CI stop taxonomy, data-minimizing incident schema, process ownership and release gates. It intentionally does not launch the bridge, change Chrome settings, read keys/cookies or write to user's workstation.
+
+**Next controlled integration precondition:** extension owner grants a scoped Hermes directory to the Workspace connector, or a trusted operator collects the runbook's redacted diagnostics. Only after exact current extension manifest + native host protocol are known should source modifications and an authenticated live observability adapter be attempted. No speculative auto-restart or browser kill.
