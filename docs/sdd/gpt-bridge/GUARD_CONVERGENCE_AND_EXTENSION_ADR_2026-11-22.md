@@ -12,8 +12,8 @@ Date: 2026-11-22. Status: **integration decision proposal, not merged or deploye
 |---|---|---|---|
 | PRs on non-main bases | **Omit** in primary PR scan (`if base != main: continue`); separately enumerates branches | Includes all open PRs and their base | Includes all open PRs and their base |
 | Additional non-PR branches | Yes: compare immutable base/head SHA, subject to GitHub compare size limits | No | No |
-| Changed-file completeness | Bounded pagination; no declared count equality in inspected code | Fetches `changed_files` from detail and compares length | v2 fetches detail count and compares length |
-| Source-repository identity | Inspected source stores `origin`; ambiguous parent lineage unresolved | Head ref used without source owner in evaluated ancestry | v2 uses (`repo`, `ref`) compound identities |
+| Changed-file completeness | Bounded pagination; no declared count equality in inspected code | Fetches `changed_files` from detail and compares length | v3 verifies detail count and rename source/destination coverage |
+| Source-repository identity | Inspected source stores `origin`; ambiguous parent lineage unresolved | Head ref used without source owner in evaluated ancestry | v3 uses (`repo`, `ref`) compound identities and refuses v2 offline snapshots |
 | Race checks | Per-PR fresh detail, branch head re-read | Per-PR detail re-read | Complete PR-list second pass + default HEAD second pass; still not atomic |
 | Exact-SHA CI status | Not in output | Reads check runs, but passing available checks != all required checks | Deliberately unverified (no claim) |
 | Durable audit history | GitHub artifact after manual workflow | Optional local SQLite WAL append-only snapshots | Scheduled GitHub artifact after default-branch merge (30d configured retention) |
@@ -21,7 +21,7 @@ Date: 2026-11-22. Status: **integration decision proposal, not merged or deploye
 | Observer duplication | Capability heuristic | Explicit file set | Expanded family prefixes |
 | Recommendation | Borrow branch inventory, failure/retry controls | **Provisional single-scanner integration base** | Borrow global recheck, provenance and scheduled reporting |
 
-**Confidence limits:** This matrix is static source/code inspection, not a benchmark or completed security assessment. The observed v2 PR #22 CI result must be tied to the exact final SHA, because editing code after a passing run invalidates its evidentiary relevance.
+**Confidence limits:** This matrix is static source/code inspection, not a benchmark or completed security assessment. Earlier v2 PR #22 CI success covered 19 offline synthetic tests at an older SHA; v3 added rename and 30/100-agent test vectors, so exact latest-head CI evidence must be retrieved before any merge. Editing code after a passing run invalidates its relevance.
 
 ### Current concurrent PR landscape (observed after initial snapshot)
 
@@ -60,7 +60,7 @@ Reject arbitrary event payload keys. Never collect prompt/answer bodies, raw DOM
 
 ### Browser/CDP and ChatGPT distinction
 
-Current upstream Hermes documents an OpenAI-compatible API server and a CDP browser attachment path. Its API-server documentation explicitly notes that its previous browser-extension control surface was **removed**. A separate public project `abundantbeing/hermes-browser-extension` has a side panel and opt-in companion plugin; its published data-flow/permission boundaries are **not evidence** that this owner's installed Chrome extension is the same project. Historical local path references are unverified because Local_WorkSpace MCP is down.
+Current upstream Hermes documents an OpenAI-compatible API server and a CDP browser attachment path. Its API-server documentation explicitly notes that its previous browser-extension control surface was **removed**. A separate public project `abundantbeing/hermes-browser-extension` has a side panel and opt-in companion plugin. Its `controller-protocol`, `gateway-queue`, `session-delivery-state` and `context-consent` components show reusable identity, unknown-admission recovery and consent mechanisms, but they are **not evidence** that the owner's installed extension is the same project. Local_WorkSpace MCP reconnected, yet advertised roots exclude the Hermes installation/extension path.
 
 Treat the browser as a **transient client**, not a durable task store. Chrome MV3 service workers may be suspended; native messaging may change lifetime behavior but cannot guarantee continuous connectivity after host crash. A user-authorized broker must enforce origin, per-tab and per-task capability grants, nonce/anti-replay, short-lived ownership lease, fencing epoch and explicit revocation. CDP errors and tab detachment are distinct from provider/model failure. If the Chrome tab disconnects, pending external actions remain `UNKNOWN` until reconciled.
 
@@ -131,4 +131,4 @@ W3C Trace Context: https://www.w3.org/TR/trace-context-1/
 
 ## I. Work log
 
-2026-11-22: Initial scan #1–#12, then #1–#22; opened draft #22. Found competing guard #14/#18 and expanded coordination matrix. Self-review found fork branch identity and missing changed-file cardinality could produce a misleading result; code was updated in v2 with extra tests. Removed GitHub Actions checkout credential persistence. Full-suite CI failure analyzed at old SHA, with no unsupported root-cause claim. Local MCP remained unreachable; no Windows/Obsidian changes made.
+2026-11-22: Initial scan #1–#12, then #1–#22, later #1–#30; opened draft #22. Found multiple competing guard/observer groups. Self-review found fork identity, missing changed-file cardinality, ambiguous HEAD state, and renamed-source path omission; code advanced to snapshot v3 and added 30/100-agent tests. Removed GitHub Actions checkout credential persistence. Full-suite CI failure analyzed at earlier SHA, with no unsupported root-cause claim. Local MCP later reconnected but only unrelated declared roots; no Windows/Obsidian changes were made.
