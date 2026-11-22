@@ -1,0 +1,65 @@
+name: Skill Harness CI
+
+on:
+  pull_request:
+    paths:
+      - 'agent/skill_harness.py'
+      - 'agent/prompt_builder.py'
+      - 'tools/skills_tool.py'
+      - 'tools/skill_manager_tool.py'
+      - 'scripts/audit_skill_harness.py'
+      - 'scripts/score_skill_evals.py'
+      - 'skills/**'
+      - 'optional-skills/**'
+      - 'tests/agent/test_skill_harness*.py'
+      - 'tests/skills/**'
+      - 'tests/tools/test_skill_harness*.py'
+      - 'tests/tools/test_skill_manager_*.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skill-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+      - name: Validate every declared harness
+        run: |
+          source .venv/bin/activate
+          python -m scripts.audit_skill_harness --strict
+      - name: Run focused skill and compatibility tests
+        run: |
+          source .venv/bin/activate
+          python -m pytest -q \
+            tests/agent/test_skill_harness.py \
+            tests/agent/test_skill_harness_prompt_index.py \
+            tests/skills/test_manifest_catalog.py \
+            tests/skills/test_legacy_skill_archives.py \
+            tests/skills/test_pytorch_fsdp_archives.py \
+            tests/skills/test_skill_eval_scorer.py \
+            tests/tools/test_skill_harness_integration.py \
+            tests/tools/test_skill_manager_path_boundaries.py \
+            tests/tools/test_skill_manager_guard_fail_closed.py \
+            tests/tools/test_skill_manager_write_harness.py \
+            tests/tools/test_skill_manager_tool.py \
+            tests/hermes_cli/test_skills_config.py \
+            tests/agent/test_prompt_builder.py
+        env:
+          OPENAI_API_KEY: ""
+          OPENROUTER_API_KEY: ""
+          NOUS_API_KEY: ""
