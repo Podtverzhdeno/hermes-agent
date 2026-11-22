@@ -3,7 +3,7 @@ schema_version: 1
 skill: arxiv
 activation:
   when: ["Discover and compare scientific preprints and their claims","Verify arXiv identifiers, dates, versions and authors"]
-  not_when: undefined
+  not_when: ["Summarize current general news without scientific literature","Claim peer review on the basis of preprint status alone"]
 capabilities:
   tools: ["web_search","web_extract","terminal (read-only retrieval)"]
   side_effects: none
