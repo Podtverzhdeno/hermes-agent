@@ -45,7 +45,7 @@ if command -v gh >/dev/null 2>&1; then
 else
   echo "gh is not installed; use an authorized connector, SSH or Git Credential Manager."
 fi
-git remote -v
+git remote
 ```
 
 The remote might contain embedded credentials from earlier unsafe setups.
