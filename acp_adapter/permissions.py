@@ -40,12 +40,17 @@ def make_approval_callback(
         timeout: Seconds to wait for a response before auto-denying.
     """
 
-    def _callback(command: str, description: str) -> str:
+    def _callback(command: str, description: str, *, allow_permanent: bool = True) -> str:
+        # The terminal approval API supplies allow_permanent as a keyword.
+        # Suppress persistent approval when the policy requests one-time only.
         options = [
             PermissionOption(option_id="allow_once", kind="allow_once", name="Allow once"),
-            PermissionOption(option_id="allow_always", kind="allow_always", name="Allow always"),
-            PermissionOption(option_id="deny", kind="reject_once", name="Deny"),
         ]
+        if allow_permanent:
+            options.append(PermissionOption(
+                option_id="allow_always", kind="allow_always", name="Allow always"
+            ))
+        options.append(PermissionOption(option_id="deny", kind="reject_once", name="Deny"))
         import acp as _acp
 
         tool_call = _acp.start_tool_call("perm-check", command, kind="execute")
