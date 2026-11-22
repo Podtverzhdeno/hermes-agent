@@ -57,7 +57,7 @@ No open PR is pre-approved by this document. A "blocker" is a **metadata-backed 
 ## 4. Read-only PR integration guard
 
 `scripts/gpt_pr_integration_guard.py`:
-- GitHub GET-only REST metadata collection of default HEAD, open PR head/base SHA, file paths and collection time. No tokens/prompt text are output.
+- GitHub GET-only REST metadata collection of default HEAD, open PR head/base SHA, changed/renamed file paths and collection time. Redirects are rejected before token forwarding; no tokens/prompt text are output. A source-provenance field distinguishes live non-atomic API reads from unverified offline replay.
 - Bounded pagination; absent/malformed API response, truncation, duplicate PR numbers or cyclic branch dependencies -> `INCOMPLETE` with nonzero exit; never “zero conflicts”.
 - Second PR listing after file retrieval to catch concurrent parent/head movement; this reduces race windows but does NOT make remote GitHub APIs atomic.
 - Unique-base stacked ancestry and stale-parent detection; ambiguous branch names produce blockers rather than fictitious ordering.
