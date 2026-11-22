@@ -246,3 +246,53 @@ def test_readonly_observer_does_not_mutate_db(pair):
         observer.append(event_id="w2", run_id="run1", task_id="task1",
                         agent_id="agentA", source_seq=2, fence=1,
                         kind="worker.heartbeat", source="worker")
+
+
+def test_abrupt_process_exit_before_commit_rolls_back_partial_event(tmp_path):
+    """Kill-equivalent process exit inside an uncommitted SQLite transaction."""
+    import subprocess
+    import sys
+
+    path = tmp_path / "crash-before.db"
+    store = ObservationStore(path)
+    script = (
+        "import sqlite3,os,sys\n"
+        "db=sqlite3.connect(sys.argv[1])\n"
+        "db.execute('BEGIN IMMEDIATE')\n"
+        "db.execute(\"INSERT INTO observations(event_id,run_id,task_id,agent_id,producer_id,"
+        "fence,source_seq,kind,source,received_at,payload,prev_hash,event_hash) "
+        "VALUES('crash-1','run1','task1','agent1','process1',1,1,'task.started','worker',"
+        "123.0,'{}','0','garbage')\")\n"
+        "os._exit(73)\n"
+    )
+    child = subprocess.run([sys.executable, "-c", script, str(path)], check=False)
+    assert child.returncode == 73
+    assert store.timeline(task_id="task1") == []
+    assert store.verify_chain()
+    add(store)
+    assert store.verify_chain()
+
+
+def test_abrupt_process_exit_after_commit_supports_same_id_replay(tmp_path):
+    """Crash after durable commit but before ACK is harmless under stable replay."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    path = tmp_path / "crash-after.db"
+    script = (
+        "import os,sys\n"
+        "from gpt_bridge import ObservationStore\n"
+        "s=ObservationStore(sys.argv[1])\n"
+        "s.append(event_id='e1',run_id='run1',task_id='task1',agent_id='agentA',"
+        "fence=1,source_seq=1,kind='task.started',source='worker')\n"
+        "os._exit(74)\n"
+    )
+    child = subprocess.run([sys.executable, "-c", script, str(path)], check=False)
+    assert child.returncode == 74
+    store = ObservationStore(path)
+    seq = store.append(event_id="e1", run_id="run1", task_id="task1", agent_id="agentA",
+                       fence=1, source_seq=1, kind="task.started", source="worker")
+    assert seq == 1
+    assert len(store.timeline(task_id="task1")) == 1
+    assert store.verify_chain()
