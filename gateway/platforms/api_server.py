@@ -796,9 +796,9 @@ class APIServerAdapter(BasePlatformAdapter):
                     "data: " + json.dumps(_openai_error(
                         "Agent execution failed; inspect server logs.",
                         err_type="server_error", code="agent_execution_failed",
-                    )) + "\\n\\n"
+                    )) + "\n\n"
                 ).encode())
-                await response.write(b"data: [DONE]\\n\\n")
+                await response.write(b"data: [DONE]\n\n")
                 return response
 
             # Finish chunk
