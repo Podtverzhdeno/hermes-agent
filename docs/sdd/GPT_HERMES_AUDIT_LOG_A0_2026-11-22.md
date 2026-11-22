@@ -83,3 +83,7 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 ## Additional audit robustness: full rename cap / malformed fields
 - Live file endpoint allows up to 1000 changed files, yet each of 1000 renamed files produces two touched paths. Earlier max_files 1000 check would fail closed on valid 1000 renames; now MAX_TOUCHED_PATHS=2000, with offline test.
 - Main audit error handler now includes KeyError/TypeError from malformed API/fixture payloads and persists typed EVIDENCE_UNAVAILABLE instead of losing incident artifact to an unhandled parser exception. Failure is not success, and merge_ready stays false.
+
+## Source-pin verified upstream parity, separate from documentation assertions
+- Repo trees compared by connected GitHub GET at fork SHA 7e9100901819ee44c16b4ddcb79a6bcb7909f591 (1261 blobs) and upstream SHA 0f602c5f6f18615632535251d62a2db74ce93b69 (27462 blobs): 667 common exact paths, 26795 upstream-only, 594 fork-only. Structural sample gateway 33 vs 421, hermes_cli 36 vs 909, agent 20 vs 478. Counts include tests/plugins/resources, not effort estimate.
+- Read actual upstream gateway/platforms/api_server_runs.py route table (~285), API durable reservation (~768), run idempotency store, authority runs and kanban_db. Key native modules are structurally absent in fork baseline. Detailed migration gate in GPT_UPSTREAM_PARITY_SNAPSHOT_A0_2026-11-22.md. Not a claim to have tested/installed upstream or identified a stable released tag.

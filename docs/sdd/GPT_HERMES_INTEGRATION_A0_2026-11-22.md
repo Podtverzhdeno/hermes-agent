@@ -249,3 +249,7 @@ Owner had earlier authorized a web-chatgpt-high-cdp direct CDP canary and select
 ## 20. Обнаружение конфликтов при переименовании
 
 Сравнивать файловые пути между PR недостаточно только по `filename`: rename имеет `previous_filename` (старый путь). Два параллельных PR, один переименовывает A→B, второй изменяет A, должны конфликтовать. Read-only gate теперь учитывает обе стороны переименования; malformed rename без старого пути — EVIDENCE_INCOMPLETE. Ожидаемые два отрицательных offline теста, CI должен подтвердить точный новый SHA.
+
+## 21. Проверенный источник truth: native Runs отсутствует в текущем дереве форка
+
+Источник GitHub Trees в точных SHA: fork main 7e910090 (1261 blob), upstream main 0f602c5f (27462 blob), общих путей 667, отсутствуют 18+ критических native Runs/Kanban модулей. Это требует отдельной изолированной ветки миграции с сохранением пользовательских patches и DB migrations, а не предположения о готовом /v1/runs. См. [source-pinned migration audit](GPT_UPSTREAM_PARITY_SNAPSHOT_A0_2026-11-22.md). Компоненты новой версии не устанавливались и основной fork не менялся.
