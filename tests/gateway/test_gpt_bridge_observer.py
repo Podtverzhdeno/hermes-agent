@@ -221,3 +221,12 @@ def test_cli_rejects_duplicate_json_keys_without_raw_leak():
     assert summary["outcomes"]["invalid_json"] == 1
     assert summary["observer"]["recent_events"] == 0
     assert "task.completed" not in proc.stdout.decode()
+
+
+def test_same_event_id_and_seq_with_changed_payload_is_conflict():
+    observer = ReadOnlyEventObserver()
+    original = evt()
+    assert observer.ingest(original).accepted
+    mutated = {**original, "kind": "task.completed"}
+    assert observer.ingest(mutated).code == "event_id_collision"
+    assert observer.snapshot()["recent_events"] == 1
