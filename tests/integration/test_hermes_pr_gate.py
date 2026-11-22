@@ -94,6 +94,14 @@ class GateTests(unittest.TestCase):
             self.assertEqual(failure["status"], "EVIDENCE_UNAVAILABLE")
             self.assertFalse(failure["merge_ready"])
             self.assertIn("FAIL CLOSED", out_md.read_text())
+            self.assertIn(chr(10) + chr(10) + "Status:", out_md.read_text())
+
+    def test_untrusted_path_cannot_inject_markdown_lines(self):
+        path = "payload|x" + chr(10) + "# fake status"
+        report = m.assess(snapshot(pr(1, files=[path]), pr(2, files=[path])))
+        rendered = m.markdown(report)
+        self.assertNotIn(chr(10) + "# fake status", rendered)
+        self.assertIn("payload", rendered)
 
     def test_markdown_has_sha_and_warning(self):
         result=m.assess(snapshot(pr(1)))

@@ -34,3 +34,10 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 - PR #5 code-level: failed compute removes inflight entry without retaining unknown-outcome tombstone; later same-key retry may repeat effect. Not observed as a production incident. A0 review comment 7078088372.
 - PR #6 code-level: unsupported JSON message type / stream type / blank keyed SSE can bypass intended request validation. A0 review comment 7078088737; stacked #11 contains a preflight pattern.
 - PR #4 CI: 29 failed including changed safe 500-response vs old leaked error test; old test should be revised without raw backend error disclosure. A0 comment 7078089025.
+
+
+## 30-PR inventory + CDP overlap, dated snapshot
+- At GET 2026-11-22T10:55Z, 30 open PR #1..#30 were observed. New independent PR audit implementations include #14/#18/#22/#24/#26/#27/#28/#29; this is an integration coordination duplication issue.
+- PR #13 and #15 both modify tools/browser_tool.py. #13 redacts CDP credentials but retains destructive cleanup for external CDP; #15 protects externally owned browser lifecycle but requires redaction from #13. A0 review comments 7078125611 and 7078125942.
+- PR #17/#23 stacked observer modifications must not be treated as independently mergeable siblings. #10 base moved to snapshots/autopilot-ledger-6c0d2e-20261122 as of observed snapshot; exact ancestry and branch SHA must be rechecked.
+- Hardened own A0 report against Markdown injection via PR path with pipe/CR/LF. Added negative test and proper multiline incident report.

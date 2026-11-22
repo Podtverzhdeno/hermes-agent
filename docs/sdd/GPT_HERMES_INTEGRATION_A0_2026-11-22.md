@@ -203,3 +203,21 @@ Gateway candidate source comparison:
 Evidence comment IDs: PR #5 comment 7078088372, #6 comment 7078088737, #4 comment 7078089025. No cross-branch source overwrites or autonomous merges by A0.
 
 Acceptance refinement: CI must expose distinct machine states OFFLINE_CONTRACT_FAIL and LIVE_SNAPSHOT_UNAVAILABLE. Failure to obtain a stable snapshot is never normalized to successful evidence, but its cause and event metadata must survive as a downloadable artifact.
+
+
+## 13. Snapshot expansion: 30 active PRs and browser ownership/secret coupling
+
+At a later GET on 2026-11-22, 30 PRs #1–#30 were simultaneously open (up from 12 during the first assessment). This snapshot is time-bounded: branches continued changing in parallel. The jump in 18 draft PRs, many implementing redundant read-only PR collision gates and observers, is empirical evidence of coordination overhead; not a claim that each PR is low quality. Specific independent gate candidates now include #14, #18, #22, #24, #26, #27, #28, #29; do not create yet another control plane or merge eight checkers. Arbitrate interface + verified tests, preserve unique cases as fixtures in one maintained auditor, archive redundant prototypes after human review.
+
+Browser source coupling independently inspected:
+- PR #13 changes tools/browser_tool.py to redact CDP URL/WS credentials and operational logs. Its cleanup_browser path still executes agent-browser close and daemon SIGTERM for an attached external CDP browser.
+- PR #15 changes the SAME tools/browser_tool.py and detects features.cdp_override, preventing close, PID kill and socket deletion for externally owned browser sessions (but does not include all #13 redaction code).
+- These edits must be combined and verified as ONE integration unit. Invariant: externally attached human-owned Edge/Chrome survives explicit browser_close, atexit and inactive session cleanup, while owned browser still closes; query/token material is absent from stderr, stdout, logger and exception result even on failed CDP discovery. Source-reviewed overlap, not a live Windows browser test.
+- A0 comments: #13 id 7078125611 and #15 id 7078125942; both link to integration draft #28.
+
+Additional scalability decisions:
+1. At 30–100 PRs, a full per-PR GET of files/checks/statuses takes O(N) API calls and can race; prefer a rate-limited read-only event-driven index (authenticated GitHub webhook or trusted CI artifact cache) for future continuous monitoring. Events are hints; periodic reconciliation must remain exact-head and idempotent.
+2. Enforce one owned implementation per capability family, not one unreviewed feature PR per agent; frozen acceptance fixtures and PR ownership registry separate orchestration from independent diagnosis.
+3. Preserve explicit degraded/error evidence with typed reason SNAPSHOT_RACE, RATE_LIMIT_OR_PERMISSION, TRANSPORT_UNAVAILABLE, PAGINATION_INCOMPLETE; no false green.
+4. Rendering untrusted filenames/titles as Markdown requires escaping separators, line breaks and HTML; report content remains evidence/data, not instructions.
+5. Release only from an integration commit with independent tests. This A0 branch stays read-only and cannot be treated as an authoritative runtime monitor.

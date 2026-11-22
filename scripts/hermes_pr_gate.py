@@ -178,6 +178,15 @@ def assess(snapshot):
         "reason": "ADVISORY_ONLY: independent combined-SHA tests, extension runtime and security review required",
     }
 
+def _safe_markdown(value):
+    """User-controlled GitHub paths are data, never Markdown directives."""
+    return (str(value).replace(chr(92), chr(92) * 2)
+            .replace("|", chr(92) + "|")
+            .replace(chr(10), chr(92) + "n")
+            .replace(chr(13), chr(92) + "r")
+            .replace("<", "&lt;").replace(">", "&gt;")
+
+
 def markdown(report):
     out = ["# Hermes GPT integration evidence", "",
            "Snapshot: " + str(report["observed_at"]),
@@ -189,7 +198,7 @@ def markdown(report):
             pr=c["pr"], sha=c["head_sha"][:12], test=c["test"],
             review=", ".join(str(x) for x in c["review_skipped"]) or "—"))
     out += ["", "## Independent file overlap"]
-    out += ["- PR {} × PR {}: {}".format(*c["prs"], c["file"]) for c in report["collisions"]] or ["None observed"]
+    out += ["- PR {} × PR {}: {}".format(*c["prs"], _safe_markdown(c["file"])) for c in report["collisions"]] or ["None observed"]
     out += ["", "## Stacked dependencies"]
     out += ["- PR {} depends on PR {}".format(d["pr"], d["depends_on"]) for d in report["stacked_dependencies"]] or ["None observed"]
     out += ["", "## Semantic review candidates"]
@@ -249,9 +258,9 @@ def main(argv=None):
             args.output_json.write_text(json.dumps(failure, indent=2, ensure_ascii=False), encoding="utf-8")
         if args.output_md:
             args.output_md.parent.mkdir(parents=True, exist_ok=True)
-            args.output_md.write_text("# Hermes PR evidence unavailable\\n\\n"
-                                     "Status: FAIL CLOSED. No merge authorization.\\n\\n"
-                                     "Reason: " + failure["reason_code"] + " / " + reason + "\\n",
+            args.output_md.write_text("# Hermes PR evidence unavailable\n\n"
+                                     "Status: FAIL CLOSED. No merge authorization.\n\n"
+                                     "Reason: " + failure["reason_code"] + " / " + reason + "\n",
                                      encoding="utf-8")
         print("EVIDENCE_UNAVAILABLE: " + reason, file=sys.stderr)
         return 3
