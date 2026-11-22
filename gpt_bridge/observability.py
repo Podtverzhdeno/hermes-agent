@@ -253,14 +253,15 @@ class ObservationStore:
 
         Concurrent effects, approval requests, and browser tabs are tracked by
         *separate stable IDs*: a reconnect of tab B cannot clear tab A's failure.
-        Only the highest fencing epoch is treated as the current attempt. A
-        read-only observer cannot independently confirm worker self-reports.
+        Only the highest fencing epoch determines current worker liveness;
+        unresolved external effects carry across *all* epochs. A read-only
+        observer cannot independently confirm worker self-reports.
         """
         _id("task_id", task_id)
         if (type(stale_after_seconds) not in (int, float)
                 or not 1 <= stale_after_seconds <= 86400):
             raise EventValidationError("stale_after_seconds must be 1..86400")
-        uncertain_effects: set[str] = set()
+        uncertain_effects: dict[str, int] = {}
         pending_approvals: set[str] = set()
         disconnected_channels: set[str] = set()
         detached_targets: dict[str, str] = {}
@@ -274,19 +275,30 @@ class ObservationStore:
             if fence is None:
                 return {"task_id": task_id, "status": "unobserved", "reason": "NO_EVENTS",
                         "confidence": "none", "fence": None, "last_event_sequence": None}
+            # Side effects are task-global: replacing an agent or advancing
+            # its fence does NOT erase an unresolved external mutation. Other
+            # diagnostics (tab/transport/approval/terminal) belong only to the
+            # latest worker epoch. Receipt order is not external causality.
             cursor = db.execute("""
-                SELECT sequence,kind,received_at,payload FROM observations
-                WHERE task_id=? AND fence=? ORDER BY sequence
-            """, (task_id, fence))
+                SELECT sequence,fence,kind,received_at,payload FROM observations
+                WHERE task_id=? ORDER BY sequence
+            """, (task_id,))
+            latest_epoch_seen = -1
             for e in cursor:
-                last = e
+                epoch = int(e["fence"])
+                latest_epoch_seen = max(latest_epoch_seen, epoch)
                 k = e["kind"]
                 data = json.loads(e["payload"])["details"]
                 if k == "effect.uncertain":
-                    uncertain_effects.add(data["action_id"])
-                elif k == "effect.reconciled":
-                    uncertain_effects.discard(data["action_id"])
-                elif k == "approval.requested":
+                    uncertain_effects.setdefault(data["action_id"], epoch)
+                elif k == "effect.reconciled" and epoch >= latest_epoch_seen:
+                    # Do not let a late old-fence worker retroactively erase
+                    # uncertainty after a replacement worker has started.
+                    uncertain_effects.pop(data["action_id"], None)
+                if epoch != fence:
+                    continue
+                last = e
+                if k == "approval.requested":
                     pending_approvals.add(data["action_id"])
                 elif k == "approval.resolved":
                     pending_approvals.discard(data["action_id"])
@@ -343,4 +355,5 @@ class ObservationStore:
                 "last_event_sequence": int(last["sequence"]),
                 "last_event_age_seconds": round(age, 3),
                 "open_effects": len(uncertain_effects),
+                "open_effects_from_prior_fences": sum(1 for origin in uncertain_effects.values() if origin < fence),
                 "pending_approvals": len(pending_approvals)}
