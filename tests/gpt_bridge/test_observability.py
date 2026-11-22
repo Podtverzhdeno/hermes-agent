@@ -90,6 +90,7 @@ def test_bad_details(pair, details):
     ("event_id", "../id"), ("run_id", ""), ("task_id", "hello world"),
     ("agent_id", "url?token=123"), ("fence", True), ("source_seq", 0),
     ("kind", "bad.event"), ("source", "self_assessed_trusted"),
+    ("agent_id", "user@example.com"), ("task_id", "token:secret"),
 ])
 def test_invalid_envelope(pair, field, value):
     kw = dict(event_id="e1", run_id="r1", task_id="t1", agent_id="a1",
@@ -336,3 +337,8 @@ def test_old_epoch_approval_not_inherited_as_new_approval(pair):
     add(s, kind="approval.requested", details={"action_id": "reviewA"}, fence=1)
     add(s, event_id="new-worker", kind="task.started", fence=2)
     assert s.diagnose_task(task_id="task1")["status"] == "observed_active"
+
+
+def test_reject_unrecognized_uppercase_reason_instead_of_logging_private_text(pair):
+    with pytest.raises(EventValidationError, match="reason catalog"):
+        add(pair[0], details={"reason_code": "PRIVATE_API_KEY_VALUE"})
