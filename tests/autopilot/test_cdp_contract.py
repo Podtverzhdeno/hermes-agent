@@ -117,3 +117,20 @@ def test_invalid_declarations_and_request_ids():
     reject(valid(), "EXPECTED_REQUEST_ID_INVALID", expected_request_id="BAD SPACE")
     reject(valid("", [{"id": "c1", "name": "f", "arguments": {}}]),
            "TOOL_DECLARATION_INVALID", declared_tools=[9])
+
+
+def test_declarations_must_be_iterable_of_names_not_string_or_mapping():
+    reject(valid(), "TOOL_DECLARATION_INVALID", declared_tools="search")
+    reject(valid(), "TOOL_DECLARATION_INVALID", declared_tools={"search": True})
+
+
+def test_utf8_surrogates_in_nested_tool_args_never_escape_as_raw_exception():
+    reject(valid("", [{"id": "c1", "name": "search",
+                       "arguments": {"text": "\\ud800"}}]),
+           "TOOL_ARGUMENT_SCHEMA_INVALID", declared_tools={"search"})
+
+
+def test_nonfinite_tool_argument_is_rejected_not_authorized():
+    reject(valid("", [{"id": "c1", "name": "search",
+                       "arguments": '{"value": NaN}'}]),
+           "NONFINITE_JSON_NUMBER", declared_tools={"search"})
