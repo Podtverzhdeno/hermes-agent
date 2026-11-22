@@ -335,3 +335,14 @@ class ReasonCodePrivacyTests(unittest.TestCase):
         for bad in ("FREEFORM_ACCOUNT_NUMBER_92823", "private_token_123", "a" * 64):
             with self.subTest(value=bad), self.assertRaises(TraceError):
                 event("run.failed", 1, reason_code=bad)
+
+
+class TaskCorrelationTests(unittest.TestCase):
+    def test_task_project_ids_stored_as_claims_only(self):
+        e = event("run.started", 1, task_id="task.123", project_id="my_shelter")
+        self.assertEqual((e.task_id, e.project_id), ("task.123", "my_shelter"))
+
+    def test_task_project_ids_strictly_validated(self):
+        for field in ("task_id", "project_id"):
+            with self.subTest(field=field), self.assertRaises(TraceError):
+                event("run.started", 1, **{field: "id containing secrets @"})
