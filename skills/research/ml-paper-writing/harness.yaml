@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: ml-paper-writing
+activation:
+  when: ["Draft or revise an ML research manuscript with verifiable primary sources","Audit paper claims, tables, experimental setup and citations before submission"]
+  not_when: ["A marketing blog post is requested without research-methodology needs","No accessible data supports claimed experiments or quantitative results"]
+capabilities:
+  tools: ["web_search","read_file","latexmk","bibtex"]
+  side_effects: local_write
+  approval_required: ["Submit manuscript to an external venue, post public preprint or disclose unpublished data"]
+lifecycle:
+  preflight: ["Record target venue and authoritative current submission requirements","Trace each numerical claim to source data, code, table or reproducible experiment"]
+  execute: ["Separate literature synthesis, original findings and interpretations","Maintain citation identifiers, DOI/arXiv links and figure/table provenance"]
+  verify: ["Compile source if environment allows and check bibliography keys","Audit tables, uncertainty, baselines, reproducibility and claims against evidence"]
+  recover: ["For unverified references, mark citation TODO rather than fabricating metadata","Preserve drafts and data when tooling or LaTeX compilation fails"]
+budget:
+  max_tool_calls: 60
+  max_reference_bytes: 524288
+evidence:
+  required: ["Paper version, verified citation ledger and venue requirement date","Experiment/source lineage and compilation result or blocker"]
+output:
+  format: "Submission-readiness audit with manuscript sections, citations and evidence"
+  acceptance: ["No invented citations, results, experiments or reviewer requirements","No external publication without consent"]
