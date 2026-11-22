@@ -72,7 +72,12 @@ def collect(repo: str, token: str | None = None, max_prs: int = 100) -> dict[str
             raise IncompleteScan("Open PR count exceeds configured scan limit")
         for item in batch:
             n = item["number"]
-            total_files = item["changed_files"]
+            # GitHub's LIST /pulls payload omits changed_files; fetch the detail.
+            detail = _get_json(repo, f"pulls/{n}", token)
+            if (detail["head"]["sha"] != item["head"]["sha"]
+                    or detail["base"]["sha"] != item["base"]["sha"]):
+                raise IncompleteScan(f"PR {n}: revision changed during initial scan")
+            total_files = detail["changed_files"]
             if not isinstance(n, int) or not 0 <= total_files <= 3000:
                 raise IncompleteScan("PR metadata or GitHub file-list boundary unsupported")
             files = []
