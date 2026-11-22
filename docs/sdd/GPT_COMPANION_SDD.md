@@ -409,3 +409,14 @@ Read-only `StatusWatch._fingerprint` previously omitted the new field `unresolve
 **Tests:** `test_duplicate_ack_order_must_not_mask_uncertain_effect` permutes three source-local and cross-source messages through all six delivery orders, `test_duplicate_reservations_remain_unresolved_even_after_ack` covers mixed reservations, `test_single_same_source_resolution_is_not_false_duplicate` prevents unnecessary alarms on a normal same-source ack. The results require exact SHA CI evidence before release.
 
 **Scale and trust:** The extra Python set is proportional only to distinct conflict actions in the selected attempt; historical attempt query cost is discussed in ADR-031. No browser/GPT content is recorded. Even a perfect telemetry record is not a trusted third-party effect confirmation.
+
+
+### ADR-033: Worker stop is not the final task outcome (P0, implemented in stacked audit)
+
+**Finding C-07 / confirmed by source:** the diagnostic selected the highest-sequence event among `run.reported_completed`, `run.reported_failed` and `worker.stopped`. A normal `worker.stopped` after an explicit failure could overwrite the useful failure signal and `reason_code` with generic `STOPPED_UNCONFIRMED`. It could likewise hide that a purported completion still required independent artifact verification. This is especially damaging when dozens of agents hand off context and the operator asks **why** a run stopped.
+
+**Fix:** distinguish *task report* (latest source-local `run.reported_completed` or `run.reported_failed`) from *worker process lifecycle* (`worker.stopped`). Prefer explicit task report if present; otherwise preserve `STOPPED_UNCONFIRMED`. Do not turn a reported completion into verified success. Existing contradictory report checks still apply, so `failed→completed` in one attempt remains `TRACE_INCOMPLETE`, not success.
+
+**Offline regressions added:** `test_worker_stopped_does_not_erase_reported_failure_reason`, `test_worker_stopped_does_not_erase_completed_verification_gate` and `test_worker_stopped_without_run_report_stays_unconfirmed`. Exact SHA CI required before merge.
+
+**V2 contract:** task outcome and worker lifecycle should become separately structured fields (`reported_task_state`, `worker_process_state`) and not compete for a single last-terminal slot. A trusted verifier alone may promote a task to success; worker exit codes and model text are evidence pointers, not approval.
