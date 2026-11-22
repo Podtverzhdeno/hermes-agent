@@ -1,0 +1,46 @@
+name: GPT Bridge Read-Only Observer Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'gateway/gpt_bridge_observer.py'
+      - 'scripts/gpt_bridge_observe.py'
+      - 'tests/gateway/test_gpt_bridge_observer.py'
+      - '.github/workflows/gpt-bridge-observer-contract.yml'
+  push:
+    branches:
+      - feat/gpt-bridge-readonly-observer-integration-gate-20261122
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gpt-bridge-observer-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  observer-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Set up Python 3.11
+        run: uv python install 3.11
+      - name: Install locked-range project test dependencies
+        run: |
+          uv venv .venv --python 3.11
+          source .venv/bin/activate
+          uv pip install -e ".[all,dev]"
+      - name: Verify source compilation and observer contract
+        run: |
+          source .venv/bin/activate
+          python -m compileall -q gateway/gpt_bridge_observer.py scripts/gpt_bridge_observe.py
+          python -m pytest tests/gateway/test_gpt_bridge_observer.py -q --tb=short
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
