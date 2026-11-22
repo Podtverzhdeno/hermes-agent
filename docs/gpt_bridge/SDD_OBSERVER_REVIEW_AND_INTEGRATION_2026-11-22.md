@@ -315,3 +315,26 @@ This audit is a bounded snapshot through authenticated GitHub connector calls. N
 **O-25 connector state:** the Local_WorkSpace session subsequently answered `list_workspaces` with only the `shelter` workspace. Therefore the connector was no longer universally down, but its allowed scope still did **not** include the Hermes browser extension, its installation log, or its native host. Do not claim direct runtime monitoring or Obsidian edits to Hermes.
 
 **Risk ranking update:** modern upstream-version parity and authenticated native Runs adapter remain above expanding this offline observer. Any 'self-heal' without an independent effect receipt is rejected. After every PR HEAD change, all check-run conclusions from the previous SHA become stale and must be re-read.
+
+
+## 14. Cross-agent review: native SSE parser PR #4, latest observed head `f2373ed5551fe47168b014b08d63560a6bb0d68a`
+
+**OBSERVED_SOURCE, not production reproduction.** Source-level review of `gateway/gpt_bridge_event_audit.py` at the named PR head found that `CausalRunAuditor.observe()` stores sequence IDs in a set and returns immediately when a previously seen ID reappears. An identical replay is legitimate. A *changed* event (`run.started` versus `run.failed`) with the same seq would be ignored rather than reported as a collision. The native SSE `id:` value and payload `seq` also need explicit reconciliation; on disagreement, do not prefer one without flagging evidence tampering.
+
+**OBSERVED_SOURCE + VERIFIED_RELEASE_CONTRACT.** In upstream v0.23.3 the canonical run status can be nonterminal `unknown` after an owner restart. Native PR #4 `explain()` does not have a dedicated `unknown` branch and therefore classifies it as a generic nonterminal/no-evidence observation. This risks an operator overlooking uncertain external effects. Add `UNKNOWN_EXECUTION_RECONCILIATION_REQUIRED`, block automatic retry and distinguish an *operator acknowledgement that unblocks a queue* from proof the prior effect never happened.
+
+Concrete synthetic tests to require on the native SSE adapter:
+```python
+# Sketch; use actual PR #4 SafeEvent constructor for the current HEAD.
+a.observe(event(run_id="run_a", seq=1, kind="run.started"))
+a.observe(event(run_id="run_a", seq=1, kind="run.failed"))
+assert "DUPLICATE_SEQUENCE_CONFLICT" in a.explain().evidence
+
+a.observe_status({"run_id": "run_a", "status": "unknown"})
+assert a.explain().stop_reason == "UNKNOWN_EXECUTION_RECONCILIATION_REQUIRED"
+```
+These are **new test requirements**, not test results. Cross-PR review comment was posted in PR #4; no changes made to its branch.
+
+**New acceptance invariant:** No run may be marked reliably completed merely because a transport SSE terminal event appears; require matching status at an authenticated profile-owned run plus independent evidence for externally mutating actions. Every `unknown` outcome must remain distinguishable from user-requested cancellation, tool exception, a network failure, or an unresponsive browser.
+
+**Validation update for PR #26:** At HEAD `8cec46d296e38b156b851dda0fda1b1508048e88`, all three offline GitHub Python matrix checks (3.11, 3.12, 3.13) were independently observed **success**; broad repository `test` was still `in_progress`. This version of the SDD may create a later commit; never extrapolate the old check result to the next HEAD. Do not merge with only an offline green matrix.
