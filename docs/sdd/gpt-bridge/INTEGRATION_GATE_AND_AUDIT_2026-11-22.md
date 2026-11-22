@@ -194,3 +194,23 @@ Offline local research bundle includes gpt_extension/trace_guard.py and tests/gp
 Fault gate: browser/tab/service-worker restart, WS loss with >1 peer, DOM selector drift, late ack, SSE partial/no terminal, simultaneous requests from 1/8/32/64/100 agents, model mismatch, user cancel/approval, upstream backend epoch rotation, exact-HEAD CI and operator rollback drill. Do not report production pass based on static inspection or offline synthetic tests.
 
 Source links: [MCP extension code](https://github.com/intellectronica/hermes-chatgpt-extension/tree/main/src/hermes), [release v0.3.1](https://github.com/intellectronica/hermes-chatgpt-extension/releases/tag/v0.3.1), [browser bridge host](https://github.com/Dworr21/chatgpt-bridge/blob/main/bridge-host.py), [browser background](https://github.com/Dworr21/chatgpt-bridge/blob/main/background.js), [browser content](https://github.com/Dworr21/chatgpt-bridge/blob/main/content.js).
+
+
+## 10. Reproducible expert-prior ranking (not performance measurement)
+
+A subjective but explicit engineering scoring rubric makes conflicting agents' recommendations inspectable. Five criteria are graded from 1=poor to 5=strong; weights: Safety 25%, Incident evidence/causal clarity 25%, Delivery feasibility 20%, Multi-agent scalability 15%, Maintenance/compatibility 15%. Compute weighted mean over the five values; **these scores are not observed runtime performance, availability, security audit results, or a 10/10 quality guarantee.** Re-score after tests with independent reviewers.
+
+| Candidate | S/E/F/M/C | Weighted / 5 | Evidence grade now | Decision |
+|---|---|---:|---|---|
+| Metadata-only causal guard and source coverage | 5/5/4/5/4 | **4.65** | C: 83 offline synthetic tests across both observer modules, 98% combined line coverage | Stage read-only; require real emitter and trust evidence |
+| Independent stop observer with health/freshness | 5/5/4/4/4 | **4.50** | C: source inspection and synthetic DB snapshot | Prioritize as independent sidecar, not execution owner |
+| Codex plugin Kanban task/run timeline | 4/5/4/4/4 | **4.25** | C: intellectronica code + v0.3.1 source CI; no live Hermes in this run | Best UI foundation after installed version/compatibility confirmed |
+| Shared-file ownership + fencing | 5/4/3/5/4 | **4.20** | C: protocol SDD and actual cross-agent branch collisions | Enforce before broad parallel editing |
+| Durable external effect receipts and reconciliation | 5/5/2/5/3 | **4.10** | C: prototype ledger; no provider-specific live readback | Critical but highest implementation/integration risk |
+| Derived OpenTelemetry GenAI projection | 4/4/4/4/4 | **4.00** | D: standards-backed design, no live spans | Build after trusted event store, not as authorization |
+| ChatGPT browser DOM adapter as unattended core | 1/2/1/2/1 | **1.40** | C: observed source P0 correctness gaps; no real run | Reject as production autonomous execution foundation |
+| Second independent scheduler beside Kanban | 1/2/1/1/2 | **1.40** | C: upstream canonical Kanban exists | Reject: split-brain and duplicated effects |
+
+A high score for a **read-only** module is not a substitute for durable external effect guards, nor does a low browser score mean all browser use is prohibited. Risk acceptance depends on deployment mode, permissions, and verified evidence. Best next work in dependency order: identify the installed extension → establish canonical Kanban task/run source and private event envelope → fix stop/false-success classification → enforce effect receipts/owner leases → expose causality in plugin UI → load/soak and fault tests → allow owner-approved production.
+
+**Key constraints:** exact branch/version SHA per write; one owning integrator for gateway files; no installed extension assumption; no auto-resend of ambiguous operations; no secret-bearing debug logs; no independent "fully healthy" banner with missing source coverage.
