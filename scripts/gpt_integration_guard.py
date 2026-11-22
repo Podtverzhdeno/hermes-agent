@@ -23,6 +23,10 @@ from typing import Any
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 _CODE_EXT = (".py", ".js", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".toml", ".yaml", ".yml")
+# Based on this fork's .github/workflows/tests.yml and supply-chain-audit.yml.
+# This is a repository-specific evidence policy, not a generic GitHub default.
+_REQUIRED_CHECKS = frozenset({"test", "Scan PR for supply chain risks"})
+_OPTIONAL_SKIPPED = frozenset({"build-and-push"})
 _OBSERVERS = {
     "gpt_bridge/observability.py",
     "hermes_gpt_bridge/diagnostics.py",
@@ -192,10 +196,22 @@ def evaluate(snapshot: dict[str, Any]) -> dict[str, Any]:
         checks = pr.get("checks", "absent")
         if checks is None or checks == "absent" or not isinstance(checks, list) or not checks:
             issues.append(_issue("CI_UNVERIFIED", "high", [n]))
-        elif not all(isinstance(c, dict) and c.get("head_sha") == pr["head_sha"]
-                     and c.get("status") == "completed" and c.get("conclusion") == "success"
-                     for c in checks):
-            issues.append(_issue("CI_NOT_GREEN_AT_EXACT_HEAD", "high", [n]))
+        else:
+            if not all(isinstance(c, dict) and c.get("head_sha") == pr["head_sha"]
+                       and isinstance(c.get("name"), str) for c in checks):
+                issues.append(_issue("CI_EVIDENCE_SHA_MISMATCH", "high", [n]))
+                continue
+            names = {c["name"] for c in checks}
+            if not _REQUIRED_CHECKS.issubset(names):
+                issues.append(_issue("REQUIRED_CI_MISSING", "high", [n]))
+            bad = [c for c in checks if not (
+                c.get("status") == "completed" and (
+                    c.get("conclusion") == "success" or
+                    (c.get("conclusion") == "skipped" and c["name"] in _OPTIONAL_SKIPPED)
+                )
+            )]
+            if bad:
+                issues.append(_issue("CI_NOT_GREEN_AT_EXACT_HEAD", "high", [n]))
     if snapshot.get("main_protected") is False:
         issues.append(_issue("MAIN_UNPROTECTED", "high"))
     if type(snapshot.get("main_protected")) is not bool:
