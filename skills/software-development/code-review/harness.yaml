@@ -3,7 +3,7 @@ schema_version: 1
 skill: code-review
 activation:
   when: ["Review a local diff, patch or source file for actionable defects","Assess security, correctness and regression risks before shipping"]
-  not_when: undefined
+  not_when: ["Publish comments to a GitHub PR; use github-code-review", "Implement a known bug fix rather than review the code"]
 capabilities:
   tools: ["read_file","search_files","terminal (read-only commands)"]
   side_effects: none

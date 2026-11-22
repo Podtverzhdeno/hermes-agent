@@ -3,7 +3,7 @@ schema_version: 1
 skill: github-pr-workflow
 activation:
   when: ["Create or update a GitHub pull request with CI checks","Review PR readiness and coordinate safe branch updates"]
-  not_when: undefined
+  not_when: ["Only analyze a local patch with no remote PR workflow", "Only draft code-review findings with no requested PR mutation"]
 capabilities:
   tools: ["git","gh","GitHub API (authenticated client)"]
   side_effects: external_write

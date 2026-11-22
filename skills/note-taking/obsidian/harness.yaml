@@ -3,7 +3,7 @@ schema_version: 1
 skill: obsidian
 activation:
   when: ["Search, summarize, link or carefully edit notes in a specified Obsidian vault","Maintain a project knowledge base with traceable notes"]
-  not_when: undefined
+  not_when: ["Edit generic Markdown files outside an identified Obsidian vault", "Research a subject with no requested interaction with vault notes"]
 capabilities:
   tools: ["read_file","search_files","write_file","patch"]
   side_effects: local_write

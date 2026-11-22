@@ -3,7 +3,7 @@ schema_version: 1
 skill: subagent-driven-development
 activation:
   when: ["A multi-part implementation has independently testable work packages","Parallel expert reviews can improve quality without shared-write conflicts"]
-  not_when: undefined
+  not_when: ["A single atomic edit can be made and tested without delegation", "Multiple agents cannot obtain isolated workspaces or non-overlapping file ownership"]
 capabilities:
   tools: ["delegate_task","todo","read_file","terminal"]
   side_effects: local_write

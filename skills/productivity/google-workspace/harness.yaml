@@ -3,7 +3,7 @@ schema_version: 1
 skill: google-workspace
 activation:
   when: ["Retrieve or modify Google Workspace resources using scoped OAuth","Handle Gmail, Calendar, Drive, Sheets and Docs with documented operations"]
-  not_when: undefined
+  not_when: ["Modify local files or repositories without Google Workspace resources", "Use non-Google accounts and services unrelated to Workspace"]
 capabilities:
   tools: ["google_api.py","setup.py"]
   side_effects: external_write

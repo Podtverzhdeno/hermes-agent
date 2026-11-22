@@ -3,7 +3,7 @@ schema_version: 1
 skill: github-code-review
 activation:
   when: ["Review a GitHub PR diff and optionally draft inline comments","Identify release-blocking defects with traceable line anchors"]
-  not_when: undefined
+  not_when: ["Only review an uncommitted local diff without a GitHub PR", "Open, update or merge a PR rather than inspect its defects"]
 capabilities:
   tools: ["gh","git","GitHub API (authenticated client)"]
   side_effects: external_write

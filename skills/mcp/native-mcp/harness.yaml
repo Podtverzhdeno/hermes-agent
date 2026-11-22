@@ -3,7 +3,7 @@ schema_version: 1
 skill: native-mcp
 activation:
   when: ["Connect or configure trusted MCP servers and discover tools","Diagnose MCP transport and tool schema compatibility"]
-  not_when: undefined
+  not_when: ["Use a one-off already configured MCP tool without server administration", "No trusted server identity or authorized configuration scope is available"]
 capabilities:
   tools: ["terminal","read_file","mcp"]
   side_effects: external_write
