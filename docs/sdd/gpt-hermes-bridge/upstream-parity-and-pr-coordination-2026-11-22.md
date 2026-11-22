@@ -94,6 +94,64 @@ April runtime and assume imports remain compatible. Windows support has also
 changed from earlier WSL-only fork packaging; validate Windows, WSL and
 desktop capability explicitly with the target environment.
 
+## 2A. Confirmed event-stream durability gap (new source finding)
+
+The *modern* `gateway/platforms/api_server_runs.py` still has a specific
+observability limitation, even though its run ID reservation/status layer is
+durable:
+
+- `_RunStream` is an **in-memory** `deque` with `BACKLOG_LIMIT=1000`.
+- Each subscriber has `SUBSCRIBER_QUEUE_LIMIT=256` (plus replay headroom).
+  Slow subscribers are detached after overflow.
+- `Last-Event-ID` and `last_seq` support replay **only from current
+  memory**. If the requested sequence is older than the retained backlog,
+  upstream emits `replay.truncated` with `oldest_retained_seq`.
+- `GET /v1/runs/{run_id}/events` returns not-found if there is no live
+  `_run_streams[run_id]` entry after its short registration wait.
+  In contrast, GET run status can recover a scoped persisted status.
+- Events can be truncated/lost on restart even when final status survives;
+  a client must never infer a continuous step trace solely from a terminal
+  status or the existence of SSE reconnect support.
+
+**Revised observability design (derived, not a competing run authority):**
+1. Connect to `/v1/runs/{id}/events` as close to run admission as practical.
+2. Decode bounded SSE frames. Record `seq`, safe `event` category,
+   timestamps and a **redacted** causality key; discard raw free-text args,
+   previews, answers and tool payloads by default.
+3. Persist each received event + last-confirmed sequence to a local durable
+   append-only index. Track `replay.truncated`, sequence gaps, queue
+   overflow, disconnect, reauth and event-source restart separately.
+4. On reconnect, send `Last-Event-ID` and reconcile
+   `GET /v1/runs/{id}` before deciding whether another attempt is safe.
+5. If upstream no longer has the event backlog, display
+   `EVENT_HISTORY_GAP` and the authoritative *status only*. Do NOT invent
+   missing tool steps or auto-close the incident.
+6. The GPT extension may show progress from this index, but it cannot mutate
+   Hermes Kanban/run state. A server-side transactional event hook is
+   required for stronger no-gap guarantees across gateway crashes.
+
+**Acceptance criteria** for future SSE observer:
+- 1001+ generated events: `replay.truncated` produces explicit gap alert.
+- Subscriber queue overflow: client notices disconnect, retries with cursor,
+  and preserves an explicit missing-range record.
+- Gateway SIGKILL then restart: persisted run status remains distinguishable
+  from lost event history; no fabricated 100%-complete trace.
+- Duplicate `Last-Event-ID` replay: exactly one observational row per
+  `(run_id, seq)` in the derived index; previously confirmed events do
+  not appear as new actions.
+- SSE stream reports terminal then status lacks terminal: flag contradiction,
+  resolve against authoritative persisted state.
+- Raw SSE payload contains a credential/prompt: redaction test proves it is
+  not written to the derived index.
+- 30 independent run streams: test event lag, storage backpressure and
+  observer crash/recovery; note backend hard concurrency caps separately.
+
+The current `scripts/hermes_gpt_run_observer.py` is intentionally a
+**status-only read-only probe**. It does NOT ingest SSE, retain per-step
+events, or satisfy the above criteria. Its own log records `state_observed`
+only for changed status/last-event category and explicitly labels stalls
+as *suspected*.
+
 ## 3. Updated target architecture
 
 ```text
