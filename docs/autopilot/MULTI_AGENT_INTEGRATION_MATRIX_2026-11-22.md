@@ -1,4 +1,4 @@
-# Integration & ownership matrix — 10 concurrent Hermes PRs (2026-11-22)
+# Integration & ownership matrix — 27 concurrent Hermes PRs (2026-11-22)
 
 **Scope:** the open PR inventory and changed-file lists retrieved on 2026-11-22 via the connected GitHub API. **Live snapshot:** branches are moving; re-fetch before any merge. This document coordinates proposals; it does not merge, approve, or grant privileges. Canonical owner requirements: `docs/autopilot/OWNER_ACCEPTANCE_CONTRACT.md`.
 
@@ -102,3 +102,54 @@ For 30 agents, require owner/worker assignment per task, per-project budgets, pe
 PR #10 initial head `55e0ef8062dbe4ffb1b0595d92de88ad29cc7451` triggered Autopilot Offline Contract workflow `45013359159`. Syntax step succeeded; Python 3.12 produced **72 passed, 2 failed**, at tests `test_attempts_are_bounded_and_eventually_fail` and `test_unknown_effect_must_be_reconciled_before_retry`. Root causes were mismatched fake lease length assumption and wrong expected exception type; corrected on branch commit `1bdfd1b22f77ec6691df3722e45eac211999d758`. This records the observed failure, not a passing rerun. Supply Chain Audit `45013359190` succeeded on original head only.
 
 **Recheck all statements on latest SHA before reporting successful verification.**
+
+## Second live inventory — 27 draft PRs and new high-risk overlaps
+
+**Observed through the connected GitHub API:** the open PR count grew from **10 to 27** during this same engineering pass. Counts/heads are a snapshot; not a durable lock. The original #1–#10 table above is retained as the baseline for audit continuity. Exact changed-path lists for #11–#27 were inspected separately, not inferred from PR titles.
+
+| New PRs | Scope by changed paths | Immediate integration disposition |
+|---|---|---|
+| [#11](https://github.com/Podtverzhdeno/hermes-agent/pull/11) | `gateway/platforms/api_server.py`, request preflight and keyed SSE tests | **Direct collision** with #4/#5/#6; include preflight in one selected API implementation |
+| [#12](https://github.com/Podtverzhdeno/hermes-agent/pull/12) | `gpt_companion/journal.py`, observer/watch, docs, tests, `pyproject.toml` | Proposed baseline for Companion journal only after independent tests |
+| [#13](https://github.com/Podtverzhdeno/hermes-agent/pull/13) | `tools/browser_tool.py`, CDP/log redaction, standalone diagnostics, `pyproject.toml` | **Direct collision** with #15; preserve both browser process-ownership and redaction |
+| [#14](https://github.com/Podtverzhdeno/hermes-agent/pull/14) | integration audit script, CI and docs | Competes semantically with #18/#22/#24/#26/#27; choose **one** canonical collision check |
+| [#15](https://github.com/Podtverzhdeno/hermes-agent/pull/15) | `tools/browser_tool.py`, browser ownership lifecycle, CI | **High priority physical resource ownership:** do not kill externally owned Edge/Chrome on CDP cleanup; merge with #13 only after cross-tests |
+| [#16](https://github.com/Podtverzhdeno/hermes-agent/pull/16) | `gateway/gpt_bridge_observer.py`, watcher, docs/tests | Read-only observation candidate; verify purpose relative to #9/#12/#21/#25 |
+| [#17](https://github.com/Podtverzhdeno/hermes-agent/pull/17) | `gpt_companion/journal.py`, `docs/sdd/GPT_COMPANION_SDD.md`, tests | **Direct collision** with #12 and #23, competing old-attempt reconciliation logic |
+| [#18](https://github.com/Podtverzhdeno/hermes-agent/pull/18) | integration guard script, tests and docs | Competing canonical PR collision guard |
+| [#19](https://github.com/Podtverzhdeno/hermes-agent/pull/19) | observer forensic SDD and log only | Documentation comparison, no direct source collision |
+| [#20](https://github.com/Podtverzhdeno/hermes-agent/pull/20) | SDD convergence entrypoint and upstream parity docs | Candidate for navigation, not execution authority |
+| [#21](https://github.com/Podtverzhdeno/hermes-agent/pull/21) | `gateway/gpt_causal_observer.py`, CI and tests | Independent observer candidate, overlaps #9/#12/#16/#25 in **semantics**, not filenames |
+| [#22](https://github.com/Podtverzhdeno/hermes-agent/pull/22) | PR integration watcher, CI and docs | Competing canonical PR collision guard |
+| [#23](https://github.com/Podtverzhdeno/hermes-agent/pull/23) | `gpt_companion/journal.py`, causal safety tests and SDD | **Direct collision** with #12/#17; source-local acknowledgment causal rule stricter than #17 |
+| [#24](https://github.com/Podtverzhdeno/hermes-agent/pull/24) | PR gate script, inventory JSON and docs/tests | Competing canonical PR collision guard; inventory can go stale |
+| [#25](https://github.com/Podtverzhdeno/hermes-agent/pull/25) | `hermes_observer/audit.py`, CI and 42 fault tests | Separate offline auditor; compare explicit invariants, no claim of authority |
+| [#26](https://github.com/Podtverzhdeno/hermes-agent/pull/26) | `gateway/gpt_bridge_event_audit.py`, collision audit script + tests | **Direct collision** with #4 on event auditor; competing guard script |
+| [#27](https://github.com/Podtverzhdeno/hermes-agent/pull/27) | PR guard script, CI and tests | Competing canonical PR collision guard |
+
+### Actual same-file conflicts to prevent silent overwrite
+
+1. **API service:** #4, #5, #6, #11 -> `gateway/platforms/api_server.py`; #4 and #6 also share `tests/gateway/test_api_server.py`. These may encode incompatible semantics for in-flight same-key requests, SSE failure and unknown effects.
+2. **External CDP browser lifecycle:** #13 and #15 -> `tools/browser_tool.py`. Both are useful, different fixes. #13 removes CDP URLs from logs; #15 avoids triggering `Browser.close` or killing daemons for externally attached CDP. One integrated patch must test both properties.
+3. **Companion event journal:** #12, #17 and #23 -> `gpt_companion/journal.py` and `docs/sdd/GPT_COMPANION_SDD.md`. #17 and #23 use different causal semantics for acknowledgments across producers. Neither should blindly supersede the other.
+4. **Gateway event auditor:** #4 and #26 -> `gateway/gpt_bridge_event_audit.py`, plus overlapping tests. Review actual schema versions and reason codes, not only code diffs.
+5. **Prototype task kernel:** #1 and #10 -> `autopilot/ledger.py`, `tests/autopilot/test_ledger.py`; PR10's frozen base is for reproducibility only. #1 is still moving.
+6. **Package metadata:** #1/#9/#12/#13 -> `pyproject.toml`. Changes may be individually syntactically mergeable yet clash in entry points, dependencies or package discovery.
+7. **Many semantic duplicates despite no overlapping paths:** #14/#18/#22/#24/#26/#27 all add a GitHub PR collision checker, several with their own Actions. **Deploy at most one owner-controlled read-only checker** after selecting a contract; six parallel schedulers/alerts create noise, cost, and conflicting conclusions.
+
+**Safety decision:** DO NOT merge any batch solely because GitHub reports `mergeable: true`. A green unit suite for a PR does not validate composition with another modifying the same path. File-level and semantic-level collision checks are both mandatory.
+
+### Companion journal causal ambiguity — explicit design gate
+
+PR #17's first iteration treats a prior-attempt effect as resolved if reservation and acknowledgment come from distinct sources or if the same source has a larger sequence; PR #23 instead requires same-source strictly later resolution in its offline event projection and treats cross-source acknowledgment as **uncertain**. A source-local sequence gives order only within an emitter; neither alone attests that the provider truly executed or rejected the external action. Prefer the **conservative blocked outcome**, with a separately authenticated external receipt/read-back from a privileged gateway. The shared SDD must specify a trusted event signer/identity and effect receipt, rather than relying on comparison of untrusted sequence numbers.
+
+### Browser ownership tests and merge veto
+
+PR #15's browser cleanup conditional checks `session_info.features.cdp_override is True`, and the inspected `_create_cdp_session()` populates that marker. Its default action for such sessions is detach metadata, **not** run CLI `close` or kill local session PID. This is safer than closing another user's browser, but needs negative tests: migrated session without flag, corrupted metadata, externally owned pid/socket collision, browser PID reused, detach during pending tool effect, proxy daemon leak, and log redaction from PR #13. Until such tests and the exact combined-SHA CI pass, keep it a draft. On one inspected head of #15, targeted detached-CDP test check reported success but the broader `test` check reported failure; **targeted green is not global acceptance**.
+
+### Integration target / validation policy
+
+Do not select one of the six guard implementations by code quantity or stars. Require each to detect these exact fixtures: simultaneous PRs on `api_server.py`, two branches changing the same test, stale parent SHA, unrelated docs-only updates, stack dependency PR1->PR10 snapshot, name-alias/symlink collision, false "CI green" due skipped review, and owner-local unreachable warning. Compare true-positive/false-positive rate, API pagination/cost, input-data trust, private token handling, output stability, dry-run safety and rollback.
+
+Choose **one** audited script + one CI job that reads a deterministic normalized inventory and writes evidence pointers, not merge decisions. A GitHub workflow is not an independent arbiter for unknown external effects or the user's local CDP browser.
+
