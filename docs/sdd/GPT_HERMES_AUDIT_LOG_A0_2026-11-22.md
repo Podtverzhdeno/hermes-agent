@@ -65,3 +65,6 @@ Source provenance: connected GitHub repository, specific PR metadata / check-run
 
 ## Multi-producer liveness source schema audit
 - Source-level conditional correctness finding on PR #12: event schema/SQLite uniqueness uses (source,run_id,attempt,sequence), not producer_id; source may be category worker rather than unique worker incarnation. Multiple agents same source category can falsely conflict or merge liveness. A0 comment 7078274443 requests trusted per-producer ID/fence and negative tests. This is a design risk, not a live reproduced production incident.
+
+## Monitor self-interference / API pressure correction
+- Repeated A0 draft PR pushes launched a live-evidence scan with ~3 GETs for every open PR in parallel with other agents' scanners. This contributed controllable API pressure and increased chance of SNAPSHOT_RACE (not proof of API rate limiting, which was not observed). Immediate fix: separate cheap offline-contract on PR from manually dispatched live-evidence, restrict concurrent live collectors to one and provide a future default-branch-only 6-hour safety snapshot. Schedule does NOT run while draft PR #28 is unmerged. Production proposal is webhook+incremental reconciliation instead of expensive polling.

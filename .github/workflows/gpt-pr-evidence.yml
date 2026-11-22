@@ -1,5 +1,8 @@
 name: GPT PR integration evidence (read only)
 
+# Deliberate load isolation: quick unit tests on PR edits; live GitHub
+# collection only on explicit dispatch, or after default-branch merge, 4x/day.
+# Webhook + incremental projection should replace broad polling in production.
 on:
   pull_request:
     paths:
@@ -8,6 +11,8 @@ on:
       - 'docs/sdd/GPT_HERMES_INTEGRATION_A0_2026-11-22.md'
       - '.github/workflows/gpt-pr-evidence.yml'
   workflow_dispatch:
+  schedule:
+    - cron: '23 */6 * * *'
 
 permissions:
   contents: read
@@ -28,8 +33,12 @@ jobs:
         run: python -m unittest discover -s tests/integration -p test_hermes_pr_gate.py -v
 
   live-evidence:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    concurrency:
+      group: hermes-gpt-evidence-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
