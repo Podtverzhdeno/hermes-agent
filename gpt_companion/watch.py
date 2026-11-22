@@ -16,7 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable
 
-from .journal import EventJournal, JournalConflict
+from .journal import EventJournal, JournalConflict, _prepare_private_sqlite_path
 
 
 def _fingerprint(assessment: dict) -> str:
@@ -67,7 +67,8 @@ class StatusWatch:
         self.path = Path(status_db)
         if self.events.path.resolve() == self.path.resolve():
             raise ValueError("status_db must be distinct from event_db")
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        _prepare_private_sqlite_path(self.path)
         with self._db() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
