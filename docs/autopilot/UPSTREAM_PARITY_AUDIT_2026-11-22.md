@@ -253,3 +253,40 @@ A vendor feature page cannot override a failing integration test, and an
 open issue for an older version cannot automatically condemn the current
 release. Our reports must distinguish **source says**, **our code implements**,
 **unit tests run**, and **deployed E2E verified**.
+
+
+## Secondary upstream source audit: code, tests and plugins
+
+Examined source files on the current upstream main on 2026-11-22:
+
+- [hermes_cli/kanban_pr_acceptance.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/kanban_pr_acceptance.py):
+  the exact-head GitHub gate uses `gh api` with an explicit assignee
+  profile's auth context and rejects inaccessible repo credentials. This
+  is already more complete than a naive "check CI success" custom plugin.
+- [hermes_cli/kanban_db_dispatch.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/kanban_db_dispatch.py):
+  rate-limit cooldown, crash/orphan reclaim, responder limits, per-profile
+  scheduling and failure suppression already exist. Avoid replacing these.
+- [agent/kanban_stop.py](https://github.com/NousResearch/hermes-agent/blob/main/agent/kanban_stop.py):
+  a worker that would exit after prose without a terminal Kanban tool receives
+  a bounded nudge; this reduces protocol violations but is **not** an
+  independent project-wide STOP switch.
+- [tests/e2e/core/kanban/test_kanban_worker_sigkill.py](https://github.com/NousResearch/hermes-agent/blob/main/tests/e2e/core/kanban/test_kanban_worker_sigkill.py):
+  real CLI/dispatcher and fake-provider SIGKILL exercise, but three
+  asserted invariants are behind `known_gate` for reported bugs
+  #119155 (heartbeat inherited across run), #121255 (crash assigned
+  previous exit code), #119618 (stale crash diagnostic). A generic green
+  upstream CI does **not** prove those known-gated conditions are fixed.
+
+Community plugins reviewed as **not automatically trusted**:
+
+| Candidate | Actual documented privileges | Decision |
+|---|---|---|
+| [approval-ledger](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/approval-ledger.yaml) | Observer-only metadata log of approval prompts, no network, no ability to approve | Optional observability; **not** an external-effect authorization/publisher |
+| [kanban-empowered](https://github.com/NousResearch/hermes-agent/blob/main/plugin-catalog/kanban-empowered.yaml) | Reads boards, writes comments/unblocks/reassigns, can intercept owner Telegram replies, reads session excerpts via model, imports private Hermes modules | Do not install in autopilot without a supply-chain, identity, privacy and capability audit |
+| [proactive-continuity](https://hermes-agent.nousresearch.com/marketplace/proactive-continuity) | Proposed continuity mechanism with background Kanban work | Evaluate separately; no unreviewed auto-install or unbounded wakeups |
+
+**Acceptance implication:** a source test that explicitly tolerates a known bug
+cannot satisfy our G7 recovery gate. Reproduce the failing case against
+the canary release, require a genuine fixed assertion and read the
+actual worker/dispatcher/event logs rather than inferring safety from
+an aggregate GitHub check badge.
