@@ -88,10 +88,15 @@ class TestBundledHarnesses(unittest.TestCase):
                 profile = json.loads((folder / "harness.json").read_text(encoding="utf-8"))
                 self.assertIn("name: " + profile["skill"], skill_doc.split("---", 2)[1])
                 raw = (folder / "SKILL.md").read_bytes()
-                git_object = hashlib.sha1(
-                    b"blob " + str(len(raw)).encode("ascii") + b"\x00" + raw
-                ).hexdigest()
-                self.assertEqual(profile.get("skill_git_blob"), git_object)
+                def blob_hash(data):
+                    return hashlib.sha1(
+                        b"blob " + str(len(data)).encode("ascii") + b"\x00" + data
+                    ).hexdigest()
+                # Git on Windows may materialize Markdown with CRLF while
+                # the committed Git blob remains LF. Both are equivalent.
+                line_normalized = raw.replace(b"\r\n", b"\n")
+                self.assertIn(profile.get("skill_git_blob"),
+                              {blob_hash(raw), blob_hash(line_normalized)})
                 self.assertEqual(load_skill_harness(folder, profile["skill"]), profile)
                 self.assertNotIn(profile["skill"], names)
                 names.add(profile["skill"])
