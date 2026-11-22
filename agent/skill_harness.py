@@ -90,14 +90,19 @@ def validate_harness(profile: Any, expected_skill: str) -> dict:
     if not isinstance(actions, list) or not 1 <= len(actions) <= 16:
         raise SkillHarnessError("invalid action list")
     seen = set()
+    requirements = []
     highest = "read_only"
     for action in actions:
-        if not isinstance(action, dict) or set(action) != {"operation", "risk", "approval"}:
+        if not isinstance(action, dict) or set(action) != {"operation", "risk", "approval", "requires_evidence"}:
             raise SkillHarnessError("invalid action shape")
         op = _line(action["operation"], "operation", 96)
         if op in seen:
             raise SkillHarnessError("duplicate operation")
         seen.add(op)
+        names = _lines(action["requires_evidence"], "requires_evidence", 1, 12)
+        if not all(_NAME.fullmatch(name) for name in names):
+            raise SkillHarnessError("invalid evidence ID in action")
+        requirements.extend(names)
         risk = action["risk"]
         if risk not in _RISKS or action["approval"] != _APPROVAL.get(risk):
             raise SkillHarnessError("inconsistent approval for action risk")
@@ -120,6 +125,8 @@ def validate_harness(profile: Any, expected_skill: str) -> dict:
         if e["source"] not in _SOURCES:
             raise SkillHarnessError("invalid evidence source")
         _line(e["how_to_verify"], "how_to_verify")
+    if not set(requirements).issubset(seen):
+        raise SkillHarnessError("action references unknown evidence")
     return profile
 
 
@@ -158,7 +165,10 @@ def format_harness_guidance(profile: Mapping[str, Any]) -> str:
     out.extend("- " + v for v in profile["preflight"])
     out.append("Procedure:")
     out.extend("- " + v for v in profile["workflow"])
-    out.append("Required independently checked evidence:")
+    out.append("Operation-specific evidence gates:")
+    out.extend("- " + a["operation"] + " (" + a["risk"] + ", " + a["approval"] + "): "
+               + ", ".join(a["requires_evidence"]) for a in profile["actions"])
+    out.append("Evidence verification methods:")
     out.extend("- " + e["id"] + " [" + e["source"] + "]: " + e["how_to_verify"]
                for e in profile["evidence"])
     out.append("On failure:")
@@ -167,7 +177,8 @@ def format_harness_guidance(profile: Mapping[str, Any]) -> str:
     return "\n".join(out)
 
 
-def assess_evidence_shape(profile: Mapping[str, Any], revision: str, records: list[dict]) -> dict:
+def assess_evidence_shape(profile: Mapping[str, Any], revision: str,
+                          records: list[dict], *, operation: str) -> dict:
     """Schema check ONLY. Candidate records might be model-forged.
 
     A trusted verifier MUST re-fetch evidence independently, check actor,
@@ -179,7 +190,11 @@ def assess_evidence_shape(profile: Mapping[str, Any], revision: str, records: li
         raise SkillHarnessError("exact revision required")
     if not isinstance(records, list) or len(records) > 100:
         raise SkillHarnessError("invalid evidence records")
-    required = {e["id"]: e["source"] for e in profile["evidence"]}
+    action = next((a for a in profile["actions"] if a["operation"] == operation), None)
+    if action is None:
+        raise SkillHarnessError("unknown operation; no evidence gate can be satisfied")
+    evidence_sources = {e["id"]: e["source"] for e in profile["evidence"]}
+    required = {name: evidence_sources[name] for name in action["requires_evidence"]}
     passed, stale, wrong, failed = set(), set(), set(), set()
     for record in records:
         if not isinstance(record, dict):
@@ -200,6 +215,7 @@ def assess_evidence_shape(profile: Mapping[str, Any], revision: str, records: li
     return {
         "schema_version": 1,
         "skill": profile["skill"],
+        "operation": operation,
         "satisfied_by_structure": sorted(accepted),
         "missing_or_conflicting": missing,
         "stale": sorted(stale),
