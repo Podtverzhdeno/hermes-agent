@@ -19,6 +19,7 @@ Requires:
 
 import asyncio
 import json
+import hmac
 import logging
 import os
 import sqlite3
@@ -179,7 +180,8 @@ class ResponseStore:
 
 _CORS_HEADERS = {
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type, Idempotency-Key, X-Hermes-Session-Id",
+    "Access-Control-Expose-Headers": "X-Hermes-Request-Id, X-Hermes-Session-Id",
 }
 
 
@@ -435,7 +437,7 @@ class APIServerAdapter(BasePlatformAdapter):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:].strip()
-            if token == self._api_key:
+            if hmac.compare_digest(token, self._api_key):
                 return None  # Auth OK
 
         return web.json_response(
@@ -529,6 +531,12 @@ class APIServerAdapter(BasePlatformAdapter):
             body = await request.json()
         except (json.JSONDecodeError, Exception):
             return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
+
+        if not isinstance(body, dict):
+            return web.json_response(
+                _openai_error("Request JSON body must be an object", code="invalid_body"),
+                status=400,
+            )
 
         messages = body.get("messages")
         if not messages or not isinstance(messages, list):
@@ -850,6 +858,12 @@ class APIServerAdapter(BasePlatformAdapter):
         except (json.JSONDecodeError, Exception):
             return web.json_response(
                 {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        if not isinstance(body, dict):
+            return web.json_response(
+                _openai_error("Request JSON body must be an object", code="invalid_body"),
                 status=400,
             )
 
