@@ -2,7 +2,7 @@
 
 **Revision:** 2026-11-22 / proposal v0.1  
 **Baseline:** Podtverzhdeno/hermes-agent at main 7e9100901819ee44c16b4ddcb79a6bcb7909f591.  
-**Parallel work:** draft PR #1 at bc66ef436253e552d5b206f5b4d757f0214ed92d implements an unactivated Autopilot SQLite coordination kernel. This document must not duplicate that ledger.  
+**Parallel work:** draft PR #1 proposes a *legacy-fork* Autopilot SQLite safety kernel; its head is volatile. Modern upstream Hermes v0.23.3 (November 19, 2026 release) already has a durable Kanban/worker-lane lifecycle. Do not deploy both as authoritative schedulers.  
 **Activation:** No live GPT worker, browser automation, production watchdog, remote write adapter, or persistent auto-dispatch is activated by this document or diagnostics PR.
 
 ## 1. Engineering decision and goals
@@ -10,7 +10,7 @@
 A Hermes GPT extension must be an **observable, versioned worker adapter over one authoritative durable task state machine**, not a web-chat polling script. It must explain what happened to each task and every stop, survive agent/session replacement, prevent unsafe retries and coordinate tens of workers with independently authenticated approvals and verification.
 
 Accepted initial architecture:
-- Single durable Autopilot ledger for task identity, attempt, owner, lease, fence, action reservations, approvals, exact-revision evidence and ordered events.
+- One canonical durable task lifecycle: reuse upstream Hermes Kanban after a verified upgrade; keep the draft legacy Autopilot ledger isolated as a prototype/invariant test source, never a competing production scheduler. Layer exact-action effect receipts, approvals and diagnosis around the canonical task/run.
 - Bounded admission and resource ownership before any worker launch; a task is not a live UI session.
 - Typed GPT Responses API stream adapter and independent Hermes ACP adapter, both reporting provider lifecycle events and capability limits.
 - Policy-enforced, fenced tool gateway, external-effect reservation and independent reconciliation before replay.
@@ -18,7 +18,7 @@ Accepted initial architecture:
 - Per-project Git worktree and optional scoped local runner/Obsidian synchronization with hash receipts.
 - Independent verifier, cost/deadline/attempt budgets inherited by the entire task DAG.
 
-Non-goals: bypass client limits or authentication, circumvent MFA/CAPTCHA, assume a ChatGPT DOM reply certifies success, force-merge experimental changes, imply a permanent daemon is running, replace the draft Autopilot control plane.
+Non-goals: bypass client limits or authentication, circumvent MFA/CAPTCHA, assume a ChatGPT DOM reply certifies success, force-merge experimental changes, imply a permanent daemon is running, activate a competing legacy task scheduler alongside upstream Kanban.
 
 ## 2. Verified source audit and hypotheses
 
@@ -59,7 +59,7 @@ Targets are unmeasured release goals, not service statistics: no unauthorized ef
 ```text
 Approved intent / scheduled occurrence
     -> Validate immutable task contract, risk policy, budget, dependencies
-    -> ONE Autopilot durable ledger <--> read-only status/diagnosis/incident API
+    -> ONE canonical task lifecycle (upstream Hermes Kanban after migration)
     -> Admission (worker quota, provider quota, project file locks)
     -> Leased/fenced worker:
          official GPT Responses API | Hermes ACP | supported adapter
@@ -74,7 +74,7 @@ Trust boundary: the LLM sees task context and may propose actions, but must not 
 
 ## 5. Task status, stages and causes
 
-Durable statuses inherit Autopilot's states: queued, running, verifying, retry_wait, waiting_approval, needs_reconciliation, blocked, failed, cancelled, succeeded.
+Prototype diagnostic statuses are queued, running, verifying, retry_wait, waiting_approval, needs_reconciliation, blocked, failed, cancelled and succeeded. These are **not asserted to be the exact upstream Kanban database states**: the trusted adapter must implement a versioned status crosswalk preserving Kanban task/run/review transitions and unknown-effect substate.
 
 Within running/verifying, observe finer stages:
 intake; admission; dispatch; worker_boot; provider_request; provider_stream; tool_validation; approval_wait; effect_reserved; effect_call; effect_reconcile; workspace_write; test_run; remote_ci; artifact_sync; human_review.
@@ -155,7 +155,7 @@ The weighted score is 0.35 risk reduction + 0.25 diagnostic value + 0.20 near-te
 
 | Initiative | R | D | F | L | Score | Priority |
 |---|---:|---:|---:|---:|---:|---|
-| One ledger + transactional event log | 5 | 5 | 4 | 5 | 4.80 | P0 — reuse Autopilot |
+| One canonical Kanban lifecycle + transactional effect log | 5 | 5 | 4 | 5 | 4.80 | P0 — verify upstream parity; no dual scheduler |
 | Pure diagnosis + credible heartbeat/stages | 4 | 5 | 5 | 5 | 4.65 | P0 — module supplied |
 | Fencing + effect reconciliation | 5 | 4 | 3 | 5 | 4.35 | P0 — review/integrate |
 | Exact-revision independent verification | 5 | 4 | 3 | 5 | 4.35 | P0 — trusted adapter |
@@ -164,7 +164,7 @@ The weighted score is 0.35 risk reduction + 0.25 diagnostic value + 0.20 near-te
 | Read-only operator dashboard | 3 | 4 | 4 | 4 | 3.65 | P2 |
 | Uncontrolled ChatGPT DOM polling | 1 | 1 | 2 | 1 | 1.20 | Reject |
 
-SQLite local WAL is a reasonable initial pilot store because Autopilot proposes it and it can be independently tested. For multi-host durable execution, evaluate Temporal against measured volumes and operational cost. Do not introduce distributed consensus before demonstrating a requirement for it.
+SQLite WAL remains useful for a *separate offline prototype* of effect reservation and evidence checks. Modern upstream Hermes already includes durable Kanban state: reuse its task/run source of truth rather than creating a second production queue. Additional effect journaling must reference canonical Kanban task/run IDs. Evaluate other orchestration technologies only after version-parity and production workload evidence.
 
 ## 10. Isolated implementation and tests
 
@@ -182,7 +182,7 @@ A local isolated run of python -m unittest discover -s tests/gpt_extension -q pa
 ## 11. Planned integration in distinct ownership lanes
 
 P0: SDD, static diagnosis, regression tests, engineering log, runbook — this PR.  
-P1: Review/merge Autopilot PR #1 independently; expose authenticated read-only ledger snapshot projection; test schema and policy invariants.  
+P1: Verify current upstream v0.23.3 Kanban interfaces and migrate in an isolated canary; design an authenticated read-only Kanban task/run/event projection. Review Autopilot PR #1 as an isolated safety prototype only; do not merge or activate a second dispatcher without an explicit single-authority migration ADR.  
 P2: Typed GPT Responses SSE adapter and ACP adapter conformance; bounded async telemetry; eliminate global approval callback race, reproduce out-of-order same-name completion.  
 P3: Fenced tool gateway, effect receipts, exact approval; single sandboxed worktree worker; owner-authorized local runner.  
 P4: File ownership/DAG scheduling for tens of agents, quota and budgeting, independent verifier and exact-SHA CI.  
@@ -267,3 +267,27 @@ The runner must record command and ACK sequences, pending command digest, target
 `gpt_extension/cdp_diagnostics.py` consumes a frozen, preauthenticated BrowserLaneSnapshot and only classifies transport symptoms. It has no CDP client or credentials and never sets permits_task_completion. `tests/gpt_extension/test_cdp_diagnostics.py` has **16 synthetic tests**, including stale/future fence, inconsistent/missing ACK, disconnected bridge/extension/tab, silent transport and UI canary false-success.
 
 **Remaining release gates:** locate and review the actual extension/bridge source and version, run real CDP handshake plus negative-auth tests, instrument transport ACK with crash injection, prove exclusive tab ownership under tens of queued agents, confirm typed end-to-end receipts, and validate policy compliance. None of those gates are satisfied by offline tests.
+
+
+## 16. Correction after upstream parity and concurrent PR inventory
+
+**ADR-GPT-008 (supersedes earlier shorthand):** On 2026-11-22 the upstream NousResearch/hermes-agent official release API reports `v0.23.3`, published 2026-11-20 UTC (release date November 19). The upstream documented worker-lane Kanban has durable `task_runs`, `task_events`, heartbeats, reviews, crash/reclaim and dispatch. The older fork main (April 2026) does not establish that Kanban is installed locally. Therefore:
+1. In the **legacy isolated fork prototype**, Autopilot PR #1 may test reservation/evidence/fencing invariants but is **not** a declared production scheduler.
+2. For the **target modern Hermes**, the canonical task/run lifecycle is upstream Kanban after a separate audited upgrade. GPT and CDP adapters must reference canonical Kanban task/run IDs; a separate effect journal may append proof records but never own conflicting task status.
+3. Migration requires mapping legacy IDs, lifecycle/review/approval states, leases, effect reservation, local runner paths, and rollback. No auto-switch on version string alone.
+4. The diagnostics provided in this branch use explicit provisional snapshot states. A future Kanban adapter must map and validate them, rejecting unknown mapping rather than treating it as success.
+
+**Concurrent GitHub audit snapshot (2026-11-22):** 15 open draft PRs were inspected across 124 distinct changed paths. Exact shared paths: `pyproject.toml` (#1, #9, #12, #13); `gateway/platforms/api_server.py` (#4, #5, #6, #11); `autopilot/ledger.py` and its tests (#1, #10); `tools/browser_tool.py` (#13, #15). Some are **intentional stacked PR dependencies** (#10 is based on #1; #11 is based on #4), not independent conflicting implementation. HEADs can change during inspection. Require a stable inventory with head-SHA recheck immediately before integration.
+
+Integration decisions: #4/#11 vs #5 vs #6 are alternative API-idempotency implementations requiring **one** canonical integrator and shared regression suite, not naive merge. #1/#10 remain the prototype safety stack pending upstream Kanban parity. #13 CDP log redaction and #15 externally owned browser cleanup edit distinct source hunks but need combined tests. The pyproject union must include only accepted packages (including `autopilot`, `gpt_bridge`, `gpt_companion`, `gpt_extension` if each is adopted) and independently verify the built wheel.
+
+The separate draft PR #14 supplies a read-only coordination audit tool; it should be reviewed as a potential pre-merge gate, **not** another task scheduler or release authorization. Its inventory must handle non-main-target stacked PRs and detect moving PR HEADs during multi-page collection.
+
+References:
+- https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3
+- https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/kanban-worker-lanes.md
+- https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/kanban.md
+- https://github.com/Podtverzhdeno/hermes-agent/pull/14
+- https://github.com/Podtverzhdeno/hermes-agent/pull/15
+
+**This amendment records a substantive self-review correction: an earlier design treated the draft Autopilot ledger as the future single production source of truth without first verifying current upstream Kanban. That conclusion has been withdrawn.**
