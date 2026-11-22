@@ -56,6 +56,14 @@ A single source must own each lifecycle state; adapters may report observations 
 | Wrong session owner/profile | 403/409 denial and scope evidence | Create parallel writer in another surface |
 | Upstream exposes reasoning summary | Only provider-supplied allowed output | Claim private hidden CoT extracted |
 
+### Additional source-level hardening of native SSE observer (PR #30, not our implementation)
+
+Static review of `gateway/gpt_bridge_event_audit.py` in draft #30 identified a **same-sequence replay identity bug**: `CausalRunAuditor.observe` only tracks `_seen: set[int]` and silently drops a later event with the same `seq` even if its `kind`/`tool_call_id`/`reason` differs. Example: `seq=1 tool.started` then `seq=1 run.failed` gets treated like a harmless retransmission, potentially hiding a contradictory terminal observation. The chosen observer must retain an allowlisted digest/tuple per event sequence, accept only identical replays and fail closed on contradictory reuses; never log raw payload to compare. An exact-sequence duplicate from an honest reconnect must remain cheap to accept.
+
+A second PR #30 branch clears the sole pending approval on an identityless `approval.responded` event, even when modern canonical approval requires `request_id` and `execution_generation`. This is an *inference* that cannot close an authoritative waiting state; retain pending/unknown until exact-scoped evidence or authenticated `pending_controls`. Comment with minimal reproductions was posted on the owning PR, not a fourth observer package.
+
+**Priority ordering:** when both event gaps and pending potentially effectful tools exist, the operator should see **both** `OBSERVATION_INCOMPLETE` and `POSSIBLE_EFFECT_UNKNOWN` with the safe action `QUARANTINE_THEN_RECONCILE`. Replaying SSE alone must not be displayed as permission for another effect. The observer remains a read-only diagnostic; it does not stop/retry tool effects on its own.
+
 ## 2. Identifiers — keep attempt, operation, and artifact separate
 
 The **client-provided request ID** and response contract (`request_id` echo and `content`, `tool_calls` fields) are the minimum compatibility condition only where that client protocol has been explicitly negotiated. This is NOT an assertion that OpenAI's public API uses the same envelope. Do not silently rename an unsupported `request_id` to `run_id`.
