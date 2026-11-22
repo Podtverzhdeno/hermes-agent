@@ -260,3 +260,42 @@ def test_unrelated_gateway_events_cannot_mask_worker_stagnation(context):
     assert result["state"] == "ALIVE_NO_PROGRESS"
     assert result["progress_age_seconds"] == 360
     assert result["live_age_seconds"] == 0
+
+
+def test_100_sources_concurrently_ingested_and_partial_outage_is_counted(context):
+    db, clock = context
+    batch = [event(1, "worker.started", source=f"worker-{i:03}") for i in range(100)]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        assert all(pool.map(db.ingest, batch))
+    assert db.verify_chain()
+    assert db.assess("run-1")["worker_sources_count"] == 100
+    clock.jump(140)
+    # Only 10 of the 100 workers can prove *any* recently observed signal.
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        assert all(pool.map(db.ingest, [event(2, "worker.heartbeat", source=f"worker-{i:03}")
+                                       for i in range(10)]))
+    result = db.assess("run-1")
+    assert result["state"] == "PARTIAL_WORKER_OUTAGE"
+    assert len(result["stale_worker_sources"]) == 90
+    assert result["missing_sequences"] == 0
+    assert db.verify_chain()
+
+
+def test_receipt_clock_backward_step_is_not_worker_failure(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started"))
+    clock.jump(5)
+    db.ingest(event(2, "worker.heartbeat"))
+    clock.jump(-50)
+    db.ingest(event(3, "worker.heartbeat"))
+    result = db.assess("run-1")
+    assert result["state"] == "CLOCK_SKEW_DETECTED"
+    assert result["next_action"] == "CHECK_MONOTONIC_CLOCK_AND_TIME_SYNC"
+    assert db.verify_chain()
+
+
+def test_backward_clock_step_without_new_event_is_visible(context):
+    db, clock = context
+    db.ingest(event(1, "worker.started"))
+    clock.jump(-10)
+    assert db.assess("run-1")["state"] == "CLOCK_SKEW_DETECTED"
