@@ -294,3 +294,56 @@ def test_distinct_connection_uses_full_synchronous_mode(ctx):
     ledger, _ = ctx
     with ledger._db() as db:
         assert db.execute("PRAGMA synchronous").fetchone()[0] == 2  # FULL
+
+
+def test_operator_projections_are_durable_across_reopen(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "commit", "digest:1",
+                            clock() + 10)
+    reopened = AutopilotLedger(ledger.path, clock)
+    listed = reopened.list_tasks(status="waiting_approval")
+    assert len(listed) == 1 and listed[0]["id"] == task
+    assert listed[0]["required_evidence"] == ["ci", "tests"]
+    pending = reopened.approval_queue()
+    assert len(pending) == 1
+    assert pending[0]["action_key"] == "commit"
+    assert pending[0]["digest"] == "digest:1"
+    assert reopened.effects(task) == []
+    with pytest.raises(ValueError):
+        reopened.list_tasks(limit=1001)
+
+
+def test_expired_approval_is_blocked_by_scheduler_sweep(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "commit", "digest:A",
+                            clock() + 10)
+    clock.advance(10)
+    assert ledger.claim("A2") is None
+    assert ledger.get(task)["status"] == "blocked"
+    assert ledger.approval_queue() == []
+    assert "approval_expired" in [x["kind"] for x in ledger.history(task)]
+    with pytest.raises(LedgerConflict):
+        ledger.decide_approval(task, "commit", "digest:A", "owner", True)
+
+
+def test_effects_projection_preserves_unknown_state(ctx):
+    ledger, clock = ctx
+    task = submit(ledger)
+    _, token = lease(ledger)
+    ledger.request_approval(task, "A1", token, "send", "digest:send",
+                            clock() + 100)
+    ledger.decide_approval(task, "send", "digest:send", "owner", True)
+    worker = ledger.claim("A2", lease_seconds=15)
+    ledger.reserve_effect(task, "A2", worker["fence"], "send", "digest:send")
+    clock.advance(15)
+    assert ledger.claim("A3") is None
+    assert ledger.get(task)["status"] == "needs_reconciliation"
+    effects = ledger.effects(task)
+    assert len(effects) == 1
+    assert effects[0]["status"] == "reserved"
+    assert effects[0]["digest"] == "digest:send"
+    assert effects[0]["result_ref"] is None
