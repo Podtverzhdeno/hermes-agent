@@ -55,3 +55,13 @@ As of authoring this log: 42 tests passed locally in the isolated container (`Ra
 - Reconcile overlap with PR #7 SDD when merging; preserve both logs or consolidate with cited revisions, never overwrite another agent's work.
 
 **Operating policy:** never say a task is complete solely because the auditor exits zero. A zero result means only that the supplied, untrusted, bounded slice did not violate these specific offline invariants.
+
+## Addendum: live multi-PR collision observation (2026-11-22 UTC)
+
+- **SOURCE_OBSERVED:** GitHub open PR query now includes **25** active draft/open proposals, #1–#25. Read-only observer candidates #9/#12/#16/#21/#25 and several others overlap conceptually, even if filenames do not collide. **This invalidates any older inventory limited to #1–#11 as a complete integration proof.**
+- **SOURCE_OBSERVED:** #4/#5/#6 simultaneously edit `gateway/platforms/api_server.py` with different idempotency and SSE result contracts. #4 also created `gateway/gpt_bridge_event_audit.py`; #5 now has a native `/v1/runs` read-only observer. These appeared in a fresher review than the initial PR descriptions; don't assume a static scope.
+- **SOURCE_OBSERVED:** #23 is explicitly stacked on #12; merging #23 alone or testing it against a moving base cannot establish correctness. #24 proposes an independent collision guard, but its recorded snapshot describes only 11 PRs; reindex before any integration.
+- **DESIGN DECISION CA-10:** This isolated PR #25 is an **offline diagnostic oracle**. Its generic NDJSON v1 is **not compatible** with native Hermes `/v1/runs` SSE without a reviewed, authenticated, versioned translator. Never claim it is the live run observer.
+- **DESIGN DECISION CA-11:** Modern upstream native Runs/Kanban owns lifecycle if verified by the installed target; select a single production observer/ingress and single PR collision gate. Do not launch 25 independent monitor/ledger implementations.
+- **BLOCKED:** No Windows extension source or runtime through the disconnected Local_WorkSpace connector; no fact about its current deployment can be inferred from any PR's Python unit tests.
+- **ACTION:** Updated this SDD with explicit collision matrix, runtime compatibility blocker, release veto gates and one-owner merge protocol. This review added no privileges, credentials, automated retries or running worker.
