@@ -3,7 +3,7 @@ schema_version: 1
 skill: systematic-debugging
 activation:
   when: ["A reproducible bug, test regression or surprising runtime behavior needs diagnosis","A fix failed and the root cause is not established"]
-  not_when: undefined
+  not_when: ["Plan a new feature without a reported failure","Conduct a non-debugging code review of a clean diff"]
 capabilities:
   tools: ["read_file","search_files","terminal","patch"]
   side_effects: local_write
