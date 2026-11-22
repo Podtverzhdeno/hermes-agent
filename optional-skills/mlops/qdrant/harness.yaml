@@ -1,0 +1,23 @@
+# Individual domain contract; does not grant runtime permissions.
+schema_version: 1
+skill: qdrant-vector-search
+activation:
+  when: ["Build Qdrant payload-filtered dense/sparse or hybrid vector search","Diagnose Qdrant collection schema, upserts, vector dimension or ranking"]
+  not_when: ["Need a standalone in-memory FAISS index without a vector database","Cannot identify which remote Qdrant project and collection may be modified"]
+capabilities:
+  tools: ["qdrant-client","python","terminal","read_file"]
+  side_effects: external_write
+  approval_required: ["Create, reset, delete or reindex production collection","Expose private vectors/payloads to a remote cluster"]
+lifecycle:
+  preflight: ["Verify exact Qdrant endpoint/project/collection and access scope","Inspect existing vector schema, payload-index policy, distance and IDs"]
+  execute: ["Use staging collection and idempotent upsert identifiers for test data","Apply permission/tenant filters before returning candidate results"]
+  verify: ["Test payload filter isolation, dimension mismatch and query API compatibility","Measure labeled recall@k, hybrid fusion behavior and p95 latency"]
+  recover: ["On ambiguous remote write, query existing point/collection before retry","Keep backup or snapshot before migration; do not auto-delete collections"]
+budget:
+  max_tool_calls: 45
+  max_reference_bytes: 196608
+evidence:
+  required: ["Collection schema, endpoint classification and authenticated project identity","Relevance metrics, filter-isolation cases and actual write receipts"]
+output:
+  format: "Qdrant retrieval report with schema, isolation checks and recovery evidence"
+  acceptance: ["No unapproved production upsert/delete","No cross-tenant document leakage"]
