@@ -169,6 +169,7 @@ class ReadOnlyEventObserver:
         self._recent_seq: dict[tuple[str, int], str] = {}
         self._unresolved: dict[str, set[str]] = {}
         self._missing_parent_of: dict[str, str] = {}
+        self._parent_of: dict[str, str] = {}
 
     def ingest(self, raw: Mapping[str, Any]) -> Observation:
         try:
@@ -199,6 +200,15 @@ class ReadOnlyEventObserver:
             return Observation(False, "stale_unverifiable", producer, cursor.contiguous)
         if seq - cursor.contiguous > self.max_reorder:
             return Observation(False, "reorder_window_exceeded", producer, cursor.contiguous)
+        # A causal cycle would assert that an event precedes itself. Detect
+        # cycles only through retained evidence; an evicted ancestor is UNKNOWN.
+        ancestor = event.get("causation_event_id")
+        visited = set()
+        while ancestor is not None:
+            if ancestor == event_id or ancestor in visited:
+                return Observation(False, "causal_cycle", producer, cursor.contiguous)
+            visited.add(ancestor)
+            ancestor = self._parent_of.get(ancestor)
         # All structural/sequence checks complete: update advisory state now.
         self._producers.setdefault(producer, cursor)
         cursor.ahead[seq] = event_id
@@ -213,6 +223,8 @@ class ReadOnlyEventObserver:
         for child_id in resolved_children:
             self._missing_parent_of.pop(child_id, None)
         cause = event.get("causation_event_id")
+        if cause is not None:
+            self._parent_of[event_id] = cause
         missing_parent = cause is not None and cause not in self._recent
         if missing_parent:
             self._unresolved.setdefault(cause, set()).add(event_id)
@@ -223,6 +235,7 @@ class ReadOnlyEventObserver:
         while len(self._recent) > self.max_recent:
             old_event_id, old_identity = self._recent.popitem(last=False)
             self._recent_seq.pop(old_identity[:2], None)
+            self._parent_of.pop(old_event_id, None)
             parent_id = self._missing_parent_of.pop(old_event_id, None)
             if parent_id is not None:
                 children = self._unresolved.get(parent_id)
