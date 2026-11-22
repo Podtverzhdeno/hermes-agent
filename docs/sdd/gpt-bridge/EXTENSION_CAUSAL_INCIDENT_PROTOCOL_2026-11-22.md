@@ -1,0 +1,214 @@
+# SDD — Hermes ↔ GPT extension: causal incident and effect-safety protocol
+
+**Date:** 2026-11-22. **Document status:** design contract and source review, NOT a live extension modification or deployment. **Target:** support tens of independent agent workers without fabricating explanations for stalls. **Canonical source repo:** `Podtverzhdeno/hermes-agent`. **Related:** PR #22 read-only PR collision guard, ADR guard convergence, PR #4–6/#11 gateway, PR #13/#15 CDP.
+
+## 1. Scope, epistemic rules and modes
+
+- **Source-backed:** April 2026 fork implements REST `/v1/chat/completions` and `/v1/responses`. Newer official upstream Hermes has separate dashboard/gateway sessions and Kanban task lifecycle; the two cannot be assumed to have protocol parity.
+- **Source-backed external candidate, not local proof:** public `abundantbeing/hermes-browser-extension` has versions of `gateway-queue.mjs` (durable-session admission, `unknown` after owner restart), `controller-protocol.mjs` (capability handshake; terminal `unsupported_gateway` vs pending `session_pending`), `session-delivery-state.mjs` (stored session identity rather than unstable WebSocket identity), `context-consent.mjs` (origin/principal/profile/controller-scoped consent), `runtime-events.mjs` (canonical tool/assistant event name conversion), and `support-diagnostics.mjs` (public diagnostic copy). These are *reuse candidates*, not evidence of what is installed on the owner's Windows host.
+- **Unknown:** The actual GPT/ChatGPT browser extension's manifest, background/service worker, native host mapping, runtime login/permission constraints, installed version and observable tracing hooks. Local MCP accessible roots do not include Hermes code or the extension. No live GPT session or private model thought has been observed.
+
+**Non-goal:** Extract or monitor a model's hidden internal reasoning, bypass ChatGPT session authentication, use private DOM/network internals as a stable API, auto-edit arbitrary Windows files, install unattended browser control, or claim external effects are exactly-once without authoritative provider coordination.
+
+### Transport choice, ordered by available capabilities
+
+| Lane | When usable | Canonical proof | Safe fallback |
+|---|---|---|---|
+| A — official supported OpenAI-compatible API | Product supports the current documented endpoint | Request/response ID, supported status, stream terminal event | API error with class and receipt; never infer tool-effect outcome from HTTP disconnect |
+| B — modern Hermes gateway/WebSocket | Exact gateway revision advertises session events/resume/queue | Gateway `session.resume` + admission/generation and `events.since` cursor | Unknown admission held for user-assisted reconciliation, never resubmit from panel |
+| C — third-party extension companion plugin | User installed verified version and granted exact browser capabilities | Authenticated ticket handshake; selected route, profile, context principal and epoch | `unsupported_gateway` stops; `session_pending` can await creation without retry flood |
+| D — user-authorized external CDP session | Explicit tab/browser attachment and lifecycle owner verified | Attached session token/lease, tab observation, origin scoping | Detach metadata only; never terminate externally owned browser |
+| E — purely observational GitHub PR metadata | GitHub read permission | Exact head/base SHA, changed file list, timestamp and incomplete indication | `UNKNOWN`; neither browser nor model-runtime proof |
+
+A single source must own each lifecycle state; adapters may report observations but not independently advance task state. A read-only dashboard is a projection of task authority, not another queue.
+
+## 2. Identifiers — keep attempt, operation, and artifact separate
+
+The **client-provided request ID** and response contract (`request_id` echo and `content`, `tool_calls` fields) are the minimum compatibility condition only where that client protocol has been explicitly negotiated. This is NOT an assertion that OpenAI's public API uses the same envelope. Do not silently rename an unsupported `request_id` to `run_id`.
+
+| Identifier | Lifetime | Owner | What is proved |
+|---|---|---|---|
+| `request_id` | Exactly one client transport attempt | Client-issued, adapter echoed, must validate form | Pairing and deduplication of transport receipt |
+| `admission_id` | One gateway prompt admission | Gateway queue authority | Accepted/replayed/unknown prompt |
+| `task_id` | Logical user work item | Kanban authority | Scoped task, not a model execution |
+| `run_id` | One claimed worker execution | Runtime scheduler | Distinct attempt at task work |
+| `operation_id` | One intended potentially effectful operation | Privileged effect gateway | Dedup scope for external side effect |
+| `effect_reservation_id` | Durable reservation for operation | Effect journal | Exclusive claim with fencing/version |
+| `artifact_sha` | Immutable output revision | Git/content store | Hash of output, not acceptance |
+| `verification_id` | Exact revision and named test suite | Independent verifier | Defined acceptance proof |
+| `producer_id` + `producer_incarnation` | Process instance | Authenticated emitter | Event provenance across restart |
+| `trace_id`/`span_id`/`parent_id` | Causal chain | Correlated producers | Causal join, not authority |
+
+**Critical P0:** a successful idempotent API response replay must preserve the **original operation/run ID**, while each network attempt gets its **own request-attempt ID**. A new HTTP request or tab reconnect is not a new worker run. In PR #4 the cached reply tuple omitted the original run ID and the replay returned a freshly generated ID; the owning agent received an actionable code-review comment. This is a static-code finding.
+
+## 3. Wire schema: versioned, allowlisted, authenticated
+
+Proposed metadata-only envelope (`hermes.gpt.bridge.event.v1`), immutable once written:
+
+```json
+{
+  "schema": "hermes.gpt.bridge.event.v1",
+  "event_id": "uuid-v7-or-random-128-bit-id",
+  "producer_id": "trusted-scoped-service-id",
+  "producer_incarnation": "per-startup-random-128-bit-id",
+  "producer_seq": 42,
+  "task_id": "opaque",
+  "run_id": "opaque",
+  "attempt_id": "opaque",
+  "operation_id": null,
+  "trace_id": "32-lowercase-hex",
+  "span_id": "16-lowercase-hex",
+  "parent_event_id": null,
+  "event_type": "tool.effect.outcome_unknown",
+  "stage": "external_effect",
+  "status": "blocked",
+  "reason_code": "EFFECT_ACK_MISSING",
+  "effect_certainty": "UNKNOWN",
+  "lease_epoch": 7,
+  "stop_generation": 5,
+  "artifact_sha": null,
+  "source_observed_at": "2026-11-22T00:00:00Z",
+  "collector_received_at": "2026-11-22T00:00:01Z",
+  "evidence_digest": "sha256:hex",
+  "severity": "error"
+}
+```
+
+**Meaningful absences:** `null` for unavailable fields, explicit `coverage` and `evidence_gap` at projection time. The collector must reject an unknown event type, field, task scope or untrusted producer; do not pass arbitrary payload through a generic `data` or `details` property. Sequence/id verification happens **before** ACK, ideally in one durable inbox transaction with dedup. Authentication requires a cryptographically authenticated connection and bounded per-producer identity; a bare hash chain does not authenticate source.
+
+**No full prompt, response, DOM, page title, selected text, all-tab history, cookies, private CDP endpoint, OAuth token, URL query string, stack trace or raw tool input/output in shared logs.** A displayed preview may be sanitized for the operator but must not be copied into telemetry raw. Public extension `normalizeBrowserRuntimeEvent` includes raw `data` alongside a redacted `preview`: downstream collector code must allowlist fields rather than persisting the returned object wholesale. This is a precaution from source API shape, **not** a proven live data leak.
+
+## 4. Canonical state machines — absence of evidence is not success
+
+### 4.1 Task and model run
+
+`CREATED → ADMITTED → LEASED → RUNNING → AWAITING_VERIFICATION → VERIFIED_DONE`
+
+Alternatives: `ADMITTED → QUEUED`, `RUNNING → BLOCKED` (policy, budget, auth, integration), `RUNNING → CANCEL_REQUESTED → STOPPED` (authoritative stop receipt), `RUNNING → OUTCOME_UNKNOWN` (worker disappeared), `AWAITING_VERIFICATION → REJECTED / NEEDS_FIX`. Browser `run.completed` or assistant text is evidence of **transport/model turn**, not final artifact acceptance.
+
+### 4.2 External side effect
+
+`PROPOSED → POLICY_CHECKED → RESERVED → DISPATCHED → (CONFIRMED | FAILED_NO_EFFECT | OUTCOME_UNKNOWN)`
+
+`OUTCOME_UNKNOWN → RECONCILING → (CONFIRMED | FAILED_NO_EFFECT | MANUAL_REVIEW)`
+
+There is **no** `OUTCOME_UNKNOWN → DISPATCHED` retry transition without trusted proof of absence or the destination's documented idempotency guarantee binding the same stable key/digest. A tool call result can fail after the remote write succeeded. The supervisor checks lease fencing and STOP generation immediately at the privileged call boundary, not just at task start.
+
+### 4.3 Extension transport
+
+`CONFIG_UNVERIFIED → HANDSHAKING → CAPABILITY_NEGOTIATED → ATTACHED → OBSERVING`
+
+`HANDSHAKING → UNSUPPORTED_GATEWAY` is terminal for unchanged configuration. `HANDSHAKING → SESSION_PENDING` waits for the gateway, bounded by user-owned session creation; no independent prompt. `ATTACHED → TAB_DISCONNECTED` never implies model/worker stopped. `ATTACHED → CREDENTIAL_EXPIRED` requires authorized reauth. `OBSERVING → EVENT_GAP` is read-only degraded coverage. The adapter can reconnect and read missing event cursor, but cannot create new external actions merely to repair telemetry.
+
+### 4.4 Git integration
+
+`PR_OPEN → SOURCE_SNAPSHOT_OBSERVED → CANDIDATE_RECONCILED → REQUIRED_EXACT_SHA_CHECKS → INDEPENDENT_REVIEW → APPROVED_MERGE`
+
+`SOURCE_SNAPSHOT_OBSERVED` does NOT mean `MERGE_SAFE`. A green read-only scanner signifies only `COLLECTION_COMPLETE`, while a failed or unavailable scanner means `EVIDENCE_INCOMPLETE`. GitHub's many REST requests cannot yield an atomic cross-PR snapshot; a second-pass HEAD check narrows, but never eliminates, race windows.
+
+## 5. Incident state: symptom, cause, counter-hypothesis
+
+Every incident projection must include: `incident_id`, `task_id`, `last_authentic_event`, `last_progress_event`, `observed_stage`, `symptom`, `supported_cause` (nullable), `counter_hypothesis`, `evidence_sources`, `evidence_gaps`, `effect_certainty`, `safe_recovery`, `recovery_owner`, `revision`, `detected_at`, `triage_status` and `coverage_as_of`. Health is not a single Boolean.
+
+| Symptom | Evidence needed to assert root cause | Counter-hypothesis | Default action |
+|---|---|---|---|
+| No answer after GPT submit | Accepted admission ID and server event cursor | Client never sent / request rejected | Probe read-only session admission |
+| Accepted but no assistant output | Worker claimed, model request start, stage deadline | Waiting for approval, model budget, network | Distinguish blocked vs no-progress; no blind replay |
+| Browser tab disappeared | Tab lease/generation lost | Hermes worker still running | Detach/reattach with consent; check run authority |
+| SSE silence after headers | Last upstream event seq + termination | Client disconnected while tool still executing | Outcome unknown; no fake `[DONE]` success |
+| Tool timeout | Effect reservation and provider receipt/readback | Write committed but ack lost | Quarantine and reconcile |
+| Gateway 401/403 | Auth status from legitimate server | Scope-policy denial vs expired token | Manual reauth or policy approval, not retry storm |
+| Gateway 429 | `Retry-After`, shared rate-limit authority | Budget exhaustion, fleet stampede | Global cooldown, budget awareness, bounded jitter |
+| Heartbeat but no progress | Last progress timestamp, stage/lease deadline | Legitimate long-running tool | Delay classification until bounded stage SLA and effect assessment |
+| STOP button pressed | Privileged revocation generation and gateway receipts | UI only dismissed, task still active | Verify enforcement at all dispatch/effect boundaries |
+| CI check green | Check name, SHA, conclusion, required policy | Optional/skipped check only | Independently verify required exact-head suite |
+| Duplicate assistant response | Durable stored session/admission and delivery cursor | Model produced distinct content vs UI replay | Dedupe by stable identity and event ID; don't delete user content |
+| Unknown event name | Producer version and schema capability | Upstream protocol drift | Record code/count, omit raw payload, review adapter |
+
+Alert only on **changes of authoritative state** or prolonged verified lack of progress. Deduplicate using (`project_id`, `incident_class`, `task_id`, `active_fence`, `state_generation`), bounded TTL and channel budget. Notify an owner at most once for one unchanged incident generation; do not spam on six-hour PR inventory cycles.
+
+## 6. Correctness under crashes and concurrency
+
+A 30-agent deployment can produce misleading logs if every agent has its own SQLite truth. Use **one project task authority**, one selected trusted effect gateway, and a separate observer-only projection. Per-task wall clock and per-producer source sequence are not a global order; reason from parent event, lease/fence and durable acknowledgement.
+
+### Crash matrix (negative tests first)
+
+| Crash point | Durable residue required | Forbidden behavior |
+|---|---|---|
+| Before ingress receipt | No authenticated admission proof | Claim task started |
+| After admission before dispatch | Queued row/ID | Create duplicate task on reconnect |
+| After worker claim before first model call | Lease + dispatch status | Claim model error from absence of text |
+| After external-effect reservation before call | Reserved intent with policy digest | Reuse effect key with different body |
+| Immediately after remote side effect, before receipt | `OUTCOME_UNKNOWN` | Blind retry |
+| After response generated, before returned to client | Stable operation result and original run ID | Create new run ID for replay |
+| After browser disconnect but worker alive | Runtime still authoritative | Kill external browser or worker silently |
+| After collector transaction, before ACK | Event dedupe key in inbox | Append duplicate progress that resets stall timer |
+| After STOP generation increment | Revoked capability at gateway | Any new external effect by old fence |
+| After git commit before CI | Exact HEAD awaiting checks | Promote from green ancestor |
+
+A successful local `BEGIN IMMEDIATE` ledger transaction plus fsync-safe storage does **not** make the remote provider transaction atomic. A token/authorization stored in a file can be stolen; keep sensitive values in OS-managed or scoped secret store and make logs reference opaque secret IDs only. SQLite WAL with synchronous settings and backups requires deliberate config testing on NTFS; do not assert cross-process guarantees on a network share.
+
+## 7. Verification fixtures and metrics
+
+**Golden replay cases** for every selected implementation:
+- Same idempotency key + same canonical fingerprint requested twice concurrently: one run/effect, two independent request-attempt traces, original run ID returned.
+- Same key + changed body, session, scope or approver: reject before any model/tool work.
+- Loss of ACK after external write: no second call, `OUTCOME_UNKNOWN` until trusted destination reconciliation.
+- Pending gateway `unknown` after crash: queued follower must not proceed until policy-authorized resolution.
+- Event seq 8, 10 without 9: gap, `OBSERVATION_INCOMPLETE`, never “healthy.”
+- Wrong producer signature, stale fence or stop generation: reject and log redacted reason.
+- Failure tool event followed by “assistant completed”: must not mark output or tool effect verified.
+- Two tabs / 32 agents with shared provider quota: bounded global 429 backoff, no retry stampede; one scoped writer per critical file group.
+- 30 PRs all editing one executable file: 435 pairwise collisions in read-only report; 100 disjoint PRs still **review-only**, not merge-certified.
+- Process shutdown on externally attached CDP: detach only; user's browser remains alive.
+
+Measure before choosing thresholds: false-positive/negative stop diagnosis on seeded cases, duplicate-effect count (target **zero in supported idempotency/reconciliation scenarios**), last-evidence staleness distribution, stage-level latency, 429 rate and recovery, event gap rate, queued starvation, exact-SHA coverage, operator minutes to confirmed cause, storage cost per 1k events, and redaction-leak tests. Do not claim a score `10/10` or unsupported throughput from 19 tests.
+
+## 8. Practical integration/release plan
+
+**G0:** retrieve actual Windows extension manifest, semver, service worker/broker/profiles and explicit user consent; read-only only. If unavailable, status `HOST_NOT_OBSERVED`, no local canary.
+
+**G1:** freeze conflicting code ownership: one API integrator for #4/#5/#6/#11, one browser integrator for #13/#15, one observer integrator for #8/#9/#12/#16/#21/#23/etc, one PR guard integrator for #14/#18/#22/#24/etc. A human or separate verifier reviews each.
+
+**G2:** pin runtime; compare old fork to upstream v0.23.3 in a **separate Windows canary**. Modern Kanban and gateway admission may be reused only after protocol negotiation and isolated DB tests. Original executable/DB working copy must not be overwritten.
+
+**G3:** implement single versioned event contract at supported boundaries. Do not instrument private ChatGPT UI or hidden reasoning. Separate request ID from operation/run ID and source/evidence confidence.
+
+**G4:** tool/effect authority: durable reservations, scope/STOP/fence at effect boundary, confirmed provider receipt or quarantine. No autonomous write recovery without verified absence.
+
+**G5:** test security, exact SHA, Windows+Linux+browser compatibility, worst-case 1/8/32/64 workers, 100 PR metadata, crash/restart/rollback; independent reviewer attests exact candidate.
+
+**G6:** only after owner approval promote from canary, keep the previous working build, and enable the single scheduled read-only scanner with explicit `COLLECTION_COMPLETE/HOLD_FOR_REVIEW` distinction.
+
+### Reuse and implementation priorities
+
+| Priority | Change | Why / status |
+|---|---|---|
+| P0 | Pin a single Kanban/gateway ownership boundary | Upstream has a lifecycle already; adaptation unverified |
+| P0 | API replay original run ID + keyed-SSE ingress denial before dispatch | Static issue observed in PR #4; comment posted |
+| P0 | Preserve external CDP browser and redact all CDP failure branches | Static gaps observed in fork main; #13/#15 integrator notified |
+| P0 | One PR integration scanner and exact-SHA required checks | Three+ redundant scanners already in active draft PRs |
+| P0 | Unknown external effect quarantine and STOP fencing | Mandatory design, not yet implemented |
+| P1 | Browser durable stored-session ID, consent, `unknown` queue replay guard | Exists in public extension source; actual installed compatibility unknown |
+| P1 | Authenticated read-only event inbox with gap detection | Observer drafts conflict, must choose one |
+| P1 | Structured operator diagnostic exporter (no prompt/secret data) | External extension support-diagnostics already demonstrates redaction |
+| P2 | Deduped incidents, per-stage resource budgets and causal timeline | Only after P0 correctness and real baseline measurement |
+
+## 9. Evidence and source log
+
+2026-11-22 **verified sources**: GitHub fork main HEAD and PR file patches; #4 replay header behavior; #13/#15 browser cleanup and raw CDP endpoint logging; 30 open drafts; older broad Tests (28 failures) and 19/19 exact-head offline PR22 tests; official latest Hermes release v0.23.3 (2026-11-20 publication); external `abundantbeing/hermes-browser-extension` modules enumerated above; read-only local MCP root inventory (not Hermes). All technical proposals above labeled as implemented/proposed/unknown. PR22 is draft, no production merge or installed extension edit occurred.
+
+### Public references
+
+- Hermes official API server: https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/api-server.md
+- Hermes Kanban worker lanes: https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/kanban-worker-lanes.md
+- Public browser extension and companion plugin: https://github.com/abundantbeing/hermes-browser-extension
+- Browser controller protocol: https://github.com/abundantbeing/hermes-browser-extension/blob/main/extension/lib/controller-protocol.mjs
+- Durable gateway queue: https://github.com/abundantbeing/hermes-browser-extension/blob/main/extension/lib/gateway-queue.mjs
+- Consent ledger: https://github.com/abundantbeing/hermes-browser-extension/blob/main/extension/lib/context-consent.mjs
+- Stored delivery session identity: https://github.com/abundantbeing/hermes-browser-extension/blob/main/extension/lib/session-delivery-state.mjs
+- Runtime event conversion: https://github.com/abundantbeing/hermes-browser-extension/blob/main/extension/lib/runtime-events.mjs
+- W3C Trace Context: https://www.w3.org/TR/trace-context-1/
+- OpenTelemetry GenAI: https://opentelemetry.io/docs/specs/semconv/gen-ai/
+- SQLite WAL: https://www.sqlite.org/wal.html
+- Chrome MV3 service worker lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle/
