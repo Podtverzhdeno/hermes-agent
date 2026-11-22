@@ -310,6 +310,9 @@ class CausalRunAuditor:
             raise InvalidTelemetry("Run status snapshot does not match run")
         value = _safe_status(status.get("status"))
         self._status = value
+        if self._event_count == 0:
+            self._missing_events = True
+            self._anomalies.add("STATUS_ONLY_NO_EVENT_HISTORY")
         if value == "unknown_status":
             self._missing_events = True
             self._anomalies.add("UNRECOGNIZED_STATUS")
@@ -454,15 +457,19 @@ def explain_sse(text: str, run_id: str, status: Optional[dict] = None) -> dict:
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Read-only Hermes run SSE diagnostic")
     parser.add_argument("--run-id", required=True, help="Run ID from /v1/runs")
-    parser.add_argument("--events-file", required=True, type=Path,
-                        help="Locally saved SSE stream export")
+    parser.add_argument("--events-file", type=Path,
+                        help="Optional locally saved SSE stream export; can use status only")
     parser.add_argument("--status-file", type=Path,
                         help="Optional separately fetched run-status JSON")
     opts = parser.parse_args(argv)
     try:
-        if opts.events_file.stat().st_size > _MAX_BYTES:
-            raise InvalidTelemetry("SSE export exceeds size limit")
-        raw_sse = opts.events_file.read_text(encoding="utf-8")
+        if opts.events_file is None and opts.status_file is None:
+            raise InvalidTelemetry("At least one offline evidence source is required")
+        raw_sse = ""
+        if opts.events_file is not None:
+            if opts.events_file.stat().st_size > _MAX_BYTES:
+                raise InvalidTelemetry("SSE export exceeds size limit")
+            raw_sse = opts.events_file.read_text(encoding="utf-8")
         status = None
         if opts.status_file:
             if opts.status_file.stat().st_size > 64 * 1024:
