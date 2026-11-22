@@ -326,3 +326,12 @@ class BoundedIngestionTests(unittest.TestCase):
             with patch("hermes_gpt_bridge.diagnostics.MAX_TOTAL_BYTES", 8):
                 with self.assertRaisesRegex(TraceError, "total input size limit"):
                     load_jsonl(p)
+
+
+class ReasonCodePrivacyTests(unittest.TestCase):
+    def test_reason_codes_must_be_allowlisted(self):
+        self.assertEqual(event("run.failed", 1, reason_code="NETWORK_TIMEOUT").reason_code,
+                         "NETWORK_TIMEOUT")
+        for bad in ("FREEFORM_ACCOUNT_NUMBER_92823", "private_token_123", "a" * 64):
+            with self.subTest(value=bad), self.assertRaises(TraceError):
+                event("run.failed", 1, reason_code=bad)
