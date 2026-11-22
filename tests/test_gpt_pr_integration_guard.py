@@ -427,6 +427,49 @@ class PRWatchTests(unittest.TestCase):
                     '--snapshot-out', str(snap), '--report-out', str(report),
                 ]), 0)
 
+    def test_unhashable_manifest_provenance_fails_closed_not_traceback(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            m = root/'manifest.json'
+            m.write_text(json.dumps({
+                'schema': 'hermes.pr.bundle.v1',
+                'status': 'FILES_WRITTEN_NOT_RUNTIME_VERIFIED',
+                'snapshot_sha': 'a'*40,
+                'evidence_mode': {'unexpected': 'dict'},
+                'files': {},
+            }), encoding='utf-8')
+            with self.assertRaises(guard.IncompleteSnapshot):
+                guard.verify_bundle(m, snapshot_path=None,
+                                    report_path=None, markdown_path=None)
+
+    def test_invalid_snapshot_inventory_in_manifest_fails_closed(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            snap_path, report_path, m = root/'snap.json', root/'report.json', root/'manifest.json'
+            data = snapshot(pr(1, ['a.py']))
+            report = guard.analyze(data, evidence_mode='offline_snapshot')
+            guard._write_bundle(
+                snapshot_path=snap_path, report_path=report_path,
+                markdown_path=None, manifest_path=m,
+                snapshot=data, report=report, summary=guard.markdown(report),
+            )
+            bad = json.loads(snap_path.read_text(encoding='utf-8'))
+            bad['pulls'] = None
+            bad_raw = (json.dumps(bad, indent=2, ensure_ascii=False)+'\n').encode('utf-8')
+            snap_path.write_bytes(bad_raw)
+            manifest = json.loads(m.read_text(encoding='utf-8'))
+            manifest['files']['snapshot'] = {
+                'sha256': hashlib.sha256(bad_raw).hexdigest(),
+                'bytes': len(bad_raw),
+            }
+            m.write_text(json.dumps(manifest), encoding='utf-8')
+            with self.assertRaises(guard.IncompleteSnapshot):
+                guard.verify_bundle(
+                    m, snapshot_path=snap_path,
+                    report_path=report_path, markdown_path=None,
+                )
+
     def test_invalid_schema_fails_closed(self):
         with self.assertRaises(guard.IncompleteSnapshot):
             guard.analyze({'pulls': []})
