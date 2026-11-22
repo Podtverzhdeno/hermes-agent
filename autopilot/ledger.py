@@ -54,6 +54,8 @@ class AutopilotLedger:
         try:
             db.execute("PRAGMA busy_timeout=10000")
             db.execute("PRAGMA foreign_keys=ON")
+            # Synchronous is a per-connection pragma, unlike journal_mode.
+            db.execute("PRAGMA synchronous=FULL")
             if write:
                 db.execute("BEGIN IMMEDIATE")
             yield db
@@ -80,6 +82,7 @@ class AutopilotLedger:
                     required_evidence TEXT NOT NULL,
                     status TEXT NOT NULL,
                     priority INTEGER NOT NULL DEFAULT 0,
+                    resume_without_attempt INTEGER NOT NULL DEFAULT 0,
                     attempts INTEGER NOT NULL DEFAULT 0,
                     max_attempts INTEGER NOT NULL,
                     available_at REAL NOT NULL,
@@ -201,7 +204,7 @@ class AutopilotLedger:
 
     def _recover_expired(self, db, now: float):
         expired = db.execute(
-            "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until < ?",
+            "SELECT * FROM tasks WHERE status IN ('running','verifying') AND lease_until <= ?",
             (now,),
         ).fetchall()
         for task in expired:
@@ -242,7 +245,8 @@ class AutopilotLedger:
             task_id = row["id"]
             db.execute("""
                 UPDATE tasks SET status='running', owner=?, fence=fence+1,
-                    attempts=attempts+1, lease_until=?, updated_at=? WHERE id=?
+                    attempts=attempts+CASE WHEN resume_without_attempt=1 THEN 0 ELSE 1 END,
+                    resume_without_attempt=0, lease_until=?, updated_at=? WHERE id=?
             """, (worker, now + lease_seconds, now, task_id))
             task = dict(self._task(db, task_id))
             self._event(db, task_id, "claimed", {"worker": worker, "fence": task["fence"]})
@@ -277,6 +281,12 @@ class AutopilotLedger:
             task = self._assert_worker(db, task_id, worker, fence)
             if task["status"] != "running":
                 raise LedgerConflict("approval request allowed only while running")
+            pending_effect = db.execute(
+                "SELECT 1 FROM actions WHERE task_id=? AND status='reserved' LIMIT 1",
+                (task_id,),
+            ).fetchone()
+            if pending_effect:
+                raise LedgerConflict("cannot pause with an unresolved external effect")
             old = db.execute(
                 "SELECT digest FROM approvals WHERE task_id=? AND action_key=?",
                 (task_id, action_key),
@@ -317,8 +327,9 @@ class AutopilotLedger:
                 UPDATE approvals SET state=?, reviewer=? WHERE task_id=? AND action_key=?
             """, ("approved" if allowed else "denied", reviewer, task_id, action_key))
             db.execute("""
-                UPDATE tasks SET status=?,available_at=?,updated_at=? WHERE id=?
-            """, ("queued" if allowed else "blocked", now, now, task_id))
+                UPDATE tasks SET status=?, resume_without_attempt=?,
+                    available_at=?, updated_at=? WHERE id=?
+            """, ("queued" if allowed else "blocked", int(allowed), now, now, task_id))
             self._event(db, task_id, "approval_decided",
                         {"action_key": action_key, "approved": allowed, "reviewer": reviewer})
 
