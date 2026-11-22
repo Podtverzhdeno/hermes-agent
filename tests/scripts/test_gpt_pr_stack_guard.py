@@ -203,3 +203,52 @@ def test_one_parent_drift_in_hundred_agent_stacks_cannot_get_lost():
     assert result['stacks_checked']==90
     assert result['verdict']=='REVIEW_REQUIRED'
     assert result['issues']==[{'pr':52,'parent_pr':51,'code':'PARENT_ADVANCED_REBASE_REQUIRED'}]
+
+
+def test_http_429_is_reason_coded_without_headers_or_credentials():
+    import urllib.error
+    fake=urllib.error.HTTPError('https://api.github.com',429,'Rate limit',{},None)
+    with patch.object(mod.urllib.request,'build_opener') as opener:
+        opener.return_value.open.side_effect=fake
+        with pytest.raises(mod.IncompleteAudit,match='^GITHUB_HTTP_429$'):
+            mod.get('/repos/owner/repo/pulls',token='do-not-log-this-token')
+
+
+def test_input_error_still_produces_durable_json_artifact(tmp_path):
+    x=tmp_path/'bad.json'
+    x.write_text('{ broken json')
+    y=tmp_path/'diagnostics.json'
+    p=subprocess.run([sys.executable,str(SOURCE),'--snapshot',str(x),'--output',str(y)],capture_output=True,text=True)
+    assert p.returncode==2
+    r=json.loads(y.read_text())
+    assert r['verdict']=='AUDIT_INCOMPLETE'
+    assert r['reason_code']=='INVALID_INPUT_DATA'
+    assert 'all:' in r['not_checked'][0]
+    assert 'AUDIT_INCOMPLETE' in p.stderr
+
+
+def test_rate_limit_report_is_written_atomically(tmp_path,capsys):
+    output=tmp_path/'diag.json'
+    with patch.object(mod,'collect',side_effect=mod.IncompleteAudit('GITHUB_HTTP_429')):
+        status=mod.main(['--repo','owner/repo','--output',str(output)])
+    report=json.loads(output.read_text())
+    assert status==2
+    assert report['reason_code']=='GITHUB_HTTP_429'
+    assert report['verdict']=='AUDIT_INCOMPLETE'
+    assert report['repo']=='owner/repo'
+    assert capsys.readouterr().out==''
+
+
+def test_incomplete_input_stdout_is_structured_json(tmp_path,capsys):
+    with patch.object(mod,'collect',side_effect=mod.IncompleteAudit('paginated GitHub result truncated')):
+        assert mod.main(['--repo','owner/repo'])==2
+    streams=capsys.readouterr()
+    assert json.loads(streams.out)['reason_code']=='PAGINATED_GITHUB_RESULT_TRUNCATED'
+    assert 'AUDIT_INCOMPLETE' in streams.err
+
+
+def test_unwritable_artifact_path_cannot_be_green(tmp_path,capsys):
+    x=tmp_path/'bad.json';x.write_text('invalid-json')
+    status=mod.main(['--snapshot',str(x),'--output',str(tmp_path/'missing'/'diag.json')])
+    assert status==2
+    assert 'OUTPUT_IO_ERROR' in capsys.readouterr().err
