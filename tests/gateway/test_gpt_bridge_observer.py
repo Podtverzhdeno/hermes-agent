@@ -281,3 +281,27 @@ def test_many_missing_parents_never_starve_bounded_observer():
         assert observer.snapshot()["unresolved_causal_links"] <= 2
     assert observer.snapshot()["recent_events"] == 2
     assert observer.snapshot()["unresolved_causal_links"] == 2
+
+
+def test_two_event_causal_cycle_rejected_without_mutating_cursor():
+    obs = ReadOnlyEventObserver()
+    first = evt(seq=1)
+    second = evt(seq=2)
+    first["causation_event_id"] = second["event_id"]
+    second["causation_event_id"] = first["event_id"]
+    assert obs.ingest(first).accepted
+    assert obs.ingest(second).code == "causal_cycle"
+    assert obs.snapshot()["recent_events"] == 1
+    assert obs.ingest({**second, "causation_event_id": None}).contiguous_through == 2
+
+
+def test_three_event_causal_cycle_rejected():
+    obs = ReadOnlyEventObserver()
+    e1, e2, e3 = evt(seq=1), evt(seq=2), evt(seq=3)
+    e1["causation_event_id"] = e3["event_id"]
+    e2["causation_event_id"] = e1["event_id"]
+    e3["causation_event_id"] = e2["event_id"]
+    assert obs.ingest(e1).accepted
+    assert obs.ingest(e2).accepted
+    assert obs.ingest(e3).code == "causal_cycle"
+    assert obs.snapshot()["recent_events"] == 2
