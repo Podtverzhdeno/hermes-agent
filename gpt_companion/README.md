@@ -49,6 +49,7 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 | `TRACE_INCOMPLETE` | Replay missing source-local sequences from durable outbox |
 | `RECENT_TELEMETRY` | Observe; do not infer task success |
 | `ALIVE_NO_PROGRESS` | Check tool stage, budget, provider response and true process state |
+| `PARTIAL_WORKER_OUTAGE` | Find the stale worker source; fresh gateway/other-worker events do not prove that worker is alive |
 | `WORKER_UNRESPONSIVE` | Inspect supervisor and lease before replacing worker |
 | `EFFECT_IN_FLIGHT` | Wait for authenticated receipt; never blind-retry writes |
 | `NEEDS_RECONCILIATION` | Read back provider action by stable ID, reconcile in task ledger |
@@ -61,3 +62,5 @@ Expected diagnosis is `AWAITING_VERIFICATION`, **not** `SUCCEEDED`. Replaying th
 The CLI inspects a snapshot. A continuous monitor requires a separately deployed worker with startup supervision, heartbeat/outbox adapter, lock ownership and an operator kill switch. None is activated by this PR.
 
 The checkout-only compatibility wrapper `python -m scripts.gpt_event_inspect` imports the same packaged entrypoint. Source-only import is not sufficient for installed-wheel usability; use `python -m gpt_companion`.
+
+A run shared by multiple emitters returns `worker_sources_count` and `stale_worker_sources`. This is *diagnostic metadata* only. Source identities must be authenticated at the ingestion gateway; this offline journal cannot prove who sent an event.
