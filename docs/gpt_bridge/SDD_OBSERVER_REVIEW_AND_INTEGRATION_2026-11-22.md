@@ -212,3 +212,59 @@ Primary review sources:
 12. Current fork competing GPT drafts: https://github.com/Podtverzhdeno/hermes-agent/pulls
 
 **The module, tests and this design are a bounded first implementation step. They do not constitute an always-on agent, production extension deployment or Hermes runtime repair.**
+
+
+## 11. November 22 convergence audit — 26 concurrent draft PRs (observed later in this pass)
+
+**OBSERVED_GITHUB at approximately 10:50 UTC:** 26 open draft PRs (#1–#26). Earlier "seven PRs" counts in this document and the work log are point-in-time observations, not current totals. The conflict set expanded while independent agents were still pushing. File paths below were fetched from each PR's own GitHub \`/pulls/{n}/files\` endpoint; authors can push new HEADs at any time, so consumers MUST refresh and bind these statements to head SHAs.
+
+| Exact file | Concurrent PR owners | Integration risk |
+|---|---|---|
+| \`gateway/platforms/api_server.py\` | #4, #5, #6, #11 | Four distinct request-idempotency / streaming approaches; P0 conflict |
+| \`gateway/gpt_bridge_event_audit.py\` | #4, #26 | Native SSE parser and metadata v1 validator share path but **not contract** |
+| \`tests/gateway/test_gpt_bridge_event_audit.py\` | #4, #26 | Conflicting test assumptions; requires explicit source/API version separation |
+| \`autopilot/ledger.py\` | #1, #10 | One ledger owner only; no accidental overwrite of safety invariants |
+| \`tests/autopilot/test_ledger.py\` | #1, #10 | Tests may validate different state machines |
+| \`tools/browser_tool.py\` | #13, #15 | Browser lifecycle changes can silently affect CDP cleanup |
+| \`gpt_companion/journal.py\` | #12, #17, #23 | Three journal variants risk breaking event replay compatibility |
+| \`docs/sdd/GPT_COMPANION_SDD.md\` | #12, #17, #23 | Shared SDD concurrently overwritten |
+| \`pyproject.toml\` | #1, #9, #12 | Packaging and test entrypoint conflicts |
+
+**Additional semantic duplication beyond exact path collisions:** #8, #9, #16, #21, #25, #26 implement causal/offline observer variants; #14, #18, #22, #24, #26 implement different PR-merge/ownership gates. File-path isolation does not remove duplicate scheduling or misleading "all green" assertions. Do **not** merge all of them merely because each branch has distinct filenames.
+
+### ADR-GPT-016 — prefer native Hermes Runs API as an input, not a replacement task ledger (PROPOSED)
+
+Modern Hermes gateway exposes \`POST /v1/runs\`, \`GET /v1/runs/{id}\` and SSE \`GET /v1/runs/{id}/events\` with event sequence IDs. The stream supports \`Last-Event-ID\` / \`last_seq\` and a \`replay.truncated\` signal when retained events are no longer available. A gateway-specific parser proposed in PR #4 reads **native** SSE frames. By contrast the v1 event envelope handled in PR #26 is a **proposed normalized cross-agent schema** and cannot ingest native SSE frames directly.
+
+Choose an explicit, separately tested adapter:
+
+\`\`\`text
+current Hermes gateway /v1/runs SSE -> native parser, cursor, replay.truncated
+  -> schema-checked redaction/translation (never implicit trust elevation)
+  -> normalized v1 metadata events + observation gap markers
+  -> non-authoritative causal observer
+  -> current Kanban/ledger state and authenticated receipts consulted separately
+\`\`\`
+
+The April fork \`main@7e910090\` predates modern Runs API; route discovery and version/feature negotiation are mandatory. An API response, SSE frame or callback cannot authorize execution, approvals or tool permissions by itself. The observer must not receive \`reasoning.available\` raw reasoning text, \`message.delta\` content, tool preview/arguments, secret-bearing exception text, or raw \`run.completed.output\`; only allowlisted statuses and hashed correlation IDs may be promoted.
+
+Current research status: An October 2026 upstream Hermes issue reported asymmetric registration for streaming vs non-streaming session-chat, in-memory run statuses and pending approvals, and unowned-run authorization concerns. These are **historical issue observations, not proven defects in v0.23.3**. Recheck current source and owner-scoped integration tests before claiming a fix is required. Official issue: https://github.com/NousResearch/hermes-agent/issues/141364. The modern API source reference is \`gateway/platforms/api_server_runs.py\` in upstream; do not infer compatibility from filenames alone.
+
+**Protocol acceptance tests to add before integration:**
+1. Native \`run.failed\` or \`run.interrupted\` must never be translated to \`task.completed\` with proof.
+2. \`replay.truncated\` creates \`OBSERVABILITY_GAP\` and blocks causal-completeness assertions until independently reconciled.
+3. Same \`id:\` SSE value replayed with identical data is deduplicated; same ID with changed data is a collision, not an overwrite.
+4. Missing events on service-worker reboot must not trigger another \`POST /v1/runs\`.
+5. Request authenticated to profile A cannot observe/approve/stop profile B's run.
+6. Run whose admission response is lost is retried only with exactly the same admission idempotency key **if** the actual gateway contract proves dedup; unknown mutations still need reconciliation.
+7. Legacy gateway without Runs API must explicitly report \`CAPABILITY_UNAVAILABLE\`, not silently assume SSE route exists.
+
+### ADR-GPT-017 — unique integration owner / collision-first review (PROPOSED)
+
+Set one integrating maintainer for each path group above. PR #4 may own modern native SSE parsing; PR #26 may contribute metadata v1 causal invariants only after renaming/namespacing and protocol translation review. PR #1's ledger must be reconciled with upstream Kanban before integration. No automation may merge on a draft, stale base, conflicting path, missing required checks, or merely a self-reported test count. Any current snapshot is stale as soon as a PR HEAD changes: refresh per-PR changed files, compare exact SHA and check scopes, record the integration decision and test result.
+
+Scored candidate \`G. Modern native Runs SSE -> validated internal metadata adapter -> read-only observer\`: safety 5, integration 4, observability 5, security 4, simplicity 3 = **4.40 / 5** on the rubric in §6; high promise but BLOCKED until gateway-version parity and authenticated pairing tests. This is a *hypothesis*, not a measured score.
+
+### Fresh observation does not equal continuous monitoring
+
+This audit is a bounded snapshot through authenticated GitHub connector calls. Neither this ChatGPT session nor a draft CI job is a guaranteed continuous monitor. A future source-owned watcher needs durable last-seen IDs, ETag/rate-limit backoff, a supervisor and a user-visible pause/stop control on the Windows host; deployment cannot be claimed while Local_WorkSpace MCP is disconnected.
