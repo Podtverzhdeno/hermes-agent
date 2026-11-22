@@ -114,6 +114,54 @@ class GateTests(unittest.TestCase):
             with self.assertRaisesRegex(g.EvidenceError,"Base branch moved"):
                 g.collect_live("Owner/Repo",None)
 
+    def test_read_only_scan_recovers_from_moving_head(self):
+        from unittest.mock import patch
+        with patch.object(g, "collect_live", side_effect=[
+                g.EvidenceError("PR inventory/head moved during scan"), snap(pr(1))]) as live, \
+             patch.object(g.time, "sleep") as sleeper:
+            snapshot = g.collect_live_stable("Owner/Repo", None, attempts=2)
+        self.assertEqual(snapshot["scan_attempts"], 2)
+        self.assertEqual(live.call_count, 2)
+        sleeper.assert_called_once()
+
+    def test_read_only_scan_gives_up_when_never_stable(self):
+        from unittest.mock import patch
+        with patch.object(g, "collect_live", side_effect=g.EvidenceError(
+                "Base branch moved during scan")) as live, \
+             patch.object(g.time, "sleep") as sleeper:
+            with self.assertRaisesRegex(g.EvidenceError, "moved during scan"):
+                g.collect_live_stable("Owner/Repo", None, attempts=3)
+        self.assertEqual(live.call_count, 3)
+        self.assertEqual(sleeper.call_count, 2)
+
+    def test_read_only_scan_does_not_retry_auth_or_transport_error(self):
+        from unittest.mock import patch
+        with patch.object(g, "collect_live", side_effect=g.EvidenceError(
+                "GitHub evidence fetch failed (HTTPError)")) as live:
+            with self.assertRaises(g.EvidenceError):
+                g.collect_live_stable("Owner/Repo", None)
+        live.assert_called_once()
+
+    def test_invalid_snapshot_retry_limit(self):
+        with self.assertRaises(g.EvidenceError):
+            g.collect_live_stable("Owner/Repo", None, attempts=0)
+
+    def test_parallel_pr_scan_preserves_exact_revision_identity(self):
+        from unittest.mock import patch
+        source = [{"number":i,"head":{"sha":SHA,"ref":f"feat/p{i}"},
+                   "base":{"ref":"main"},"draft":False} for i in range(1,10)]
+        def pages(url,token,key=None):
+            if "/pulls?state=open" in url: return source
+            if "/files" in url: return [{"filename":"docs/stable.md"}]
+            if "/actions/runs" in url: return [{"name":"Tests","status":"completed",
+                "conclusion":"success","head_sha":SHA}]
+            raise AssertionError(url)
+        with patch.object(g,"_get_json",return_value={"commit":{"sha":SHA},"protected":True}), \
+             patch.object(g,"_pages",side_effect=pages):
+            result=g.collect_live("Owner/Repo",None)
+        self.assertEqual(len(result["prs"]),9)
+        self.assertEqual([x["number"] for x in result["prs"]],list(range(1,10)))
+
     def test_collect_pages_bounds(self):
         with self.assertRaises(g.EvidenceError):
             g.validate(snap(pr(1),complete=False))
