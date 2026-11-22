@@ -23,7 +23,7 @@ def _fingerprint(assessment: dict) -> str:
     # Never use continuously changing ages as a deduplication key.
     fields = ("attempt", "state", "next_action", "unresolved_effects",
               "pending_approvals", "missing_sequences", "reported_reason_code",
-              "stale_worker_sources")
+              "stale_worker_sources", "historical_unresolved_effects")
     value = {k: assessment.get(k) for k in fields}
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -51,7 +51,8 @@ class StatusWatch:
                 CREATE TABLE IF NOT EXISTS latest (
                     run_id TEXT PRIMARY KEY,
                     fingerprint TEXT NOT NULL,
-                    observed_at REAL NOT NULL
+                    observed_at REAL NOT NULL,
+                    source_position INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE TABLE IF NOT EXISTS transitions (
                     position INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +66,12 @@ class StatusWatch:
                 CREATE INDEX IF NOT EXISTS transitions_run_idx
                     ON transitions(run_id, position);
             """)
+        # Backward-compatible, serialized migration for any existing observer
+        # status DB created before causal position fencing was introduced.
+        with self._db(write=True) as db:
+            cols = {r["name"] for r in db.execute("PRAGMA table_info(latest)")}
+            if "source_position" not in cols:
+                db.execute("ALTER TABLE latest ADD COLUMN source_position INTEGER NOT NULL DEFAULT 0")
 
     @contextmanager
     def _db(self, write: bool = False):
@@ -91,15 +98,26 @@ class StatusWatch:
         observed = float(self.clock() if now is None else now)
         if not 0 <= observed < 1e14:
             raise ValueError("invalid observation time")
+        position = assessment.get("event_position", 0)
         with self._db(write=True) as db:
-            old = db.execute("SELECT fingerprint FROM latest WHERE run_id=?",
-                             (run_id,)).fetchone()
-            if old and old["fingerprint"] == digest:
+            old = db.execute("""SELECT fingerprint,source_position,observed_at
+                FROM latest WHERE run_id=?""", (run_id,)).fetchone()
+            if old and (position < old["source_position"] or
+                        (position == old["source_position"] and observed < old["observed_at"])):
+                # A concurrent observer delivered a newer state while this
+                # process was diagnosing an earlier event snapshot.
                 return None
-            db.execute("""INSERT INTO latest(run_id,fingerprint,observed_at)
-                VALUES(?,?,?) ON CONFLICT(run_id) DO UPDATE SET
-                  fingerprint=excluded.fingerprint,observed_at=excluded.observed_at""",
-                (run_id, digest, observed))
+            if old and old["fingerprint"] == digest:
+                # Even unchanged status advances the causal watermark so
+                # an older observer cannot later resurrect stale states.
+                db.execute("""UPDATE latest SET source_position=?,observed_at=?
+                    WHERE run_id=?""", (position, observed, run_id))
+                return None
+            db.execute("""INSERT INTO latest(run_id,fingerprint,observed_at,source_position)
+                VALUES(?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET
+                  fingerprint=excluded.fingerprint,observed_at=excluded.observed_at,
+                  source_position=excluded.source_position""",
+                (run_id, digest, observed, position))
             db.execute("""INSERT INTO transitions
                 (run_id,attempt,state,next_action,observed_at,assessment_json)
                 VALUES(?,?,?,?,?,?)""",
@@ -108,13 +126,15 @@ class StatusWatch:
                  json.dumps(assessment, sort_keys=True, separators=(",", ":"))))
         return {"observed_at": observed, "diagnosis": assessment}
 
-    def history(self, run_id: str) -> list[dict]:
-        # Validation + safety identical to `assess` contract.
+    def history(self, run_id: str, limit: int = 1000) -> list[dict]:
+        # Bound reads to prevent large incidents from exhausting the process.
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("invalid history limit")
         self.events.assess(run_id)
         with self._db() as db:
-            return [json.loads(row["assessment_json"]) for row in db.execute(
-                "SELECT assessment_json FROM transitions WHERE run_id=? ORDER BY position",
-                (run_id,))]
+            rows = db.execute("""SELECT assessment_json FROM transitions
+                WHERE run_id=? ORDER BY position DESC LIMIT ?""", (run_id, limit)).fetchall()
+        return [json.loads(row["assessment_json"]) for row in reversed(rows)]
 
 
 def main(argv: list[str] | None = None) -> int:
