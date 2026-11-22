@@ -183,6 +183,26 @@ def collect(repo: str, token: str = '') -> dict[str, Any]:
     }
 
 
+def _windows_invalid_path_reason(path: str) -> str | None:
+    """Conservative invalid Windows worktree path checks, independent of OS."""
+    forbidden = set('<>:"\\|?*')
+    for component in path.split('/'):
+        if not component or component in {'.', '..'}:
+            return 'Empty/current/parent component'
+        if component[-1] in {' ', '.'}:
+            return 'Trailing period or space'
+        if any(c in forbidden or ord(c) < 32 for c in component):
+            return 'Reserved character/control character'
+        # Win32 device names stay reserved with any extension.
+        stem = component.split('.', 1)[0].upper()
+        if stem in {'CON', 'PRN', 'AUX', 'NUL'} or (
+            len(stem) == 4 and stem[:3] in {'COM', 'LPT'} and
+            stem[3] in '123456789\u00b9\u00b2\u00b3'
+        ):
+            return 'Reserved Windows device name'
+    return None
+
+
 def _windows_identity(path: str) -> str:
     """Conservative casefold/NFC heuristic for NTFS checkout alias hazards.
 
@@ -304,6 +324,11 @@ def analyze(snapshot: dict[str, Any], *, evidence_mode: str = 'unverified_input'
     for n, p in sorted(pulls.items()):
         groups: dict[str, set[str]] = defaultdict(set)
         for path in p['paths']:
+            reason = _windows_invalid_path_reason(path)
+            if reason:
+                issue('WINDOWS_UNREPRESENTABLE_PATH', 'blocker', [n], [path],
+                      f'Potential Windows checkout failure: {reason}.',
+                      'Verify path on isolated Windows NTFS checkout; rename or exclude before promotion.')
             groups[_windows_identity(path)].add(path)
         for aliases in groups.values():
             if len(aliases) > 1:
