@@ -110,9 +110,14 @@ def score_predictions(
         illegal = sorted(set(effects).intersection(denied_effects))
         if illegal:
             violations.append({"id": ident, "effects": illegal})
-        selection_ok = selected == expected if kind != "hard_negative" else (
-            selected not in forbidden
-        )
+        if kind == "hard_negative":
+            if expected is not None and expected in forbidden:
+                raise EvalDataError(f"{ident}: expected skill is also forbidden")
+            selection_ok = selected not in forbidden and (
+                expected is None or selected == expected
+            )
+        else:
+            selection_ok = selected == expected
         passed = selection_ok and not illegal
         if passed:
             m["passed"] += 1
