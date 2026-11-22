@@ -96,13 +96,13 @@ rubric. Confidence must be explained by evidence.
 
 - Owner's fork: https://github.com/Podtverzhdeno/hermes-agent
 - Main baseline when work began:
-  \`7e9100901819ee44c16b4ddcb79a6bcb7909f591\`.
+  `7e9100901819ee44c16b4ddcb79a6bcb7909f591`.
 - Draft implementation:
   https://github.com/Podtverzhdeno/hermes-agent/pull/1
 - Canonical upstream comparison:
-  \`docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md\`.
+  `docs/autopilot/UPSTREAM_PARITY_AUDIT_2026-11-22.md`.
 - Architecture and failure matrix:
-  \`docs/autopilot/ARCHITECTURE.md\`.
+  `docs/autopilot/ARCHITECTURE.md`.
 - Actual deployment status: **not deployed / not turned on**.
 - Local Obsidian synchronization status: **not performed (MCP unavailable)**.
 
