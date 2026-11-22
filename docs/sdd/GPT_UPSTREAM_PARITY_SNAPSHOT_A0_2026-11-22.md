@@ -101,3 +101,24 @@ P7 release: latest exact integrated SHA independent verifier, explicit human acc
 Уверенность высокая в точных SHA, наличии файлов и структуре текущих trees; средняя в оценке сложности миграции (кода на зависимости ещё нет полного графа); неизвестная в состоянии фактического Hermes host. Следующее действие, требующее полномочий владельца: подключить workspace Hermes, а не посторонний vault.
 
 Обязательная ссылка на этот документ в PR #28. Менять baseline после upstream обновления только через новый датированный snapshot с точным SHA.
+
+
+## 7. Verified stable-release target, not moving main
+
+At the time of comparison GitHub API GET /repos/NousResearch/hermes-agent/releases/latest returned:
+- tag_name = v0.23.3, non-prerelease, published_at 2026-11-20T00:34:38Z, release title Hermes Agent v0.23.3 (release notes label it "Release Date: November 19, 2026");
+- annotated tag refs/tags/v0.23.3 object SHA 2861fe3744f8134b782659438961a4f69ab5d495;
+- dereferenced Git commit SHA **caafe5389ae585ef77387a962aee05b1bcf17029**;
+- GitHub tag verification.verified=false, reason=unsigned, signature absent.
+The unsigned tag is **not** cryptographic proof of release authenticity. Pin commit SHA, inspect release asset provenance/checksums and reproducible build/attestation as available, and require independent approval. DO NOT execute unknown downloaded installers or assume an unsigned tag is tampered with; it simply lacks a signature guarantee.
+
+Stable release link: https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.3
+Pinned tree: https://github.com/NousResearch/hermes-agent/tree/caafe5389ae585ef77387a962aee05b1bcf17029
+
+A second exact-tree comparison for stable release commit confirms:
+- v0.23.3: 27,139 blobs, vs fork 1,261;
+- shared by exact path 667, stable-only 26,472, fork-only 594;
+- gateway/platforms/api_server_runs.py, gateway/platforms/api_server_run_idempotency.py, gateway/platforms/api_server_authority_runs.py, gateway/run_api.py and hermes_cli/kanban_db.py exist at v0.23.3.
+The main@0f602c5f snapshot remains a **separate** moving-head research comparison; stable v0.23.3 is the more defensible candidate for an isolated migration experiment. "Latest" is time-bound; query releases/latest again immediately before starting a migration.
+
+**Decision:** use v0.23.3 at pinned SHA caafe5389 as a candidate isolated-test baseline, not a production update authorization. Check Windows execution, Python/toolchain, current customizations, DB schema rollback, plugin/Native Messaging permissions and external-CDP session lifecycle in a sandbox. Do NOT copy entire 27k-file tree over fork or overwrite main. Source-code compatibility and release artifact authenticity are separate gates.

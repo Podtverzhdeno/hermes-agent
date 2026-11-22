@@ -85,3 +85,8 @@ Gate R5: combined integration SHA and independent security E2E with owner; allow
 ## 7. CDP target clarification from prior owner-authorized experiments
 
 Direct-CDP canary of a web-chatgpt-high-cdp model route was observed in user project Nov 14/15 2026; this does NOT establish live status today. The owner later preferred an isolated Agent Control Center without required browser extensions or interference with ordinary Chrome. Consequently native Runs API is the authoritative Hermes execution lane while a separate opt-in CDP browser lane can remain a frontend/model transport. Do not confuse this lane with the removed legacy Hermes browser-extension controller. See [isolated CDP Control Center ADR](GPT_ISOLATED_CDP_CONTROL_CENTER_ADR_A0_2026-11-22.md).
+
+
+## 8. Exact available stable release for canonical Runs migration experiment
+
+GitHub API verified on 2026-11-22: latest stable published release v0.23.3 (2026-11-20T00:34:38Z), pinned commit caafe5389ae585ef77387a962aee05b1bcf17029. Native Runs and Kanban implementation modules exist in this stable tree, absent in existing fork main 7e910090. Release tag is annotated but UNSIGNED according to GitHub verification (verified=false / reason=unsigned), so pin SHA and separately verify binary/package artifact provenance; do not assume installing via mutable :stable tag is sufficient integrity. See [stable release source parity](GPT_UPSTREAM_PARITY_SNAPSHOT_A0_2026-11-22.md). Candidate version is not installed or tested on Windows.
