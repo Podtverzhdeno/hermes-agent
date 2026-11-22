@@ -10,7 +10,7 @@
 
 **Hypothesis (H):** Causes of user-visible stalls are to be inferred only after acquiring trustworthy stage-specific evidence. A browser timeout alone does not prove model failure, and a model-generated “done” does not prove artifact success.
 
-**Verified (V):** The isolated offline guard's ten synthetic Python regression cases passed in its preparation environment, after an initially failed cycle-detection test was corrected. GitHub Actions and deployment evidence for the exact proposed branch must still be checked. It cannot prove real GPT worker behavior.
+**Verified (V):** An earlier isolated 19-regression suite passed in GitHub Actions at exact commit `4f5f3eedf6ca3c43ac9b5ef0eb0435d9e59b574d`, after a missed ancestry-cycle test was corrected in preparation. The later branch includes additional 30/100-agent and rename-collision regressions that must receive their own exact-SHA CI. Neither success proves actual GPT worker behavior or safe production integration.
 
 ## 1. Nonnegotiable goal
 
@@ -61,10 +61,10 @@ No open PR is pre-approved by this document. A "blocker" is a **metadata-backed 
 - Bounded pagination; absent/malformed API response, truncation, duplicate PR numbers or cyclic branch dependencies -> `INCOMPLETE` with nonzero exit; never “zero conflicts”.
 - Second PR listing after file retrieval to catch concurrent parent/head movement; this reduces race windows but does NOT make remote GitHub APIs atomic.
 - Unique-base stacked ancestry and stale-parent detection; ambiguous branch names produce blockers rather than fictitious ordering.
-- Exact-path pair checks: independent executable/config-file overlap -> blocker; doc overlap -> review; stacked overlap -> review.
+- File identity checks include BOTH the renamed source path (`previous_filename`) and new destination path. Independent executable/config overlap -> blocker; doc overlap -> review; stacked overlap -> review. Missing rename origin rejects the entire metadata snapshot rather than falsely reporting no collision.
 - Semantic heuristic for read-only observer package duplication in `gpt_companion/`, `gpt_bridge/`, `hermes_gpt_bridge/` and `gateway/gpt_bridge_diagnostics.py`, even when paths differ.
 - Versioned JSON evidence report and Markdown operator summary; `--strict` exit 2 on blockers. Normal scheduled mode is **observational** and does not block PR pipelines merely because unrelated PRs exist.
-- Pure-stdlib synthetic unit tests cover concurrency hazards, ambiguous lineage, exact-path overlap, incomplete input and cycle rejection.
+- Pure-stdlib synthetic regression tests cover concurrent 30-worker collisions, 100-worker disjoint inventory, 101-worker rejection, renamed source-path collisions, ambiguous/fork lineage, incomplete input, cyclic branch dependency and misleading successful-collection states.
 
 `.github/workflows/gpt-pr-integration-watch.yml`:
 - Offline regressions on relevant pull requests, **without supplying a GitHub API token to untrusted PR code**.
@@ -157,6 +157,10 @@ Offline: `python -m unittest discover -s tests -p test_gpt_pr_integration_guard.
 
 Live read-only, after trusted workflow merge/enabling: GitHub Actions `GPT PR Integration Watch`, manual trigger or six-hour schedule. Reports carry a collection timestamp. If absent/stale, the correct state is “monitor unavailable”, never “all healthy”.
 
+### GitHub rename semantics and immutable schema revision
+
+In schema `hermes.pr.snapshot.v3`, each PR contains `paths` (current names), `renamed_from_paths` (old names for `status=renamed`), `changed_files` (number of GitHub file records), fork-qualified head/base and exact SHAs. The `changed_files` cardinality applies to current names only. Corrupted or unsupported v2 snapshots must fail closed; they cannot silently inherit v3 safety guarantees. Pairwise overlap compares the union of current and previous paths. A scanner cannot prove executable semantic non-conflict from path disjointness; it remains `REVIEW_ONLY` without an exact-SHA independent gate.
+
 ## 12. Reference standards and source links
 
 W3C Trace Context: https://www.w3.org/TR/trace-context-1/ ; OpenTelemetry GenAI agent spans: https://opentelemetry.io/docs/specs/semconv/gen-ai/gen-ai-agent-spans/ ; Chrome MV3 lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle ; HTTP Idempotency-Key draft (November 2026): https://datatracker.ietf.org/doc/html/draft-ietf-httpapi-idempotency-key-header-09 ; Hermes upstream Kanban: https://hermes-agent.nousresearch.com/docs/user-guide/features/kanban ; current fork PRs: https://github.com/Podtverzhdeno/hermes-agent/pulls .
@@ -166,7 +170,7 @@ W3C Trace Context: https://www.w3.org/TR/trace-context-1/ ; OpenTelemetry GenAI 
 - **O:** Inspected GitHub main commit, 1592-path recursive tree, PR #1–#12 metadata, changed paths and selected PR SDD descriptions.
 - **O:** Confirmed common gateway handler edits, multiple observers and moved stacked-parent SHA.
 - **O:** Inspected GitHub Actions mixed states; no blanket green CI claim.
-- **O:** Local_WorkSpace MCP unavailable; no changes to Windows install or Obsidian.
+- **O:** Local_WorkSpace MCP was initially unavailable and later reconnected, but its declared accessible root was only the unrelated `shelter` Obsidian workspace. The local Hermes extension path remained inaccessible; no Windows install or Obsidian changes were performed.
 - **V (offline only):** Ten standalone regression tests passed after fixing missed ancestry cycle detection.
 - **D:** Created a separate read-only integration guard branch; no gateway, scheduler, model, browser or permission-enforcement changes.
 - **Open:** Exact head CI, Windows host source discovery, integration reconciliation and adoption remain pending independent verification.
