@@ -180,6 +180,25 @@ Command ACK ladder: `RECEIVED` (framed transport) -> `ACCEPTED` (validated) -> `
 
 Never scrape cookies, bypass CAPTCHA/MFA/approval, infer private model state or transform a signed-in web session into an unrestricted unattended API. Prefer supported API tools for orchestration; web UI integration is an explicitly authorized supplementary surface. Native Messaging is not automatically a secure privileged boundary without independent host authorization.
 
+### 5.1 ADR GPT-EXT-001: integrate with existing Hermes browser supervisor before inventing a second owner
+
+**Newly verified external design evidence:** Current upstream Hermes browser documentation exposes a native `browser_exec` browser session, optional `/browser connect` attachment to Chrome-family CDP, and persistent browser state across tool calls (but not Python interpreter globals). The audited fork may lag upstream; presence/behavior of these capabilities **in the deployed local fork** must be checked at its SHA and runtime. Official browser documentation: https://github.com/NousResearch/hermes-agent/blob/main/website/docs/user-guide/features/browser.md .
+
+**Options comparison — independent of user profile authentication:**
+
+| Option | Best fit | Failure boundary | Decision |
+|---|---|---|---|
+| Official GPT/model API with scoped credentials | programmatic requests, structured receipts, explicit rate/cost policy | API timeout or unknown external side effect | **Primary for automated workload dispatch** where supported |
+| Hermes `browser_exec` with existing `/browser connect` CDP transport | owner-authorized interactive browser task with existing Hermes browser session | CDP disconnect, stale target or browser session | **Preferred reuse for browser interaction** if exact deployed version supports it |
+| Separate GPT MV3 extension + native companion | owner opt-in UI status or extension-specific events unavailable in existing supervisor | extension service worker, tab/navigation, messaging host, local OS | **Observability adapter first**; allow mutations only via shared fenced browser broker with explicit approval |
+| Direct unaudited DOM/CDP multi-agent writes from both paths | no defensible use | undetectable double submission / race with user's actions | **Reject** |
+
+**Exclusive physical browser lane:** a single host/session/tab/document must have at most one write-capable owner, regardless of whether entrypoint is Hermes `browser_exec` or an extension. Use the same `browser_lane_id`, `document_epoch`, `session_revision`, `effect_id`, capability and fence through both paths; cross-path messages cannot bypass the ledger claim. If the Hermes browser backend cannot accept the fence/receipt contract, keep it observation-only or isolate it to its own temporary browser session. A standalone extension should never silently compete with Hermes' native CDP supervisor.
+
+**Lifecycle nuance:** Chrome documentation confirms that normal MV3 workers may stop after idle, while active native messaging ports (Chrome 105+), active WebSockets (116+) and active debugger sessions (118+) can prolong worker lifetime. A kept-alive worker is *not* a durable transaction manager: crashes, updates, tab replacement and host disconnect still require replay/reconciliation. Official lifecycle: https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle . The Chromium security FAQ explicitly states Native Messaging is not a secure communication channel by itself and needs separate application-layer authentication where required: https://github.com/chromium/chromium/blob/main/extensions/docs/security_faq.md .
+
+**Acceptance:** run two synthetic actors against the same browser lane using different control paths; allow one read-only observation and exactly one authorized write, reject the stale actor and prevent resubmission of an uncertain external action. Run again after MV3 suspension, host crash, Chrome update, tab navigation and manual user interference. No browser backend becomes the task authority.
+
 ## 6. Stop diagnosis: explanation not speculation
 
 Track separate timestamps for `last_heartbeat`, `last_step_progress`, `last_provider_response`, `last_transport_frame`, `deadline_at`, plus `awaiting_approval`, `effect_uncertain`, `queue_position`, `lease_epoch`, `session_revision` and `evidence_state`.
@@ -266,7 +285,7 @@ Review/proposed remedies are **patch candidates**, not production fixes. Gate on
 
 - **2026-11-22 / SOURCE_AUDIT:** Found unsafe baseline in-memory idempotency, unbounded SSE queue and swallowed agent exception; examined `gateway/platforms/api_server.py`, `hermes_state.py`.
 - **2026-11-22 / GITHUB_AUDIT:** 14 related branches, 16 shared paths, 16 overlapping pairs. PR #1–#13 inspected; #10 and #11 identified as stacked. Branch/PR heads may move after this snapshot.
-- **2026-11-22 / CONNECTOR_FAILURE:** Local_WorkSpace MCP `Session terminated`; no local extension/Chrome/Obsidian inspection performed. This is a transport availability limitation, not evidence Hermes is down.
+- **2026-11-22 / CONNECTOR_FAILURE_AND_PARTIAL_RECOVERY:** First Local_WorkSpace call returned `Session terminated`. A later `list_workspaces` call succeeded but exposed only `shelter` (a scoped Obsidian workspace), not the Hermes extension directory; separate read-only `temp-folder` was unrelated. Therefore live Chrome extension/companion source, process health and logs remain **NOT VERIFIED**. The transient connector failure alone is not evidence that Hermes execution stopped.
 - **2026-11-22 / WRITE_LIMITATION:** GitHub Issues creation returned HTTP 410 (disabled); use draft PR review and SDD for coordination.
 - **2026-11-22 / DECISION:** no unverified runtime changes to `main`; write this isolated SDD proposal and seek integration checks. No code execution/CI success asserted by this document.
 
